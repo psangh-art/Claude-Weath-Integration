@@ -50,7 +50,15 @@ async function main() {
   const chartListJson = await evaluateAsync(`
     JSON.stringify((window.TradingViewApi._loadChartService._state.value().chartList || []).map(c => ({id: c.id, url: c.url, name: c.name})))
   `);
-  const layouts = JSON.parse(chartListJson || '[]');
+  const allLayouts = JSON.parse(chartListJson || '[]');
+  // Skip throwaway/placeholder layouts (e.g. a scratch "Test" layout) so they don't
+  // end up as real rows in the workbook.
+  const PLACEHOLDER_NAMES = /^test$/i;
+  const layouts = allLayouts.filter(l => !PLACEHOLDER_NAMES.test((l.name || '').trim()));
+  const skipped = allLayouts.length - layouts.length;
+  if (skipped > 0) {
+    console.log(`Skipping ${skipped} placeholder layout(s) (e.g. "Test").`);
+  }
   if (layouts.length === 0) {
     console.error('No saved layouts found.');
     process.exitCode = 1;

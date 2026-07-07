@@ -23,19 +23,23 @@ something worth remembering.
   failures (CDP connection surviving navigation but the chart not actually having
   changed). Don't replace this with a single fixed `sleep()`.
 
+## Resolved (2026-07-07)
+
+- **Legibility confirmed.** Cropped chart images were extracted from a real built
+  workbook and viewed directly — price-axis numbers (not just ticker labels) are
+  crisp and fully readable at native resolution. Confirmed pass, not just a claim.
+- **Pixel-scaling was already correct, not a bug.** `export-layouts-excel.js` scales
+  each pane's CSS-px rect by `CAPTURE_SCALE` before building the crop list:
+  `x: p.rect.x * CAPTURE_SCALE, y: p.rect.y * CAPTURE_SCALE, ...` (same for
+  width/height). `crop_panes.py` receives already-scaled pixel coordinates, so crops
+  land correctly even with `scale > 1`. No fix needed — verified by reading the code.
+- **"Test" layout now filtered.** `export-layouts-excel.js` drops any layout whose
+  name matches `/^test$/i` (case-insensitive, exact match) before it reaches the
+  manifest/workbook. Confirmed with the user this should be excluded going forward.
+
 ## Open items / things to verify on the next export run
 
-- [ ] Confirm cropped single-chart images are legible at 100% zoom for price-axis
-      numbers specifically (not just ticker labels) — last review couldn't fully verify
-      this due to a rendering issue on the reviewer's end, not a confirmed pass.
-- [ ] Spot-check that `crop_panes.py`'s pixel coordinates (from `listWithRects()` in
-      `pane.js`) are being scaled correctly when `capture.js`'s `deviceScaleFactor` > 1 —
-      DOM rects are in CSS px, but the screenshot is now higher pixel density, so crop
-      boxes need to be multiplied by `scale` or crops will be misaligned/offset.
-- [ ] Any layout with a "Test" entry (e.g. `layout_04_Test.png` seen in an earlier
-      export) should probably be filtered out of the manifest before it reaches
-      `build_layout_excel.py` — check if `export-layouts-excel.js` excludes non-real
-      layouts already.
+(none currently — add new items here as reviews surface them)
 
 ## How to log new feedback
 
