@@ -1,0 +1,4 @@
+node_modules/
+screenshots/
+scripts/layout_manifest_tmp.json
+scripts/crop_manifest_tmp.json

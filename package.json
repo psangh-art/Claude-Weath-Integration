@@ -1,0 +1,12 @@
+{
+  "name": "claude-wealth-integration",
+  "version": "1.0.0",
+  "description": "Export every saved TradingView layout to an Excel workbook — one row per individual chart, with a high-res cropped screenshot, ticker, and company name.",
+  "type": "module",
+  "scripts": {
+    "export:layouts": "node scripts/export-layouts-excel.js"
+  },
+  "dependencies": {
+    "chrome-remote-interface": "^0.33.2"
+  }
+}
