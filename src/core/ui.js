@@ -1,4 +1,18 @@
-import { evaluate, evaluateAsync } from '../connection.js';
+import { evaluate, evaluateAsync, getClient } from '../connection.js';
+
+/**
+ * Dispatch TradingView's "Reset chart view" shortcut (Alt+R) so the capture always
+ * starts from a consistent, fitted view instead of whatever pan/zoom state the chart
+ * happened to be left in. This is a view-only change — it's never saved (no save
+ * call follows it), and layoutSwitch's own navigation discards any unsaved state when
+ * moving to the next layout, so it never persists back to the saved layout.
+ */
+export async function resetView() {
+  const client = await getClient();
+  await client.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 1, key: 'r', code: 'KeyR', windowsVirtualKeyCode: 82 });
+  await client.Input.dispatchKeyEvent({ type: 'keyUp', key: 'r', code: 'KeyR', windowsVirtualKeyCode: 82 });
+  return { success: true, action: 'reset_view' };
+}
 
 export async function layoutList() {
   const layouts = await evaluateAsync(`

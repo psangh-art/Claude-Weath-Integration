@@ -81,6 +81,13 @@ async function main() {
       continue;
     }
 
+    // Reset zoom/pan to a consistent fitted view before capturing — a chart can be
+    // left scrolled/zoomed from whenever it was last interacted with. This is a
+    // view-only, unsaved change (see resetView()'s comment) so it never touches the
+    // saved layout itself.
+    await ui.resetView();
+    await new Promise(r => setTimeout(r, 800));
+
     const rawFilename = `layout_${tag}_raw`;
     const shot = await capture.captureScreenshot({ region: 'full', filename: rawFilename, scale: CAPTURE_SCALE });
 
