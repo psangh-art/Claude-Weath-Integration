@@ -81,24 +81,32 @@ async function main() {
       continue;
     }
 
-    // Reset zoom/pan to a consistent fitted view before capturing — a chart can be
-    // left scrolled/zoomed from whenever it was last interacted with. This is a
-    // view-only, unsaved change (see resetView()'s comment) so it never touches the
-    // saved layout itself.
-    await ui.resetView();
-    await new Promise(r => setTimeout(r, 800));
-
-    const rawFilename = `layout_${tag}_raw`;
-    const shot = await capture.captureScreenshot({ region: 'full', filename: rawFilename, scale: CAPTURE_SCALE });
-
     const paneData = await pane.listWithRects();
     const panes = (paneData.panes || []).filter(p => p.rect && p.rect.width > 0 && p.rect.height > 0);
 
     if (panes.length === 0) {
       console.warn(`  no measurable panes — falling back to full-layout screenshot`);
+      const shot = await capture.captureScreenshot({ region: 'full', filename: `layout_${tag}_raw`, scale: CAPTURE_SCALE });
       manifest.push({ id: layout.id, chartId: layout.url, name: layout.name, ticker: null, description: null, screenshot: shot.file_path, error: null });
       continue;
     }
+
+    // Reset zoom/pan to a consistent fitted view before capturing — a chart can be
+    // left scrolled/zoomed from whenever it was last interacted with. This is a
+    // view-only, unsaved change (see resetView()'s comment) so it never touches the
+    // saved layout itself. "Reset chart view" (Alt+R) only affects the currently
+    // FOCUSED pane, not the whole grid — confirmed by two independent runs producing
+    // byte-identical broken output for the same non-focused panes regardless of wait
+    // time, ruling out a load-timing race. So each pane must be focused individually
+    // before resetting it.
+    for (let pi = 0; pi < panes.length; pi++) {
+      await pane.focus({ index: panes[pi].index });
+      await ui.resetView();
+      await ui.waitForResetToSettle();
+    }
+
+    const rawFilename = `layout_${tag}_raw`;
+    const shot = await capture.captureScreenshot({ region: 'full', filename: rawFilename, scale: CAPTURE_SCALE });
 
     const crops = panes.map((p, pi) => ({
       x: p.rect.x * CAPTURE_SCALE,

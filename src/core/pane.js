@@ -34,3 +34,25 @@ export async function listWithRects() {
   `);
   return { success: true, panes };
 }
+
+/**
+ * Focus a specific pane by index (clicks its main div, same as a user click) —
+ * "Reset chart view" (Alt+R) only resets the currently focused/active pane, not
+ * every pane in a grid layout, so each pane must be focused individually before
+ * resetting it.
+ */
+export async function focus({ index }) {
+  const idx = Number(index);
+  const result = await evaluate(`
+    (function() {
+      var cwc = ${CWC};
+      var all = cwc.getAll();
+      if (${idx} >= all.length) return { error: 'Pane index ' + ${idx} + ' out of range (have ' + all.length + ' panes)' };
+      var chart = all[${idx}];
+      if (chart._mainDiv) chart._mainDiv.click();
+      return { focused: ${idx}, total: all.length };
+    })()
+  `);
+  if (result?.error) throw new Error(result.error);
+  return { success: true, focused_index: result.focused, total_panes: result.total };
+}

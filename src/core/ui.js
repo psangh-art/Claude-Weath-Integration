@@ -14,6 +14,35 @@ export async function resetView() {
   return { success: true, action: 'reset_view' };
 }
 
+/**
+ * Poll the chart's visible time range after resetView() until it stops changing
+ * (two consecutive reads match), instead of trusting a fixed sleep — mirrors
+ * layoutSwitch()'s own verification-poll pattern. A fixed 800ms wait was proven
+ * insufficient: on a cold-started layout with several panes still streaming in
+ * historical bars, some panes' reset/redraw hadn't finished at 800ms, producing
+ * blank or mis-scaled captures. This is bounded (never blocks indefinitely) and
+ * simply returns settled:false if the range never stabilizes in time, so the
+ * caller can proceed on a best-effort basis either way.
+ */
+export async function waitForResetToSettle({ maxAttempts = 8, intervalMs = 300 } = {}) {
+  let prev;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await new Promise(r => setTimeout(r, intervalMs));
+    const current = await evaluate(`
+      (function() {
+        try {
+          return JSON.stringify(window.TradingViewApi._activeChartWidgetWV.value().getVisibleRange());
+        } catch(e) { return null; }
+      })()
+    `);
+    if (current && current === prev) {
+      return { success: true, settled: true, attempts: attempt + 1 };
+    }
+    prev = current;
+  }
+  return { success: true, settled: false, attempts: maxAttempts };
+}
+
 export async function layoutList() {
   const layouts = await evaluateAsync(`
     new Promise(function(resolve) {
