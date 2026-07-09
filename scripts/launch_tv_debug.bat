@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 @echo off
 REM Launch TradingView Desktop on Windows with Chrome DevTools Protocol enabled
 REM Usage: scripts\launch_tv_debug.bat [port]
@@ -17,6 +18,8 @@ REM WindowsApps ACL restrictions that block plain "dir /s /b" lookups)
 for /f "tokens=*" %%i in ('powershell -NoProfile -Command "(Get-AppxPackage *TradingView*).InstallLocation" 2^>nul') do set "TV_DIR=%%i"
 if not "%TV_DIR%"=="" if exist "%TV_DIR%\TradingView.exe" set "TV_EXE=%TV_DIR%\TradingView.exe"
 
+=======
+>>>>>>> b367b736754b042de7a9c71afc54aead24237bd6
 REM Check common non-store install locations
 if "%TV_EXE%"=="" if exist "%LOCALAPPDATA%\TradingView\TradingView.exe" set "TV_EXE=%LOCALAPPDATA%\TradingView\TradingView.exe"
 if "%TV_EXE%"=="" if exist "%PROGRAMFILES%\TradingView\TradingView.exe" set "TV_EXE=%PROGRAMFILES%\TradingView\TradingView.exe"
