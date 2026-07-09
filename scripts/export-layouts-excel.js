@@ -20,7 +20,7 @@
 // re-verifying against real Excel first.
 import os from 'os';
 import path from 'path';
-import { writeFileSync } from 'fs';
+import { writeFileSync, mkdirSync, appendFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
 import * as health from '../src/core/health.js';
@@ -35,18 +35,39 @@ const MANIFEST_PATH = path.join(__dirname, 'layout_manifest_tmp.json');
 const CROP_MANIFEST_PATH = path.join(__dirname, 'crop_manifest_tmp.json');
 const CAPTURE_SCALE = 2;
 
+// Every run is logged to its own timestamped file plus a fixed "latest" pointer
+// (both the raw console output and a structured summary), so a run's results can
+// be read back afterward without needing to have watched the terminal live.
+const LOGS_DIR = path.join(__dirname, '..', 'logs');
+mkdirSync(LOGS_DIR, { recursive: true });
+const RUN_STAMP = new Date().toISOString().replace(/[:.]/g, '-');
+const LOG_PATH = path.join(LOGS_DIR, `export_${RUN_STAMP}.log`);
+const LOG_LATEST_PATH = path.join(LOGS_DIR, 'latest.log');
+const SUMMARY_PATH = path.join(LOGS_DIR, `export_${RUN_STAMP}.summary.json`);
+const SUMMARY_LATEST_PATH = path.join(LOGS_DIR, 'latest-summary.json');
+
+function log(...args) {
+  const line = args.map(a => (a instanceof Error ? a.stack : String(a))).join(' ');
+  console.log(line);
+  appendFileSync(LOG_PATH, line + '\n');
+  appendFileSync(LOG_LATEST_PATH, line + '\n');
+}
+
+const startedAt = new Date();
+
 async function main() {
-  console.log('Checking TradingView CDP connection on port 9222...');
+  log('Checking TradingView CDP connection on port 9222...');
   try {
     await health.healthCheck();
   } catch {
-    console.error('\nCould not connect to TradingView.');
-    console.error('Start it with CDP enabled first, e.g. run scripts\\launch_tv_debug.bat, then re-run this.');
+    log('\nCould not connect to TradingView.');
+    log('Start it with CDP enabled first, e.g. run scripts\\launch_tv_debug.bat, then re-run this.');
+    writeSummary({ startedAt, ok: false, reason: 'CDP connection failed', layoutsSummary: [] });
     process.exitCode = 1;
     return;
   }
 
-  console.log('Fetching saved layouts...');
+  log('Fetching saved layouts...');
   const chartListJson = await evaluateAsync(`
     JSON.stringify((window.TradingViewApi._loadChartService._state.value().chartList || []).map(c => ({id: c.id, url: c.url, name: c.name})))
   `);
@@ -57,27 +78,30 @@ async function main() {
   const layouts = allLayouts.filter(l => !PLACEHOLDER_NAMES.test((l.name || '').trim()));
   const skipped = allLayouts.length - layouts.length;
   if (skipped > 0) {
-    console.log(`Skipping ${skipped} placeholder layout(s) (e.g. "Test").`);
+    log(`Skipping ${skipped} placeholder layout(s) (e.g. "Test").`);
   }
   if (layouts.length === 0) {
-    console.error('No saved layouts found.');
+    log('No saved layouts found.');
+    writeSummary({ startedAt, ok: false, reason: 'No saved layouts found', layoutsSummary: [] });
     process.exitCode = 1;
     return;
   }
-  console.log(`Found ${layouts.length} layouts.\n`);
+  log(`Found ${layouts.length} layouts.\n`);
 
   const manifest = [];
+  const layoutsSummary = [];
 
   for (let i = 0; i < layouts.length; i++) {
     const layout = layouts[i];
     const tag = String(i + 1).padStart(2, '0');
-    console.log(`[${i + 1}/${layouts.length}] ${layout.name} — switching...`);
+    log(`[${i + 1}/${layouts.length}] ${layout.name} — switching...`);
 
     try {
       await ui.layoutSwitch({ name: layout.name });
     } catch (err) {
-      console.error(`  FAILED to switch: ${err.message}`);
+      log(`  FAILED to switch: ${err.message}`);
       manifest.push({ id: layout.id, chartId: layout.url, name: layout.name, ticker: null, description: null, screenshot: null, error: err.message });
+      layoutsSummary.push({ layoutId: layout.id, chartId: layout.url, name: layout.name, status: 'failed_to_switch', error: err.message, charts: [] });
       continue;
     }
 
@@ -85,9 +109,10 @@ async function main() {
     const panes = (paneData.panes || []).filter(p => p.rect && p.rect.width > 0 && p.rect.height > 0);
 
     if (panes.length === 0) {
-      console.warn(`  no measurable panes — falling back to full-layout screenshot`);
+      log(`  no measurable panes — falling back to full-layout screenshot`);
       const shot = await capture.captureScreenshot({ region: 'full', filename: `layout_${tag}_raw`, scale: CAPTURE_SCALE });
       manifest.push({ id: layout.id, chartId: layout.url, name: layout.name, ticker: null, description: null, screenshot: shot.file_path, error: null });
+      layoutsSummary.push({ layoutId: layout.id, chartId: layout.url, name: layout.name, status: 'full_layout_fallback', error: null, charts: [{ ticker: null, description: null, screenshot: shot.file_path, error: null }] });
       continue;
     }
 
@@ -121,44 +146,68 @@ async function main() {
     const cropResult = spawnSync('python', [path.join(__dirname, 'crop_panes.py'), shot.file_path, CROP_MANIFEST_PATH, cropDir], { stdio: 'inherit' });
 
     if (cropResult.status !== 0) {
-      console.error(`  FAILED to crop panes — falling back to full-layout screenshot for this row`);
+      log(`  FAILED to crop panes — falling back to full-layout screenshot for this row`);
       manifest.push({ id: layout.id, chartId: layout.url, name: layout.name, ticker: null, description: null, screenshot: shot.file_path, error: 'pane crop failed' });
+      layoutsSummary.push({ layoutId: layout.id, chartId: layout.url, name: layout.name, status: 'crop_failed', error: 'pane crop failed', charts: [{ ticker: null, description: null, screenshot: shot.file_path, error: 'pane crop failed' }] });
       continue;
     }
 
+    const layoutCharts = [];
     for (let pi = 0; pi < panes.length; pi++) {
       const p = panes[pi];
-      manifest.push({
-        id: layout.id,
-        chartId: layout.url,
-        name: layout.name,
+      const chartEntry = {
         ticker: p.ticker || p.symbol || null,
         description: p.description || null,
         screenshot: path.join(cropDir, crops[pi].filename),
         error: null,
-      });
+      };
+      manifest.push({ id: layout.id, chartId: layout.url, name: layout.name, ...chartEntry });
+      layoutCharts.push(chartEntry);
     }
-    console.log(`  captured ${panes.length} chart(s)`);
+    layoutsSummary.push({ layoutId: layout.id, chartId: layout.url, name: layout.name, status: 'ok', error: null, charts: layoutCharts });
+    log(`  captured ${panes.length} chart(s)`);
   }
 
   writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
 
   const failedCount = manifest.filter(m => !m.screenshot).length;
   if (failedCount > 0) {
-    console.warn(`\n${failedCount}/${manifest.length} rows failed to capture (see rows above) — fix connectivity and re-run to fill them in.`);
+    log(`\n${failedCount}/${manifest.length} rows failed to capture (see rows above) — fix connectivity and re-run to fill them in.`);
   }
 
-  console.log('\nBuilding Excel workbook...');
+  log('\nBuilding Excel workbook...');
   const py = spawnSync('python', [path.join(__dirname, 'build_layout_excel.py'), MANIFEST_PATH, OUT_PATH], { stdio: 'inherit' });
   if (py.status !== 0) {
-    console.error('Failed to build the Excel file (see python output above).');
+    log('Failed to build the Excel file (see python output above).');
+    writeSummary({ startedAt, ok: false, reason: 'Excel build failed', layoutsSummary, manifest, failedCount });
     process.exitCode = 1;
     return;
   }
-  console.log(`\nDone. ${manifest.length - failedCount}/${manifest.length} charts captured successfully.`);
+  log(`\nDone. ${manifest.length - failedCount}/${manifest.length} charts captured successfully.`);
+  writeSummary({ startedAt, ok: true, reason: null, layoutsSummary, manifest, failedCount });
+}
+
+function writeSummary({ startedAt, ok, reason, layoutsSummary, manifest = [], failedCount = 0 }) {
+  const finishedAt = new Date();
+  const summary = {
+    timestamp: startedAt.toISOString(),
+    durationSeconds: Math.round((finishedAt - startedAt) / 1000),
+    ok,
+    reason,
+    outputPath: OUT_PATH,
+    logPath: LOG_PATH,
+    totalLayouts: layoutsSummary.length,
+    totalCharts: manifest.length,
+    failedCharts: failedCount,
+    layouts: layoutsSummary,
+  };
+  writeFileSync(SUMMARY_PATH, JSON.stringify(summary, null, 2));
+  writeFileSync(SUMMARY_LATEST_PATH, JSON.stringify(summary, null, 2));
+  log(`Summary written to ${SUMMARY_PATH}`);
 }
 
 main().catch(err => {
-  console.error('\nExport failed:', err);
+  log('\nExport failed:', err);
+  writeSummary({ startedAt, ok: false, reason: err.message, layoutsSummary: [] });
   process.exitCode = 1;
 });
