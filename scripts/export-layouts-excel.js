@@ -27,12 +27,16 @@ import * as health from '../src/core/health.js';
 import * as ui from '../src/core/ui.js';
 import * as pane from '../src/core/pane.js';
 import * as capture from '../src/core/capture.js';
+import * as data from '../src/core/data.js';
+import * as alerts from '../src/core/alerts.js';
 import { evaluateAsync } from '../src/connection.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_PATH = path.join(os.homedir(), 'Downloads', 'tradingview_layouts.xlsx');
 const MANIFEST_PATH = path.join(__dirname, 'layout_manifest_tmp.json');
 const CROP_MANIFEST_PATH = path.join(__dirname, 'crop_manifest_tmp.json');
+const INDICATOR_MANIFEST_PATH = path.join(__dirname, 'indicator_manifest_tmp.json');
+const ALERTS_MANIFEST_PATH = path.join(__dirname, 'alerts_manifest_tmp.json');
 const CAPTURE_SCALE = 2;
 
 // Every run is logged to its own timestamped file plus a fixed "latest" pointer
@@ -90,6 +94,7 @@ async function main() {
 
   const manifest = [];
   const layoutsSummary = [];
+  const indicatorRows = [];
 
   for (let i = 0; i < layouts.length; i++) {
     const layout = layouts[i];
@@ -105,7 +110,7 @@ async function main() {
       continue;
     }
 
-    const paneData = await pane.listWithRects();
+    const paneData = await pane.waitForPanesToLoad();
     const panes = (paneData.panes || []).filter(p => p.rect && p.rect.width > 0 && p.rect.height > 0);
 
     if (panes.length === 0) {
@@ -125,9 +130,30 @@ async function main() {
     // time, ruling out a load-timing race. So each pane must be focused individually
     // before resetting it.
     for (let pi = 0; pi < panes.length; pi++) {
-      await pane.focus({ index: panes[pi].index });
+      const p = panes[pi];
+      await pane.focus({ index: p.index });
       await ui.resetView();
       await ui.waitForResetToSettle();
+
+      // Piggyback current indicator values onto this same per-pane focus pass
+      // (rather than a separate full layout-switching loop) — the pane is
+      // already focused here for the reset-view fix, so reading Data Window
+      // values now is free.
+      const studyResult = await data.getStudyValues();
+      for (const study of studyResult.studies || []) {
+        for (const [field, value] of Object.entries(study.values)) {
+          indicatorRows.push({
+            layoutId: layout.id,
+            chartId: layout.url,
+            layoutName: layout.name,
+            ticker: p.ticker || p.symbol || null,
+            company: p.description || null,
+            indicator: study.name,
+            field,
+            value,
+          });
+        }
+      }
     }
 
     const rawFilename = `layout_${tag}_raw`;
@@ -174,20 +200,40 @@ async function main() {
   if (failedCount > 0) {
     log(`\n${failedCount}/${manifest.length} rows failed to capture (see rows above) — fix connectivity and re-run to fill them in.`);
   }
+  log(`Collected ${indicatorRows.length} indicator readings.`);
 
-  log('\nBuilding Excel workbook...');
-  const py = spawnSync('python', [path.join(__dirname, 'build_layout_excel.py'), MANIFEST_PATH, OUT_PATH], { stdio: 'inherit' });
+  log('\nFetching alerts...');
+  const alertsResult = await alerts.list();
+  const alertRows = (alertsResult.alerts || []).map(a => ({
+    alertId: a.alert_id,
+    symbol: a.symbol,
+    message: a.message,
+    conditionType: a.condition?.type || null,
+    targetPrice: (a.condition?.series || []).find(s => s.type === 'value')?.value ?? null,
+    resolution: a.resolution,
+    active: a.active,
+    created: a.created,
+    lastFired: a.last_fired,
+    expiration: a.expiration,
+  }));
+  log(`Fetched ${alertRows.length} alerts (${alertRows.filter(a => a.active).length} active).`);
+
+  writeFileSync(INDICATOR_MANIFEST_PATH, JSON.stringify(indicatorRows, null, 2));
+  writeFileSync(ALERTS_MANIFEST_PATH, JSON.stringify(alertRows, null, 2));
+
+  log('\nBuilding Excel workbook (Charts, Indicators, Alerts sheets)...');
+  const py = spawnSync('python', [path.join(__dirname, 'build_layout_excel.py'), MANIFEST_PATH, OUT_PATH, INDICATOR_MANIFEST_PATH, ALERTS_MANIFEST_PATH], { stdio: 'inherit' });
   if (py.status !== 0) {
     log('Failed to build the Excel file (see python output above).');
-    writeSummary({ startedAt, ok: false, reason: 'Excel build failed', layoutsSummary, manifest, failedCount });
+    writeSummary({ startedAt, ok: false, reason: 'Excel build failed', layoutsSummary, manifest, failedCount, indicatorRows, alertRows });
     process.exitCode = 1;
     return;
   }
-  log(`\nDone. ${manifest.length - failedCount}/${manifest.length} charts captured successfully.`);
-  writeSummary({ startedAt, ok: true, reason: null, layoutsSummary, manifest, failedCount });
+  log(`\nDone. ${manifest.length - failedCount}/${manifest.length} charts, ${indicatorRows.length} indicator readings, ${alertRows.length} alerts captured successfully.`);
+  writeSummary({ startedAt, ok: true, reason: null, layoutsSummary, manifest, failedCount, indicatorRows, alertRows });
 }
 
-function writeSummary({ startedAt, ok, reason, layoutsSummary, manifest = [], failedCount = 0 }) {
+function writeSummary({ startedAt, ok, reason, layoutsSummary, manifest = [], failedCount = 0, indicatorRows = [], alertRows = [] }) {
   const finishedAt = new Date();
   const summary = {
     timestamp: startedAt.toISOString(),
@@ -199,7 +245,12 @@ function writeSummary({ startedAt, ok, reason, layoutsSummary, manifest = [], fa
     totalLayouts: layoutsSummary.length,
     totalCharts: manifest.length,
     failedCharts: failedCount,
+    totalIndicatorReadings: indicatorRows.length,
+    totalAlerts: alertRows.length,
+    activeAlerts: alertRows.filter(a => a.active).length,
     layouts: layoutsSummary,
+    indicators: indicatorRows,
+    alerts: alertRows,
   };
   writeFileSync(SUMMARY_PATH, JSON.stringify(summary, null, 2));
   writeFileSync(SUMMARY_LATEST_PATH, JSON.stringify(summary, null, 2));

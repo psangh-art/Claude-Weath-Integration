@@ -4,7 +4,9 @@
   "description": "Export every saved TradingView layout to an Excel workbook — one row per individual chart, with a high-res cropped screenshot, ticker, and company name.",
   "type": "module",
   "scripts": {
-    "export:layouts": "node scripts/export-layouts-excel.js"
+    "export:layouts": "node scripts/export-layouts-excel.js",
+    "export:indicators": "node scripts/export-indicator-values.js",
+    "export:alerts": "node scripts/export-alerts.js"
   },
   "dependencies": {
     "chrome-remote-interface": "^0.33.2"

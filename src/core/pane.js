@@ -36,6 +36,38 @@ export async function listWithRects() {
 }
 
 /**
+ * Poll listWithRects() until two consecutive reads agree on every pane's symbol
+ * (index, symbol, ticker) instead of trusting a single read right after
+ * layoutSwitch(). layoutSwitch()'s own poll only confirms the NAVIGATION landed
+ * (layoutId matches) — it says nothing about whether every individual pane's
+ * chart widget has finished initializing its own mainSeries(). On layouts with
+ * more panes (8-pane grids especially), some panes can still be mid-init at that
+ * point and report a stale/shared symbol from whatever was previously loaded —
+ * this was confirmed independently (chart_import_findings.md, 2026-07-09): a
+ * genuinely 8-distinct-chart layout produced only 3 distinct ticker labels across
+ * 3 consecutive export runs, with the affected panes' images verified correct via
+ * file hash (so it's a metadata-timing bug, not a rendering one). Bounded so a
+ * layout that never stabilizes doesn't hang the export — falls back to the last
+ * read on timeout.
+ */
+export async function waitForPanesToLoad({ maxAttempts = 12, intervalMs = 400 } = {}) {
+  let prev = null;
+  let result = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    result = await listWithRects();
+    const panes = result.panes || [];
+    const fingerprint = JSON.stringify(panes.map(p => [p.index, p.symbol, p.ticker]));
+    const allHaveSymbol = panes.length > 0 && panes.every(p => p.symbol);
+    if (allHaveSymbol && fingerprint === prev) {
+      return result;
+    }
+    prev = fingerprint;
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return result;
+}
+
+/**
  * Focus a specific pane by index (clicks its main div, same as a user click) —
  * "Reset chart view" (Alt+R) only resets the currently focused/active pane, not
  * every pane in a grid layout, so each pane must be focused individually before

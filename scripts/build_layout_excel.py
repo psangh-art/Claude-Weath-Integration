@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
-"""Build tradingview_layouts.xlsx from a manifest JSON produced by export-layouts-excel.js.
-One row per individual chart (not per layout) — a layout with 6 panes produces 6 rows,
-each with its own cropped screenshot rather than one squeezed multi-pane grid image.
+"""Build tradingview_layouts.xlsx from manifest JSON files produced by
+export-layouts-excel.js. One row per individual chart (not per layout) on the
+Charts sheet — a layout with 6 panes produces 6 rows, each with its own cropped
+screenshot rather than one squeezed multi-pane grid image. Optional Indicators
+and Alerts manifests add two more sheets to the same workbook, so chart images,
+current indicator values, and price alerts all live in one file.
 
-Manifest format: [{"id": int, "chartId": str, "name": str, "ticker": str|None,
+Charts manifest: [{"id": int, "chartId": str, "name": str, "ticker": str|None,
 "description": str|None, "screenshot": str|None, "error": str|None}, ...]
-Usage: python build_layout_excel.py <manifest.json> <output.xlsx>
+Indicators manifest: [{"layoutId": int, "chartId": str, "layoutName": str,
+"ticker": str|None, "company": str|None, "indicator": str, "field": str, "value": any}, ...]
+Alerts manifest: [{"alertId": int, "symbol": str, "message": str, "conditionType": str|None,
+"targetPrice": number|None, "resolution": str, "active": bool, "created": str,
+"lastFired": str|None, "expiration": str|None}, ...]
+
+Usage: python build_layout_excel.py <charts.json> <output.xlsx> [<indicators.json>] [<alerts.json>]
 """
 import sys
 import json
@@ -15,12 +24,7 @@ from PIL import Image as PILImage
 
 MAX_DISPLAY_WIDTH = 700
 
-def main():
-    manifest_path, out_path = sys.argv[1], sys.argv[2]
-    with open(manifest_path, 'r', encoding='utf-8') as f:
-        rows = json.load(f)
-
-    wb = Workbook()
+def add_charts_sheet(wb, rows):
     ws = wb.active
     ws.title = 'Charts'
     ws.append(['Layout ID', 'Chart ID', 'Layout Name', 'Symbol', 'Company', 'Screenshot'])
@@ -56,9 +60,59 @@ def main():
         ws.cell(row=r, column=4, value=row.get('ticker'))
         ws.cell(row=r, column=5, value=row.get('description'))
         ws.cell(row=r, column=6, value=screenshot_value)
+    return len(rows)
+
+def add_simple_sheet(wb, title, header, rows, keys, bold_cols=()):
+    ws = wb.create_sheet(title)
+    ws.append(header)
+    for cell in ws[1]:
+        cell.font = cell.font.copy(bold=True)
+    for i, row in enumerate(rows):
+        r = i + 2
+        for ci, key in enumerate(keys):
+            cell = ws.cell(row=r, column=ci + 1, value=row.get(key))
+            if ci in bold_cols:
+                cell.font = cell.font.copy(bold=True)
+    return len(rows)
+
+def main():
+    charts_path, out_path = sys.argv[1], sys.argv[2]
+    indicators_path = sys.argv[3] if len(sys.argv) > 3 else None
+    alerts_path = sys.argv[4] if len(sys.argv) > 4 else None
+
+    with open(charts_path, 'r', encoding='utf-8') as f:
+        chart_rows = json.load(f)
+
+    wb = Workbook()
+    chart_count = add_charts_sheet(wb, chart_rows)
+    print(f"Charts sheet: {chart_count} rows")
+
+    if indicators_path:
+        with open(indicators_path, 'r', encoding='utf-8') as f:
+            indicator_rows = json.load(f)
+        count = add_simple_sheet(
+            wb, 'Indicators',
+            ['Layout ID', 'Chart ID', 'Layout Name', 'Symbol', 'Company', 'Indicator', 'Field', 'Value'],
+            indicator_rows,
+            ['layoutId', 'chartId', 'layoutName', 'ticker', 'company', 'indicator', 'field', 'value'],
+            bold_cols=(3,),
+        )
+        print(f"Indicators sheet: {count} rows")
+
+    if alerts_path:
+        with open(alerts_path, 'r', encoding='utf-8') as f:
+            alert_rows = json.load(f)
+        count = add_simple_sheet(
+            wb, 'Alerts',
+            ['Alert ID', 'Symbol', 'Message', 'Condition', 'Target Price', 'Resolution', 'Active', 'Created', 'Last Fired', 'Expiration'],
+            alert_rows,
+            ['alertId', 'symbol', 'message', 'conditionType', 'targetPrice', 'resolution', 'active', 'created', 'lastFired', 'expiration'],
+            bold_cols=(1,),
+        )
+        print(f"Alerts sheet: {count} rows")
 
     wb.save(out_path)
-    print(f"Saved {len(rows)} rows to {out_path}")
+    print(f"Saved workbook to {out_path}")
 
 if __name__ == '__main__':
     main()
