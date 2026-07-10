@@ -121,6 +121,36 @@ server repo unrelated to this specific workflow.
   never affected — only the console echo. Confirmed fixed by re-running
   `python scripts/verify_pipeline.py --live-alert-check` standalone after the fix.
 
+## Resolved (2026-07-10, part 2): 'Stocks Buy Strategy' tab renamed to 'Investments'; Alert Low highlighting
+
+- **Sheet tab rename.** The worksheet tab in `Stocks_Buy_Strategy.xlsx` previously named
+  `Stocks Buy Strategy` is now named **`Investments`** — tab only, per explicit user
+  confirmation; the workbook **filename** stays `Stocks_Buy_Strategy.xlsx`.
+  `SHEET_NAME` in `update_master_sheet.py` was updated to `'Investments'` to match.
+  **If you add any new code that opens this workbook and looks up a sheet by name,
+  use `'Investments'`, not `'Stocks Buy Strategy'`.**
+- **Renaming a sheet in openpyxl does NOT rewrite formulas elsewhere in the workbook
+  that reference it by quoted name** (unlike renaming a tab via the Excel UI, which
+  does fix those up). ~36 live formula cells — VLOOKUPs in `Stocks of Interest`
+  column F and `History` column K — referenced `'Stocks Buy Strategy'!$C:$I` by
+  literal string and would have silently become `#REF!` errors on next open if left
+  alone. Caught by scanning all formula cells across every sheet for the old quoted
+  reference before considering the rename safe, and rewriting each one to
+  `'Investments'!$C:$I`. **Any future sheet rename in this workbook must repeat this
+  scan-and-rewrite step** — don't assume `ws.title = ...` is sufficient.
+  `scripts/fix_relx_history_2026-07-10.py` (a historical one-off, already executed)
+  still contains the old hardcoded `'Stocks Buy Strategy'!` string in its source —
+  left as-is since it's a dated record of a completed run, not something meant to be
+  re-run; do not reuse it as a template without updating that reference first.
+- **Alert Low green highlight.** The `Alert Low` cells (column E) for the four rows
+  under "🟢 AT LOWER BOUNDARY — within 5% of alert low (Highest priority)" in
+  `Stocks of Interest` (rows 5–8: Glencore, Beazley, Auto Trader, Rio Tinto) are now
+  filled green (`FFC6EFCE` fill / `FF276221` bold font — the same "good/highest
+  priority" green already used for `Chart = Yes` in `update_master_sheet.py` and for
+  the Proximity column in this same table). This section is manually maintained (not
+  rebuilt by any script), so the highlight persists until the section's row range or
+  membership changes by hand — it isn't reapplied automatically by the pipeline.
+
 ## How to log new feedback
 
 Append a dated entry under "Open items" or move confirmed fixes up to "Confirmed

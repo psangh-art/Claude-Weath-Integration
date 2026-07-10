@@ -24,7 +24,7 @@ import openpyxl
 
 from ticker_normalize import normalize, master_tickers_match
 
-SHEET_NAME = 'Stocks Buy Strategy'
+SHEET_NAME = 'Investments'
 COL_CHART = 1
 COL_TICKER = 3
 COL_ALERT_LOW = 12
