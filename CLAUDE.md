@@ -93,6 +93,17 @@ end to end, beyond just the chart/indicator/alert export:
   what was captured. Runs even if an earlier step stopped partway through — it reports
   honestly on whatever manifests do or don't exist rather than requiring a fully clean
   run.
+- **`cleanup_downloads.py`** (added 2026-07-10) runs automatically as the final step
+  (`python scripts/cleanup_downloads.py --apply`; omit `--apply` for a dry run) and
+  flags redundant files in `~/Downloads` by renaming them with a `Delete ` prefix —
+  it **never deletes anything itself**, so the rename is always reversible and the
+  actual removal stays a manual, human decision. Flags: (1) old workbook backups
+  (`<name>.bak-*`) once a newer backup of the same base file exists — never flags the
+  sole/newest backup; (2) Fidelity `TransactionHistory*.csv`/`transactions*.*` files
+  older than whatever `fidelity_import_state.json` currently has recorded as
+  ingested for that type; (3) numbered duplicate workbook saves (`<stem>_<N>.<ext>`)
+  once a newer canonical `<stem>.<ext>` exists. Any file already prefixed `Delete `
+  is skipped on the next run, so re-running is always safe/idempotent.
 
 **`Claude_Code_Handoff_Instructions.md`** (kept in the user's Downloads, not this repo)
 is the full behavioural spec this all implements — schema, colour rules, ticker
