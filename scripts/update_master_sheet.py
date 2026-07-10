@@ -32,6 +32,7 @@ COL_ALERT_LOW_SOURCE = 13
 COL_ALERT_HIGH = 15
 COL_CLAUDE_NOTES = 31
 HEADER_ROW = 2
+LAST_CHECKED_HEADER = 'Chart Last Checked'
 
 CHART_YES_FONT = 'FF276221'
 CHART_YES_FILL = 'FFC6EFCE'
@@ -44,6 +45,20 @@ REFRESH_NOISE_THRESHOLD = 0.03  # don't rewrite if new Alert Low is within 3% of
 def load_json(path):
     with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+
+def get_or_create_last_checked_col(ws):
+    """Find the 'Chart Last Checked' column by header text, or append a new one
+    at the end of the sheet if it doesn't exist yet. Stable across runs once
+    created — always looked up by header, never assumed to be a fixed index,
+    since this column was added after the sheet's original layout."""
+    max_col = ws.max_column
+    for c in range(1, max_col + 1):
+        if ws.cell(row=HEADER_ROW, column=c).value == LAST_CHECKED_HEADER:
+            return c
+    new_col = max_col + 1
+    ws.cell(row=HEADER_ROW, column=new_col, value=LAST_CHECKED_HEADER)
+    return new_col
 
 
 def build_master_index(ws):
@@ -77,8 +92,12 @@ def append_note(ws, row, note):
 
 def process(master_ws, charts, channel_by_ticker):
     """Returns (applied, rejected, skipped_manual, skipped_noise, unmatched) lists of
-    dicts describing what happened for each charted ticker, for the feedback log."""
+    dicts describing what happened for each charted ticker, for the feedback log.
+    Every row that was actually looked at this run (applied, rejected, manual-skipped,
+    or noise-skipped) gets a 'Chart Last Checked' timestamp — 'unmatched' rows are
+    NOT stamped, since those were never actually attempted against this ticker."""
     index = build_master_index(master_ws)
+    col_last_checked = get_or_create_last_checked_col(master_ws)
     today = date.today().isoformat()
 
     applied, rejected, skipped_manual, skipped_noise, unmatched = [], [], [], [], []
@@ -115,33 +134,78 @@ def process(master_ws, charts, channel_by_ticker):
 
         if detection.get('reason'):
             rejected.append({'ticker': master_ticker, 'company': company, 'reason': detection['reason']})
+            master_ws.cell(row=master_row, column=col_last_checked, value=today)
             continue
 
         existing_source = master_ws.cell(row=master_row, column=COL_ALERT_LOW_SOURCE).value
         if existing_source == 'Manual':
             skipped_manual.append({'ticker': master_ticker, 'company': company})
+            master_ws.cell(row=master_row, column=col_last_checked, value=today)
             continue
 
+        kind = detection.get('kind', 'parallel')
         lower, upper = detection['lower'], detection['upper']
-        alert_low = round(lower * 1.05, 2)
-        alert_high = upper
 
-        existing_low = master_ws.cell(row=master_row, column=COL_ALERT_LOW).value
-        if existing_source == 'Auto' and isinstance(existing_low, (int, float)) and existing_low:
-            pct_change = abs(alert_low - existing_low) / existing_low
-            if pct_change <= REFRESH_NOISE_THRESHOLD:
-                skipped_noise.append({'ticker': master_ticker, 'company': company, 'existing_low': existing_low, 'new_low': alert_low})
-                continue
+        if kind == 'parallel':
+            alert_low = round(lower * 1.05, 2)
+            alert_high = upper
 
-        master_ws.cell(row=master_row, column=COL_ALERT_LOW, value=alert_low)
-        master_ws.cell(row=master_row, column=COL_ALERT_LOW_SOURCE, value='Auto')
-        master_ws.cell(row=master_row, column=COL_ALERT_HIGH, value=alert_high)
-        set_chart_flag(master_ws, master_row, True)
-        append_note(master_ws, master_row,
-                    f"Auto: Alert Low {alert_low}, Alert High {alert_high} ({today})")
+            existing_low = master_ws.cell(row=master_row, column=COL_ALERT_LOW).value
+            if existing_source == 'Auto' and isinstance(existing_low, (int, float)) and existing_low:
+                pct_change = abs(alert_low - existing_low) / existing_low
+                if pct_change <= REFRESH_NOISE_THRESHOLD:
+                    skipped_noise.append({'ticker': master_ticker, 'company': company, 'existing_low': existing_low, 'new_low': alert_low})
+                    master_ws.cell(row=master_row, column=col_last_checked, value=today)
+                    continue
 
-        applied.append({'ticker': master_ticker, 'company': company, 'lower': lower, 'upper': upper,
-                         'alert_low': alert_low, 'alert_high': alert_high})
+            master_ws.cell(row=master_row, column=COL_ALERT_LOW, value=alert_low)
+            master_ws.cell(row=master_row, column=COL_ALERT_LOW_SOURCE, value='Auto')
+            master_ws.cell(row=master_row, column=COL_ALERT_HIGH, value=alert_high)
+            set_chart_flag(master_ws, master_row, True)
+            append_note(master_ws, master_row,
+                        f"Auto: Alert Low {alert_low}, Alert High {alert_high} ({today})")
+            applied.append({'ticker': master_ticker, 'company': company, 'lower': lower, 'upper': upper,
+                             'alert_low': alert_low, 'alert_high': alert_high})
+
+        elif kind == 'single_low':
+            # No parallel channel — a single trendline sat below the current price,
+            # so it's used as Alert Low only. Alert High is left completely
+            # untouched (not cleared, not guessed).
+            alert_low = round(lower * 1.05, 2)
+
+            existing_low = master_ws.cell(row=master_row, column=COL_ALERT_LOW).value
+            if existing_source == 'Auto' and isinstance(existing_low, (int, float)) and existing_low:
+                pct_change = abs(alert_low - existing_low) / existing_low
+                if pct_change <= REFRESH_NOISE_THRESHOLD:
+                    skipped_noise.append({'ticker': master_ticker, 'company': company, 'existing_low': existing_low, 'new_low': alert_low})
+                    master_ws.cell(row=master_row, column=col_last_checked, value=today)
+                    continue
+
+            master_ws.cell(row=master_row, column=COL_ALERT_LOW, value=alert_low)
+            master_ws.cell(row=master_row, column=COL_ALERT_LOW_SOURCE, value='Auto')
+            set_chart_flag(master_ws, master_row, True)
+            append_note(master_ws, master_row,
+                        f"Auto: Alert Low {alert_low} from single trendline below price ({today})")
+            applied.append({'ticker': master_ticker, 'company': company, 'lower': lower, 'upper': None,
+                             'alert_low': alert_low, 'alert_high': None})
+
+        elif kind == 'single_high':
+            # Single trendline above the current price -> Alert High only; Alert
+            # Low is left completely untouched.
+            alert_high = upper
+            master_ws.cell(row=master_row, column=COL_ALERT_HIGH, value=alert_high)
+            set_chart_flag(master_ws, master_row, True)
+            append_note(master_ws, master_row,
+                        f"Auto: Alert High {alert_high} from single trendline above price ({today})")
+            applied.append({'ticker': master_ticker, 'company': company, 'lower': None, 'upper': upper,
+                             'alert_low': None, 'alert_high': alert_high})
+
+        else:
+            rejected.append({'ticker': master_ticker, 'company': company, 'reason': f'unrecognized detection kind: {kind!r}'})
+            master_ws.cell(row=master_row, column=col_last_checked, value=today)
+            continue
+
+        master_ws.cell(row=master_row, column=col_last_checked, value=today)
 
     return applied, rejected, skipped_manual, skipped_noise, unmatched
 
@@ -204,7 +268,9 @@ def _update_coverage_tracker(content, applied, rejected, unmatched, today):
         if a['ticker'] in rows:
             del rows[a['ticker']]
             order.remove(a['ticker'])
-            resolved_bullets.append(f"- **{a['ticker']}** ✅ — Applied: Alert Low {a['alert_low']}, Alert High {a['alert_high']}.")
+            alert_low = a['alert_low'] if a['alert_low'] is not None else 'unchanged'
+            alert_high = a['alert_high'] if a['alert_high'] is not None else 'unchanged'
+            resolved_bullets.append(f"- **{a['ticker']}** ✅ — Applied: Alert Low {alert_low}, Alert High {alert_high}.")
 
     for item, reason_key in [(r, 'reason') for r in rejected] + [(u, 'reason') for u in unmatched]:
         ticker = item['ticker']
@@ -251,7 +317,9 @@ def update_feedback_md(feedback_path, applied, rejected, skipped_manual, skipped
         lines_new.append(f"### ✅ Applied — {len(applied)} ticker{plural} updated with fresh Alert Low/High\n\n")
         lines_new.append("| Ticker | Lower | Upper | Alert Low | Alert High |\n|---|---|---|---|---|\n")
         for a in applied:
-            lines_new.append(f"| {a['ticker']} | {a['lower']} | {a['upper']} | {a['alert_low']} | {a['alert_high']} |\n")
+            cells = [a['lower'], a['upper'], a['alert_low'], a['alert_high']]
+            lower, upper, alert_low, alert_high = ('—' if c is None else c for c in cells)
+            lines_new.append(f"| {a['ticker']} | {lower} | {upper} | {alert_low} | {alert_high} |\n")
         lines_new.append("\n")
 
     if skipped_noise:

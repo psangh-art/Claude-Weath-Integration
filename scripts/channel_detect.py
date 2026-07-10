@@ -9,12 +9,19 @@ or at TESSERACT_CMD env var. Install: https://github.com/UB-Mannheim/tesseract/w
 (on Windows, a one-time interactive install — this cannot be scripted unattended
 because the installer needs a UAC prompt).
 
+Also handles the case where a chart has a single trendline rather than a parallel
+channel: whichever side of the current price ("known_price") it falls on decides
+whether it's used as Alert Low or Alert High (kind: "single_low"/"single_high").
+Never guesses direction without a known_price to compare against.
+
 Usage:
   python channel_detect.py <image_path>                  -> one JSON result
   python channel_detect.py --batch <manifest.json>        -> JSON list of results
-    manifest: [{"ticker": str, "screenshot": str}, ...]
-    output:   [{"ticker": str, "screenshot": str, "lower": float|None,
-                "upper": float|None, "x_frac": float|None, "reason": str|None}, ...]
+    manifest: [{"ticker": str, "screenshot": str, "known_price": float|None}, ...]
+    output:   [{"ticker": str, "screenshot": str,
+                "kind": "parallel"|"single_low"|"single_high"|None,
+                "lower": float|None, "upper": float|None,
+                "x_frac": float|None, "reason": str|None}, ...]
 """
 import sys
 import os
@@ -47,9 +54,11 @@ def is_channel_blue(r, g, b):
 
 
 def read_channel(image_path):
-    """Returns (lower_boundary, upper_boundary, x_frac_used, reason) — reason is
-    None on success, or a short string explaining why detection was rejected/failed.
-    Never guess — a rejection is a valid, expected, and safe outcome."""
+    """Returns a dict {kind, lower, upper, single_price, x_frac, reason}.
+    kind is 'parallel' (two channel-blue lines -> lower+upper both set),
+    'single' (exactly one line -> single_price set, direction not yet decided),
+    or None (nothing usable found -> reason explains why). Never guess — a
+    rejection is a valid, expected, and safe outcome."""
     img = Image.open(image_path).convert('RGB')
     arr = np.array(img)
     h, w, _ = arr.shape
@@ -68,8 +77,11 @@ def read_channel(image_path):
             continue
     labels.sort(key=lambda x: x[1])  # sort top-to-bottom
 
+    def fail(reason):
+        return {'kind': None, 'lower': None, 'upper': None, 'single_price': None, 'x_frac': None, 'reason': reason}
+
     if not labels:
-        return None, None, None, 'no OCR-readable axis labels'
+        return fail('no OCR-readable axis labels')
 
     # 2. Filter stray OCR noise — axis labels should be strictly monotonic
     #    decreasing top-to-bottom. A common failure: an x-axis year label (e.g.
@@ -79,16 +91,21 @@ def read_channel(image_path):
         if val < clean[-1][0]:
             clean.append((val, y))
     if len(clean) < 3:
-        return None, None, None, 'fewer than 3 clean axis labels after noise filtering'
+        return fail('fewer than 3 clean axis labels after noise filtering')
 
     # 3. Least-squares fit across ALL clean labels, not just two endpoints.
     vals = np.array([c[0] for c in clean])
     ys = np.array([c[1] for c in clean])
     a, b = np.polyfit(ys, vals, 1)  # price = a*y + b
 
-    # 4/5. Scan multiple x-positions right-to-left. Require EXACTLY 2 line
-    #    clusters — more means an extra overlay is present (ambiguous), fewer
-    #    means no channel is drawn.
+    # 4/5. Scan multiple x-positions right-to-left. Prefer an x-position with
+    #    EXACTLY 2 line clusters (a parallel channel). If none exists, fall back
+    #    to the first x-position with EXACTLY 1 cluster (a single trendline,
+    #    rather than a parallel channel) — the caller decides whether that's an
+    #    Alert Low or Alert High based on which side of the current price it
+    #    falls on. More than 2 clusters means an extra overlay is present
+    #    (ambiguous); 0 means nothing is drawn there.
+    single_fallback = None
     for x_frac in [0.85, 0.80, 0.75, 0.70, 0.60, 0.50, 0.40, 0.30, 0.20, 0.10]:
         x = int(w * x_frac)
         rows = [y for y in range(h) if is_channel_blue(*arr[y, x])]
@@ -103,39 +120,77 @@ def read_channel(image_path):
             lower_price = a * centers[-1] + b
             upper_price = a * centers[0] + b
             if lower_price > 0 and lower_price < upper_price:
-                return round(lower_price, 2), round(upper_price, 2), x_frac, None
+                return {'kind': 'parallel', 'lower': round(lower_price, 2), 'upper': round(upper_price, 2),
+                        'single_price': None, 'x_frac': x_frac, 'reason': None}
+        elif len(centers) == 1 and single_fallback is None:
+            price = a * centers[0] + b
+            if price > 0:
+                single_fallback = {'kind': 'single', 'lower': None, 'upper': None,
+                                    'single_price': round(price, 2), 'x_frac': x_frac, 'reason': None}
 
-    return None, None, None, 'no x-position found with exactly 2 channel-blue line clusters'
+    if single_fallback is not None:
+        return single_fallback
+    return fail('no x-position found with exactly 1 or 2 channel-blue line clusters')
 
 
-def plausibility_filter(lower, upper, known_price=None):
+def plausibility_filter(kind, lower, upper, known_price=None):
     """Returns None if the reading passes all checks, else a rejection reason string.
-    Applied AFTER read_channel() succeeds, before the caller trusts the result."""
-    if lower is None or upper is None:
-        return 'no channel detected'
-    width_pct = (upper - lower) / lower
-    if width_pct < 0.08:
-        return f'width filter: {width_pct:.1%} < 8% (likely noise, not the real channel)'
-    if width_pct > 1.50:
-        return f'width filter: {width_pct:.1%} > 150% (likely unrelated lines picked up)'
-    if known_price is not None:
-        # Real price should fall within or very near the detected channel.
-        margin = (upper - lower) * 0.15
-        if known_price < lower - margin or known_price > upper + margin:
-            return f'known price {known_price} is physically implausible vs detected channel [{lower}, {upper}]'
-    return None
+    Applied AFTER read_channel()/direction-resolution succeeds, before the caller
+    trusts the result."""
+    if kind == 'parallel':
+        if lower is None or upper is None:
+            return 'no channel detected'
+        width_pct = (upper - lower) / lower
+        if width_pct < 0.08:
+            return f'width filter: {width_pct:.1%} < 8% (likely noise, not the real channel)'
+        if width_pct > 1.50:
+            return f'width filter: {width_pct:.1%} > 150% (likely unrelated lines picked up)'
+        if known_price is not None:
+            # Real price should fall within or very near the detected channel.
+            margin = (upper - lower) * 0.15
+            if known_price < lower - margin or known_price > upper + margin:
+                return f'known price {known_price} is physically implausible vs detected channel [{lower}, {upper}]'
+        return None
+    if kind in ('single_low', 'single_high'):
+        price = lower if kind == 'single_low' else upper
+        if known_price is None:
+            return 'single trendline detected but no current price available to determine Alert Low vs Alert High'
+        # A single trendline should sit reasonably close to the current price —
+        # this is a looser sanity check than the parallel-channel width filter
+        # (there's no second boundary to cross-validate against), just enough
+        # to catch a line that's obviously unrelated to this instrument.
+        ratio = price / known_price
+        if ratio < 0.3 or ratio > 3.0:
+            return f'single trendline price {price} is implausibly far from known price {known_price} (ratio {ratio:.2f})'
+        return None
+    return 'no channel or trendline detected'
 
 
 def process_one(ticker, screenshot_path, known_price=None):
     if not screenshot_path or not os.path.exists(screenshot_path):
-        return {'ticker': ticker, 'screenshot': screenshot_path, 'lower': None, 'upper': None,
+        return {'ticker': ticker, 'screenshot': screenshot_path, 'kind': None, 'lower': None, 'upper': None,
                  'x_frac': None, 'reason': 'screenshot file not found'}
-    lower, upper, x_frac, reason = read_channel(screenshot_path)
+
+    raw = read_channel(screenshot_path)
+    kind, lower, upper, x_frac, reason = raw['kind'], raw['lower'], raw['upper'], raw['x_frac'], raw['reason']
+
+    if reason is None and kind == 'single':
+        # A lone trendline: decide Alert Low vs Alert High by which side of the
+        # current price it falls on. Never guess when we don't have a price to
+        # compare against — reject instead.
+        if known_price is None:
+            kind, reason = None, 'single trendline detected but no current price available to determine Alert Low vs Alert High'
+        elif raw['single_price'] < known_price:
+            kind, lower, upper = 'single_low', raw['single_price'], None
+        else:
+            kind, lower, upper = 'single_high', None, raw['single_price']
+
     if reason is None:
-        reason = plausibility_filter(lower, upper, known_price)
+        reason = plausibility_filter(kind, lower, upper, known_price)
         if reason is not None:
-            lower, upper, x_frac = None, None, None
-    return {'ticker': ticker, 'screenshot': screenshot_path, 'lower': lower, 'upper': upper,
+            kind, lower, upper, x_frac = None, None, None, None
+
+    return {'ticker': ticker, 'screenshot': screenshot_path, 'kind': kind, 'lower': lower, 'upper': upper,
              'x_frac': x_frac, 'reason': reason}
 
 

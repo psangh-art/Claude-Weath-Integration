@@ -146,6 +146,7 @@ async function main() {
     // byte-identical broken output for the same non-focused panes regardless of wait
     // time, ruling out a load-timing race. So each pane must be focused individually
     // before resetting it.
+    const lastPriceByPaneIndex = {};
     for (let pi = 0; pi < panes.length; pi++) {
       const p = panes[pi];
       await pane.focus({ index: p.index });
@@ -171,6 +172,18 @@ async function main() {
           });
         }
       }
+
+      // Also read the pane's own last bar (close price) while it's focused —
+      // this is the live "current price" used to decide single-trendline
+      // direction (above/below price -> Alert High/Low) and to stamp how
+      // fresh each chart's read is. It does NOT touch Stocks_Buy_Strategy.xlsx's
+      // own GOOGLEFINANCE-formula price column (see CLAUDE.md) — this is a
+      // separate, pipeline-owned value.
+      try {
+        lastPriceByPaneIndex[p.index] = await data.getLastPrice();
+      } catch {
+        lastPriceByPaneIndex[p.index] = null;
+      }
     }
 
     const rawFilename = `layout_${tag}_raw`;
@@ -189,12 +202,19 @@ async function main() {
     const cropResult = spawnSync('python', [path.join(__dirname, 'crop_panes.py'), shot.file_path, CROP_MANIFEST_PATH, cropDir], { stdio: 'inherit' });
     if (cropResult.status !== 0) throw new Error('pane crop failed');
 
-    const layoutCharts = panes.map((p, pi) => ({
-      ticker: p.ticker || p.symbol || null,
-      description: p.description || null,
-      screenshot: path.join(cropDir, crops[pi].filename),
-      error: null,
-    }));
+    const priceCheckedAt = new Date().toISOString();
+    const layoutCharts = panes.map((p, pi) => {
+      const lastPrice = lastPriceByPaneIndex[p.index] || null;
+      return {
+        ticker: p.ticker || p.symbol || null,
+        description: p.description || null,
+        screenshot: path.join(cropDir, crops[pi].filename),
+        error: null,
+        price: lastPrice ? lastPrice.close : null,
+        priceBarTime: lastPrice ? lastPrice.time : null,
+        priceCheckedAt,
+      };
+    });
     log(`  captured ${panes.length} chart(s)`);
     return { status: 'ok', charts: layoutCharts, indicators };
   }

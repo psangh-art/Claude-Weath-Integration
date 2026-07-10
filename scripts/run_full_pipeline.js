@@ -58,7 +58,7 @@ function main() {
   for (const row of charts) {
     if (!row.ticker || !row.screenshot || seen.has(row.ticker)) continue;
     seen.add(row.ticker);
-    channelInput.push({ ticker: row.ticker, screenshot: row.screenshot });
+    channelInput.push({ ticker: row.ticker, screenshot: row.screenshot, known_price: row.price ?? null });
   }
   writeFileSync(CHANNEL_INPUT, JSON.stringify(channelInput, null, 2));
   console.log(`Running channel detection on ${channelInput.length} distinct tickers...`);

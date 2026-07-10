@@ -119,11 +119,14 @@ def section_channels(charts, channel_results):
         return "".join(lines), {'attempted': 0, 'succeeded': 0, 'rejected': 0}
 
     attempted = len(channel_results)
-    succeeded = [c for c in channel_results if c.get('lower') is not None and c.get('upper') is not None]
+    succeeded = [c for c in channel_results if c.get('kind') in ('parallel', 'single_low', 'single_high')]
     rejected = [c for c in channel_results if c not in succeeded]
+    parallel = [c for c in succeeded if c.get('kind') == 'parallel']
+    single = [c for c in succeeded if c.get('kind') in ('single_low', 'single_high')]
 
     lines.append(f"- **{attempted} distinct tickers attempted**\n")
-    lines.append(f"- ✅ {len(succeeded)} had both upper and lower boundaries identified\n")
+    lines.append(f"- ✅ {len(parallel)} had both upper and lower boundaries identified (parallel channel)\n")
+    lines.append(f"- ✅ {len(single)} had a single trendline resolved to Alert Low/High by current price\n")
     lines.append(f"- ❌ {len(rejected)} rejected or not detected\n\n")
 
     if rejected:
@@ -135,10 +138,19 @@ def section_channels(charts, channel_results):
             lines.append(f"| {reason} | {count} |\n")
         lines.append("\n")
 
-    lines.append("### Tickers with a successful read\n\n| Ticker | Lower | Upper |\n|---|---|---|\n")
-    for c in succeeded:
-        lines.append(f"| {c['ticker']} | {c['lower']} | {c['upper']} |\n")
-    lines.append("\n")
+    if parallel:
+        lines.append("### Tickers with a parallel-channel read\n\n| Ticker | Lower | Upper |\n|---|---|---|\n")
+        for c in parallel:
+            lines.append(f"| {c['ticker']} | {c['lower']} | {c['upper']} |\n")
+        lines.append("\n")
+
+    if single:
+        lines.append("### Tickers with a single-trendline read\n\n| Ticker | Kind | Price |\n|---|---|---|\n")
+        for c in single:
+            price = c['lower'] if c['kind'] == 'single_low' else c['upper']
+            lines.append(f"| {c['ticker']} | {c['kind']} | {price} |\n")
+        lines.append("\n")
+
     return "".join(lines), {'attempted': attempted, 'succeeded': len(succeeded), 'rejected': len(rejected)}
 
 
@@ -205,7 +217,9 @@ def section_master_sheet(master_result):
     if master_result.get('applied'):
         lines.append("### Applied this run\n\n| Ticker | Lower | Upper | Alert Low | Alert High |\n|---|---|---|---|---|\n")
         for a in master_result['applied']:
-            lines.append(f"| {a['ticker']} | {a['lower']} | {a['upper']} | {a['alert_low']} | {a['alert_high']} |\n")
+            cells = [a.get('lower'), a.get('upper'), a.get('alert_low'), a.get('alert_high')]
+            lower, upper, alert_low, alert_high = ('—' if c is None else c for c in cells)
+            lines.append(f"| {a['ticker']} | {lower} | {upper} | {alert_low} | {alert_high} |\n")
         lines.append("\n")
     return "".join(lines), {'ran': True}
 

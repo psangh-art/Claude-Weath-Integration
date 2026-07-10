@@ -6,6 +6,28 @@ import { evaluate } from '../connection.js';
  * see pane.focus()). Marker/label-style indicators (e.g. "Dividend yield %")
  * don't populate the Data Window at all and are simply omitted, not an error.
  */
+/**
+ * Read the latest bar (time/OHLCV) for the currently FOCUSED pane's main series —
+ * same focus-scoping as getStudyValues(). This is the live "current price" used to
+ * decide single-trendline direction (above/below price -> Alert High/Low) and to
+ * stamp how fresh a chart's read is; it does NOT touch Stocks_Buy_Strategy.xlsx's
+ * own GOOGLEFINANCE-formula price column, which only calculates in real Google
+ * Sheets, not this pipeline.
+ */
+export async function getLastPrice() {
+  const data = await evaluate(`
+    (function() {
+      var chart = window.TradingViewApi._activeChartWidgetWV.value()._chartWidget;
+      var bars = chart.model().mainSeries().bars();
+      if (!bars || typeof bars.lastIndex !== 'function') return null;
+      var last = bars.valueAt(bars.lastIndex());
+      if (!last) return null;
+      return { time: last[0], open: last[1], high: last[2], low: last[3], close: last[4], volume: last[5] || 0 };
+    })()
+  `);
+  return data;
+}
+
 export async function getStudyValues() {
   const data = await evaluate(`
     (function() {

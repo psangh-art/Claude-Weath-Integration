@@ -30,10 +30,11 @@ def add_charts_sheet(wb, rows):
     ws = wb.active
     ws.title = 'Charts'
     ws.append(['Layout ID', 'Chart ID', 'Layout Name', 'Symbol', 'Company',
-               'Google Finance Ticker', 'Google Finance Formula', 'Screenshot'])
+               'Google Finance Ticker', 'Google Finance Formula', 'Screenshot',
+               'Current Price (TradingView)', 'Price Checked At'])
     for cell in ws[1]:
         cell.font = cell.font.copy(bold=True)
-    widths = [15, 15, 32, 16, 32, 20, 40, 100]
+    widths = [15, 15, 32, 16, 32, 20, 40, 100, 20, 22]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
 
@@ -64,6 +65,8 @@ def add_charts_sheet(wb, rows):
         ws.cell(row=r, column=6, value=norm['google_finance_ticker'] if norm else None)
         ws.cell(row=r, column=7, value=norm['google_finance_formula'] if norm else None)
         ws.cell(row=r, column=8, value=screenshot_value)
+        ws.cell(row=r, column=9, value=row.get('price'))
+        ws.cell(row=r, column=10, value=row.get('priceCheckedAt'))
     return len(rows)
 
 def add_simple_sheet(wb, title, header, rows, keys, bold_cols=()):
