@@ -1375,6 +1375,7 @@ def build_summary_data(account_summary_path, all_months):
         "liam_fid_total": liam_fid_total,
         "jayne_fid_total": jayne_fid_total,
         "may_idx": may_idx,
+        "_account_summary_path": account_summary_path,
     }
 
 
