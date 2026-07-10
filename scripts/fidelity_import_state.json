@@ -3,13 +3,13 @@
   "historic": {
     "source_file": "TransactionHistory (3).csv",
     "source_mtime": "2026-07-10T13:47:53.193051",
-    "imported_at": "2026-07-10T14:01:00",
+    "imported_at": "2026-07-10T14:17:00",
     "output_file": "spending_summary.xlsx"
   },
   "pending": {
     "source_file": "TransactionHistory (4).csv",
     "source_mtime": "2026-07-10T13:47:57.476607",
-    "imported_at": "2026-07-10T14:01:00",
-    "note": "Captured for tracking only — current spending_summary.py logic filters to Status == 'Completed', so pending-status rows are not yet consumed by any calculation. Revisit if pending transactions need to feed into holdings/spend figures."
+    "imported_at": "2026-07-10T14:17:00",
+    "note": "Wired into the holdings calc as of 2026-07-10 (apply_pending_holdings in spending_summary.py) — net units from pending Buy/Sell orders are layered on top of settled AccountSummary/transaction-history holdings, since those only reflect settled trades. Income/spend totals still only count Status == 'Completed' rows, to avoid double-counting a pending payment once it later posts as Completed in a future export."
   }
 }
