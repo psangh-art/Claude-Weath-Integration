@@ -70,15 +70,65 @@ ACCOUNT_LABELS = {
 FAMILY_ORDER = ["Paul", "Susan", "Jayne", "Liam"]
 
 
-def build_holdings(fidelity_path: str, account_summary_path: str = None) -> dict:
+def apply_pending_holdings(holdings: dict, pending_path: str) -> dict:
+    """
+    Adds net units from pending (not-yet-settled) Buy/Sell orders on top of a
+    holdings dict. AccountSummary and completed-transaction history only
+    reflect *settled* trades, so a pending sell/buy that hasn't cleared yet
+    wouldn't otherwise show up until the next export. A pending export has
+    Completion date == 'Pending' on every row and Status values of
+    Priced/Ordered rather than Completed — it's read here without a Status
+    filter since none of its rows are ever 'Completed'.
+
+    Returns a new dict; does not mutate the input.
+    """
+    if not pending_path or not os.path.exists(pending_path):
+        return holdings
+
+    FAMILY_ACCS = set(ACCOUNT_OWNER.keys())
+    with open(pending_path, encoding="utf-8-sig") as f:
+        content = f.read()
+    lines = content.replace("\r", "").split("\n")
+    try:
+        start = next(i for i, l in enumerate(lines) if l.startswith("Order date"))
+    except StopIteration:
+        return holdings
+
+    result = dict(holdings)
+    reader = csv.DictReader(io.StringIO("\n".join(lines[start:])))
+    for row in reader:
+        t = row.get("Transaction type", "").strip()
+        if t not in ("Buy", "Sell"):
+            continue
+        acc = row.get("Account Number", "").strip()
+        if acc not in FAMILY_ACCS:
+            continue
+        inv = row.get("Investments", "").strip().strip('"')
+        if not inv or inv == "Cash":
+            continue
+        try:
+            qty = float(row.get("Quantity", "0") or 0)
+        except (ValueError, TypeError):
+            continue
+        delta = qty if t == "Buy" else -qty
+        result[(acc, inv)] = result.get((acc, inv), 0) + delta
+
+    return {k: v for k, v in result.items() if v > 0.001}
+
+
+def build_holdings(fidelity_path: str, account_summary_path: str = None, pending_path: str = None) -> dict:
     """
     Returns dict: (account, fund_name) -> net units held.
 
     If account_summary_path is provided (AccountSummary CSV export), uses that
     as the authoritative source — it reflects exact holdings at export date.
     Falls back to calculating net units from transaction history otherwise.
+
+    If pending_path is provided, pending Buy/Sell orders are layered on top
+    via apply_pending_holdings — see that function for why.
     """
     FAMILY_ACCS = set(ACCOUNT_OWNER.keys())
+    holdings = None
 
     # ── Primary: AccountSummary CSV ───────────────────────────────────────────
     if account_summary_path and os.path.exists(account_summary_path):
@@ -108,32 +158,33 @@ def build_holdings(fidelity_path: str, account_summary_path: str = None) -> dict
                     continue
                 if qty > 0:
                     holdings[(acc, fund)] = qty
-            return holdings
 
     # ── Fallback: calculate from transaction history ───────────────────────────
-    with open(fidelity_path) as f:
-        content = f.read()
-    lines = content.replace("\r", "").split("\n")
-    start = next(i for i, l in enumerate(lines) if l.startswith("Order date"))
-    reader = csv.DictReader(io.StringIO("\n".join(lines[start:])))
-    rows = [r for r in reader if r.get("Status", "").strip() == "Completed"]
+    if holdings is None:
+        with open(fidelity_path) as f:
+            content = f.read()
+        lines = content.replace("\r", "").split("\n")
+        start = next(i for i, l in enumerate(lines) if l.startswith("Order date"))
+        reader = csv.DictReader(io.StringIO("\n".join(lines[start:])))
+        rows = [r for r in reader if r.get("Status", "").strip() == "Completed"]
 
-    from collections import defaultdict
-    holdings = defaultdict(float)
-    for r in rows:
-        t = r["Transaction type"].strip()
-        acc = r["Account Number"].strip()
-        inv = r["Investments"].strip().strip('"')
-        try:
-            qty = float(r["Quantity"])
-        except (ValueError, KeyError):
-            continue
-        if t == "Buy":
-            holdings[(acc, inv)] += qty
-        elif t == "Sell":
-            holdings[(acc, inv)] -= qty
+        from collections import defaultdict
+        raw_holdings = defaultdict(float)
+        for r in rows:
+            t = r["Transaction type"].strip()
+            acc = r["Account Number"].strip()
+            inv = r["Investments"].strip().strip('"')
+            try:
+                qty = float(r["Quantity"])
+            except (ValueError, KeyError):
+                continue
+            if t == "Buy":
+                raw_holdings[(acc, inv)] += qty
+            elif t == "Sell":
+                raw_holdings[(acc, inv)] -= qty
+        holdings = {k: v for k, v in raw_holdings.items() if v > 0.001}
 
-    return {k: v for k, v in holdings.items() if v > 0.001}
+    return apply_pending_holdings(holdings, pending_path)
 
 
 # ── AMEX categorisation ────────────────────────────────────────────────────────
@@ -3445,6 +3496,10 @@ def main():
     fid_path     = args[2] if len(args) > 2 else "TransactionHistory.csv"
     summary_path = args[3] if len(args) > 3 else "AccountSummary.csv"
     output_path  = args[4] if len(args) > 4 else "spending_summary.xlsx"
+    # Optional: a pending-orders export (every row has Completion date ==
+    # 'Pending') — net units from pending Buy/Sell orders are layered on top
+    # of the settled holdings figure. Not required; omit to skip.
+    pending_path = args[5] if len(args) > 5 else None
 
     for path in (amex_path, bar_path, fid_path):
         if not os.path.exists(path):
@@ -3454,6 +3509,8 @@ def main():
     print(f"  Amex:     {amex_path}")
     print(f"  Barclays: {bar_path}")
     print(f"  Fidelity: {fid_path}")
+    if pending_path:
+        print(f"  Pending:  {pending_path}")
     print(f"  Output:   {output_path}\n")
 
     print("Loading Amex...")
@@ -3469,9 +3526,22 @@ def main():
     print(f"  {len(fid_df)} income entries\n")
 
     print("Building holdings...")
-    holdings = build_holdings(fid_path, summary_path)
+    settled_holdings = build_holdings(fid_path, summary_path)
+    holdings = build_holdings(fid_path, summary_path, pending_path)
     src = "AccountSummary.csv" if os.path.exists(summary_path) else "transaction history"
-    print(f"  {len(holdings)} positions (from {src})\n")
+    print(f"  {len(holdings)} positions (from {src})")
+    if pending_path and os.path.exists(pending_path):
+        changed = sorted(k for k in set(settled_holdings) | set(holdings)
+                          if round(settled_holdings.get(k, 0), 2) != round(holdings.get(k, 0), 2))
+        if changed:
+            print(f"  {len(changed)} position(s) adjusted by pending orders:")
+            for acc, fund in changed:
+                before = settled_holdings.get((acc, fund), 0)
+                after = holdings.get((acc, fund), 0)
+                print(f"    {acc} — {fund}: {before:,.2f} -> {after:,.2f}")
+        else:
+            print("  No pending Buy/Sell orders affected current holdings")
+    print()
 
     print("Building pivots...")
     spend_pivot, spend_months       = build_spending_pivot(amex_df, bar_df)
