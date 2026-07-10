@@ -20,7 +20,7 @@
 // re-verifying against real Excel first.
 import os from 'os';
 import path from 'path';
-import { writeFileSync, mkdirSync, appendFileSync } from 'fs';
+import { writeFileSync, mkdirSync, appendFileSync, existsSync, readdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
 import * as health from '../src/core/health.js';
@@ -38,6 +38,32 @@ const CROP_MANIFEST_PATH = path.join(__dirname, 'crop_manifest_tmp.json');
 const INDICATOR_MANIFEST_PATH = path.join(__dirname, 'indicator_manifest_tmp.json');
 const ALERTS_MANIFEST_PATH = path.join(__dirname, 'alerts_manifest_tmp.json');
 const CAPTURE_SCALE = 2;
+const MAX_RETRIES = 3;
+const RETRY_BACKOFF_MS = 4000;
+
+async function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// Reuse a previous run's screenshots for this layout tag if every retry has failed —
+// better than leaving an unattended periodic run with a permanently blank row. Crop
+// filenames are deterministic per pane index, so an exact prefix match is enough.
+function fallbackToStaleScreenshots(layout, tag) {
+  const screenshotsDir = path.join(__dirname, '..', 'screenshots');
+  const dirEntries = existsSync(screenshotsDir) ? readdirSync(screenshotsDir) : [];
+  const charts = [];
+  for (let pi = 1; pi <= 20; pi++) {
+    const match = dirEntries.find(f => f.startsWith(`layout_${tag}_pane_${String(pi).padStart(2, '0')}_`));
+    if (!match) break;
+    charts.push({
+      ticker: null,
+      description: null,
+      screenshot: path.join(screenshotsDir, match),
+      error: 'stale screenshot reused after repeated capture failures',
+    });
+  }
+  return charts;
+}
 
 // Every run is logged to its own timestamped file plus a fixed "latest" pointer
 // (both the raw console output and a structured summary), so a run's results can
@@ -96,29 +122,20 @@ async function main() {
   const layoutsSummary = [];
   const indicatorRows = [];
 
-  for (let i = 0; i < layouts.length; i++) {
-    const layout = layouts[i];
-    const tag = String(i + 1).padStart(2, '0');
-    log(`[${i + 1}/${layouts.length}] ${layout.name} — switching...`);
-
-    try {
-      await ui.layoutSwitch({ name: layout.name });
-    } catch (err) {
-      log(`  FAILED to switch: ${err.message}`);
-      manifest.push({ id: layout.id, chartId: layout.url, name: layout.name, ticker: null, description: null, screenshot: null, error: err.message });
-      layoutsSummary.push({ layoutId: layout.id, chartId: layout.url, name: layout.name, status: 'failed_to_switch', error: err.message, charts: [] });
-      continue;
-    }
+  // One attempt at capturing a single layout end to end. Throws on any transient
+  // failure (switch, crop) so the caller can retry; the "no measurable panes" case
+  // is a valid terminal outcome (full-layout screenshot), not a failure.
+  async function captureLayoutOnce(layout, tag) {
+    await ui.layoutSwitch({ name: layout.name });
 
     const paneData = await pane.waitForPanesToLoad();
     const panes = (paneData.panes || []).filter(p => p.rect && p.rect.width > 0 && p.rect.height > 0);
+    const indicators = [];
 
     if (panes.length === 0) {
       log(`  no measurable panes — falling back to full-layout screenshot`);
       const shot = await capture.captureScreenshot({ region: 'full', filename: `layout_${tag}_raw`, scale: CAPTURE_SCALE });
-      manifest.push({ id: layout.id, chartId: layout.url, name: layout.name, ticker: null, description: null, screenshot: shot.file_path, error: null });
-      layoutsSummary.push({ layoutId: layout.id, chartId: layout.url, name: layout.name, status: 'full_layout_fallback', error: null, charts: [{ ticker: null, description: null, screenshot: shot.file_path, error: null }] });
-      continue;
+      return { status: 'full_layout_fallback', charts: [{ ticker: null, description: null, screenshot: shot.file_path, error: null }], indicators };
     }
 
     // Reset zoom/pan to a consistent fitted view before capturing — a chart can be
@@ -142,7 +159,7 @@ async function main() {
       const studyResult = await data.getStudyValues();
       for (const study of studyResult.studies || []) {
         for (const [field, value] of Object.entries(study.values)) {
-          indicatorRows.push({
+          indicators.push({
             layoutId: layout.id,
             chartId: layout.url,
             layoutName: layout.name,
@@ -170,28 +187,59 @@ async function main() {
     writeFileSync(CROP_MANIFEST_PATH, JSON.stringify(crops, null, 2));
     const cropDir = path.dirname(shot.file_path);
     const cropResult = spawnSync('python', [path.join(__dirname, 'crop_panes.py'), shot.file_path, CROP_MANIFEST_PATH, cropDir], { stdio: 'inherit' });
+    if (cropResult.status !== 0) throw new Error('pane crop failed');
 
-    if (cropResult.status !== 0) {
-      log(`  FAILED to crop panes — falling back to full-layout screenshot for this row`);
-      manifest.push({ id: layout.id, chartId: layout.url, name: layout.name, ticker: null, description: null, screenshot: shot.file_path, error: 'pane crop failed' });
-      layoutsSummary.push({ layoutId: layout.id, chartId: layout.url, name: layout.name, status: 'crop_failed', error: 'pane crop failed', charts: [{ ticker: null, description: null, screenshot: shot.file_path, error: 'pane crop failed' }] });
-      continue;
-    }
-
-    const layoutCharts = [];
-    for (let pi = 0; pi < panes.length; pi++) {
-      const p = panes[pi];
-      const chartEntry = {
-        ticker: p.ticker || p.symbol || null,
-        description: p.description || null,
-        screenshot: path.join(cropDir, crops[pi].filename),
-        error: null,
-      };
-      manifest.push({ id: layout.id, chartId: layout.url, name: layout.name, ...chartEntry });
-      layoutCharts.push(chartEntry);
-    }
-    layoutsSummary.push({ layoutId: layout.id, chartId: layout.url, name: layout.name, status: 'ok', error: null, charts: layoutCharts });
+    const layoutCharts = panes.map((p, pi) => ({
+      ticker: p.ticker || p.symbol || null,
+      description: p.description || null,
+      screenshot: path.join(cropDir, crops[pi].filename),
+      error: null,
+    }));
     log(`  captured ${panes.length} chart(s)`);
+    return { status: 'ok', charts: layoutCharts, indicators };
+  }
+
+  for (let i = 0; i < layouts.length; i++) {
+    const layout = layouts[i];
+    const tag = String(i + 1).padStart(2, '0');
+    log(`[${i + 1}/${layouts.length}] ${layout.name} — switching...`);
+
+    let result = null;
+    let lastError = null;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        result = await captureLayoutOnce(layout, tag);
+        break;
+      } catch (err) {
+        lastError = err;
+        log(`  attempt ${attempt}/${MAX_RETRIES} failed: ${err.message}`);
+        if (attempt < MAX_RETRIES) {
+          await sleep(RETRY_BACKOFF_MS);
+          try {
+            await health.healthCheck();
+          } catch {
+            log('  still cannot reach TradingView — will retry anyway');
+          }
+        }
+      }
+    }
+
+    if (!result) {
+      const staleCharts = fallbackToStaleScreenshots(layout, tag);
+      if (staleCharts.length > 0) {
+        log(`  all ${MAX_RETRIES} attempts failed — reusing ${staleCharts.length} screenshot(s) from a previous run`);
+        result = { status: 'stale_fallback', charts: staleCharts, indicators: [] };
+      } else {
+        log(`  FAILED after ${MAX_RETRIES} attempts, no previous screenshot to fall back on: ${lastError?.message}`);
+        result = { status: 'failed', charts: [{ ticker: null, description: null, screenshot: null, error: lastError?.message || 'unknown error' }], indicators: [] };
+      }
+    }
+
+    for (const chartEntry of result.charts) {
+      manifest.push({ id: layout.id, chartId: layout.url, name: layout.name, ...chartEntry });
+    }
+    indicatorRows.push(...result.indicators);
+    layoutsSummary.push({ layoutId: layout.id, chartId: layout.url, name: layout.name, status: result.status, error: result.charts[0]?.error || null, charts: result.charts });
   }
 
   writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
@@ -257,8 +305,17 @@ function writeSummary({ startedAt, ok, reason, layoutsSummary, manifest = [], fa
   log(`Summary written to ${SUMMARY_PATH}`);
 }
 
-main().catch(err => {
-  log('\nExport failed:', err);
-  writeSummary({ startedAt, ok: false, reason: err.message, layoutsSummary: [] });
-  process.exitCode = 1;
-});
+main()
+  .catch(err => {
+    log('\nExport failed:', err);
+    writeSummary({ startedAt, ok: false, reason: err.message, layoutsSummary: [] });
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    // The CDP client (src/connection.js) keeps an open WebSocket that would
+    // otherwise hold the event loop open forever, so a parent process chaining
+    // this script via spawnSync (e.g. run_full_pipeline.js) would hang
+    // indefinitely waiting for this process to exit. Force it closed once
+    // main() has genuinely finished.
+    process.exit(process.exitCode || 0);
+  });

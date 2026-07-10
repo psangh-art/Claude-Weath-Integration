@@ -146,8 +146,15 @@ function writeSummary({ ok, reason, rows }) {
   log(`Summary written to ${SUMMARY_PATH}`);
 }
 
-main().catch(err => {
-  log('\nExport failed:', err);
-  writeSummary({ ok: false, reason: err.message, rows: [] });
-  process.exitCode = 1;
-});
+main()
+  .catch(err => {
+    log('\nExport failed:', err);
+    writeSummary({ ok: false, reason: err.message, rows: [] });
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    // src/connection.js keeps an open CDP WebSocket that would otherwise hold
+    // the event loop (and this process) open forever — force exit once main()
+    // has genuinely finished.
+    process.exit(process.exitCode || 0);
+  });

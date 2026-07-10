@@ -22,20 +22,20 @@ from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
 from PIL import Image as PILImage
 
+from ticker_normalize import normalize
+
 MAX_DISPLAY_WIDTH = 700
 
 def add_charts_sheet(wb, rows):
     ws = wb.active
     ws.title = 'Charts'
-    ws.append(['Layout ID', 'Chart ID', 'Layout Name', 'Symbol', 'Company', 'Screenshot'])
+    ws.append(['Layout ID', 'Chart ID', 'Layout Name', 'Symbol', 'Company',
+               'Google Finance Ticker', 'Google Finance Formula', 'Screenshot'])
     for cell in ws[1]:
         cell.font = cell.font.copy(bold=True)
-    ws.column_dimensions['A'].width = 15
-    ws.column_dimensions['B'].width = 15
-    ws.column_dimensions['C'].width = 32
-    ws.column_dimensions['D'].width = 16
-    ws.column_dimensions['E'].width = 32
-    ws.column_dimensions['F'].width = 100
+    widths = [15, 15, 32, 16, 32, 20, 40, 100]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
 
     for i, row in enumerate(rows):
         r = i + 2
@@ -47,11 +47,13 @@ def add_charts_sheet(wb, rows):
 
             img = XLImage(row['screenshot'])
             img.width, img.height = disp_w, disp_h
-            ws.add_image(img, f"F{r}")
+            ws.add_image(img, f"H{r}")
             screenshot_value = row['screenshot'].split('\\')[-1].split('/')[-1]
             ws.row_dimensions[r].height = disp_h * 0.75
         else:
             screenshot_value = f"FAILED - {row.get('error', 'unknown error')}"
+
+        norm = normalize(row.get('ticker'))
 
         ws.cell(row=r, column=1, value=row['id'])
         ws.cell(row=r, column=2, value=row['chartId'])
@@ -59,7 +61,9 @@ def add_charts_sheet(wb, rows):
         c3.font = c3.font.copy(bold=True)
         ws.cell(row=r, column=4, value=row.get('ticker'))
         ws.cell(row=r, column=5, value=row.get('description'))
-        ws.cell(row=r, column=6, value=screenshot_value)
+        ws.cell(row=r, column=6, value=norm['google_finance_ticker'] if norm else None)
+        ws.cell(row=r, column=7, value=norm['google_finance_formula'] if norm else None)
+        ws.cell(row=r, column=8, value=screenshot_value)
     return len(rows)
 
 def add_simple_sheet(wb, title, header, rows, keys, bold_cols=()):

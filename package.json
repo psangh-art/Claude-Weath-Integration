@@ -6,7 +6,8 @@
   "scripts": {
     "export:layouts": "node scripts/export-layouts-excel.js",
     "export:indicators": "node scripts/export-indicator-values.js",
-    "export:alerts": "node scripts/export-alerts.js"
+    "export:alerts": "node scripts/export-alerts.js",
+    "pipeline": "node scripts/run_full_pipeline.js"
   },
   "dependencies": {
     "chrome-remote-interface": "^0.33.2"

@@ -7,3 +7,7 @@ scripts/alerts_manifest_tmp.json
 desktop.ini
 logs/*.log
 logs/*.json
+logs/*.md
+scripts/*_tmp.json
+scripts/__pycache__/
+__pycache__/

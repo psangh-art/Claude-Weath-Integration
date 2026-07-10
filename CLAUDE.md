@@ -37,9 +37,89 @@ something worth remembering.
   name matches `/^test$/i` (case-insensitive, exact match) before it reaches the
   manifest/workbook. Confirmed with the user this should be excluded going forward.
 
+## Critical fix (2026-07-10): scripts never actually exited
+
+`export-layouts-excel.js`, `export-indicator-values.js`, and `export-alerts.js` each
+called `main().catch(...)` with no explicit exit. `src/connection.js` keeps a
+module-level CDP WebSocket client open, which holds Node's event loop alive forever —
+so none of these scripts ever actually terminated on their own after finishing; the
+terminal just sat there after the final "Done." line. Running any of them standalone
+via the `.bat` files masked this (the user just closes the window), but it's fatal for
+`run_full_pipeline.js`, which chains steps with `spawnSync` — that call blocks until
+the child process *fully exits*, so the whole pipeline hung indefinitely after chart
+capture finished, never reaching the OCR/master-sheet steps. Fixed by forcing
+`process.exit(process.exitCode || 0)` in a `.finally()` after `main()` settles, in all
+three scripts. **Any new standalone script that imports `src/connection.js` needs the
+same explicit exit** — don't assume Node will terminate on its own once `main()`
+resolves.
+
+## Full pipeline (added 2026-07-09): Google Finance export + Stocks Buy Strategy update
+
+`npm run pipeline` (or `Run Full Pipeline.bat` at the repo root) runs the whole chain
+end to end, beyond just the chart/indicator/alert export:
+
+- **Charts sheet** now also has a **Google Finance Ticker** and **Google Finance
+  Formula** column per chart (`ticker_normalize.py` — handles the trailing-dot
+  artifacts, `BT.A`-style class suffixes, and commodity name mapping documented in
+  `Claude_Code_Handoff_Instructions.md` section 5-7).
+- **`channel_detect.py`** OCRs each chart's price axis and detects the two
+  channel-boundary lines by colour (port of the algorithm in the handoff doc section
+  4) — cross-validates and rejects rather than guessing. Requires the **Tesseract OCR
+  binary** on PATH (not just the `pytesseract` pip package); this is a one-time,
+  *interactive* install (https://github.com/UB-Mannheim/tesseract/wiki) that cannot be
+  scripted from an unattended run because the installer needs a UAC prompt. Until it's
+  installed, the pipeline still completes the chart export and tells you exactly
+  what's missing rather than failing outright.
+- **`update_master_sheet.py`** writes `Alert Low` (= lower boundary × 1.05),
+  `Alert High`, and `Chart = Yes` (colour rule applied atomically — value and
+  font/fill change together, never separately) into `~/Downloads/Stocks_Buy_Strategy.xlsx`,
+  then updates the Coverage Tracker table and inserts a new dated session entry in
+  `~/Downloads/Feedback_for_Claude_Code.md` (right after the tracker, keeping it
+  pinned at the top of the file — a real bug from an earlier attempt at this insertion
+  put the new entry above the tracker instead, now fixed and covered by a manual test
+  before trusting it against the real file). Rows with `Alert Low Source = "Manual"`
+  are never touched; a re-read within 3% of the existing Alert Low is treated as noise
+  and left alone.
+- `export-layouts-excel.js` itself now retries each layout's switch+capture up to 3x
+  with a health-check/backoff between attempts if TradingView's CDP connection drops
+  transiently, and falls back to reusing a same-run-window screenshot from a previous
+  capture rather than leaving a row permanently blank if every retry fails.
+- **`verify_pipeline.py`** runs automatically as the last step (`python
+  scripts/verify_pipeline.py --live-alert-check` to re-run standalone without
+  recapturing) and writes `logs/verify_<timestamp>.md` / `logs/latest-verify.md`: a
+  per-layout/per-chart capture status, how many tickers got a real upper/lower channel
+  read vs rejected (and why), an alert count cross-checked against TradingView live,
+  and confirmation that `tradingview_layouts.xlsx`'s sheet row counts actually match
+  what was captured. Runs even if an earlier step stopped partway through — it reports
+  honestly on whatever manifests do or don't exist rather than requiring a fully clean
+  run.
+
+**`Claude_Code_Handoff_Instructions.md`** (kept in the user's Downloads, not this repo)
+is the full behavioural spec this all implements — schema, colour rules, ticker
+normalization, the exact channel-reading algorithm, and the "silence over guessing"
+philosophy (an unresolved row is fine; a wrong number in a live trading sheet is not).
+Where it disagrees with this file on chart-interpretation or spreadsheet-update
+behavior, it wins — update this file to match rather than the reverse.
+
+**Repo consolidation (2026-07-09):** this repo is now the *only* one for chart
+extraction / TradingView-to-Excel work — `tradingview-mcp`'s duplicate copy of this
+pipeline was reverted back to its prior state, since it's a separate 68-tool MCP
+server repo unrelated to this specific workflow.
+
 ## Open items / things to verify on the next export run
 
 (none currently — add new items here as reviews surface them)
+
+## Resolved (2026-07-10)
+
+- **`verify_pipeline.py` crashed printing its own report to console.** Windows'
+  default console codepage (cp1252) can't encode the ✅/⚠️/⚪ emoji used in the
+  report text, so the final `print(report_text)` raised `UnicodeEncodeError` even
+  though the report had already been written correctly to
+  `logs/latest-verify.md`. Fixed by catching the encode error and falling back to
+  writing UTF-8 bytes directly to `sys.stdout.buffer`. The file write path was
+  never affected — only the console echo. Confirmed fixed by re-running
+  `python scripts/verify_pipeline.py --live-alert-check` standalone after the fix.
 
 ## How to log new feedback
 
