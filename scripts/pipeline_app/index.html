@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Wealth Pipeline</title>
+<style>
+  :root {
+    --bg: #0f1420; --card: #171d2e; --border: #2a3348; --text: #e6e9f0; --muted: #8b93a7;
+    --pending: #4a5268; --running: #3d7bd9; --success: #2fa365; --failed: #d9524a; --skipped: #6b7284;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Segoe UI, Arial, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 24px 32px 8px; }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  p.sub { margin: 0; color: var(--muted); font-size: 13px; }
+  main { padding: 16px 32px 40px; max-width: 900px; }
+  #execute { background: var(--running); color: white; border: none; padding: 12px 28px; font-size: 15px;
+             border-radius: 6px; cursor: pointer; margin: 12px 0 24px; }
+  #execute:disabled { background: var(--pending); cursor: not-allowed; }
+  #execute:hover:not(:disabled) { filter: brightness(1.1); }
+  .stage { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin-bottom: 10px; }
+  .stage-head { display: flex; align-items: center; gap: 10px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--pending); flex-shrink: 0; }
+  .dot.running { background: var(--running); animation: pulse 1.2s infinite; }
+  .dot.success { background: var(--success); }
+  .dot.failed { background: var(--failed); }
+  .dot.skipped { background: var(--skipped); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .stage-name { font-weight: 600; font-size: 14px; }
+  .stage-status { margin-left: auto; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .stage-message { margin-top: 8px; font-size: 13px; color: var(--muted); white-space: pre-wrap; }
+  .stage-message.failed-text { color: var(--failed); }
+  .log { margin-top: 8px; font-family: Consolas, monospace; font-size: 11px; color: var(--muted);
+         max-height: 120px; overflow-y: auto; background: #0b0f18; border-radius: 4px; padding: 8px; display: none; }
+  .log.show { display: block; }
+  #banner { display: none; padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
+  #banner.ok { background: rgba(47,163,101,0.15); border: 1px solid var(--success); }
+  #banner.bad { background: rgba(217,82,74,0.15); border: 1px solid var(--failed); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Wealth Pipeline</h1>
+  <p class="sub">Fidelity spending summary + TradingView chart/alert pipeline, end to end.</p>
+</header>
+<main>
+  <button id="execute">Execute</button>
+  <div id="banner"></div>
+  <div id="stages"></div>
+</main>
+<script>
+const stagesEl = document.getElementById('stages');
+const executeBtn = document.getElementById('execute');
+const banner = document.getElementById('banner');
+const stageState = {};
+
+function statusLabel(status) {
+  return { pending: 'Waiting', running: 'Running…', success: 'Done', failed: 'Failed', skipped: 'Skipped' }[status] || status;
+}
+
+function render() {
+  stagesEl.innerHTML = '';
+  for (const s of Object.values(stageState).sort((a, b) => a.id - b.id)) {
+    const el = document.createElement('div');
+    el.className = 'stage';
+    const failedClass = s.status === 'failed' ? 'failed-text' : '';
+    el.innerHTML = `
+      <div class="stage-head">
+        <div class="dot ${s.status}"></div>
+        <div class="stage-name">${s.id}. ${s.name}</div>
+        <div class="stage-status">${statusLabel(s.status)}</div>
+      </div>
+      ${s.message ? `<div class="stage-message ${failedClass}">${s.message}</div>` : ''}
+      ${s.log && s.log.length ? `<div class="log show">${s.log.slice(-40).map(l => l.replace(/</g,'&lt;')).join('\n')}</div>` : ''}
+    `;
+    stagesEl.appendChild(el);
+  }
+}
+
+function initStages(list) {
+  for (const s of list) stageState[s.id] = { id: s.id, name: s.name, status: 'pending', message: '', log: [] };
+  render();
+}
+
+const es = new EventSource('/events');
+es.onmessage = (ev) => {
+  const data = JSON.parse(ev.data);
+  if (data.type === 'hello') {
+    initStages(data.stages);
+    executeBtn.disabled = data.running;
+  } else if (data.type === 'run-started') {
+    banner.style.display = 'none';
+    executeBtn.disabled = true;
+    for (const id in stageState) { stageState[id].status = 'pending'; stageState[id].message = ''; stageState[id].log = []; }
+    render();
+  } else if (data.type === 'stage') {
+    const s = stageState[data.id];
+    if (!s) return;
+    s.status = data.status;
+    if (data.message) s.message = data.message;
+    render();
+  } else if (data.type === 'log') {
+    const s = stageState[data.id];
+    if (!s) return;
+    s.log.push(data.line);
+    render();
+  } else if (data.type === 'run-complete') {
+    executeBtn.disabled = false;
+    banner.style.display = 'block';
+    banner.className = data.ok ? 'ok' : 'bad';
+    banner.textContent = data.ok
+      ? 'Pipeline completed successfully.'
+      : 'Pipeline stopped — see the failed/skipped stage(s) above for what needs fixing before re-running.';
+  }
+};
+
+executeBtn.addEventListener('click', () => {
+  fetch('/run', { method: 'POST' }).then(async (r) => {
+    if (r.status === 409) {
+      const body = await r.json();
+      alert(body.error);
+    }
+  });
+});
+</script>
+</body>
+</html>

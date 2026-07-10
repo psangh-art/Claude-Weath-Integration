@@ -117,6 +117,40 @@ extraction / TradingView-to-Excel work — `tradingview-mcp`'s duplicate copy of
 pipeline was reverted back to its prior state, since it's a separate 68-tool MCP
 server repo unrelated to this specific workflow.
 
+## Pipeline App (added 2026-07-10): unified GUI for the whole process
+
+`Run Pipeline App.bat` starts `scripts/pipeline_app_server.js` (plain Node `http`,
+no new dependency) and opens `http://localhost:4590` — a single-page app with one
+**Execute** button and live per-stage status, so the whole thing can be watched
+running instead of read from a scrolling console. Seven stages, in order:
+
+1. **Pre-flight file check** (`preflight_check.py`) — verifies every REQUIRED input
+   file actually exists in `~/Downloads` *before* anything else runs: Amex
+   (`activity.csv`), Barclays (`data.csv`), Fidelity `AccountSummary.csv`, a
+   Fidelity historic transaction export (classified by **content**, not filename —
+   `fidelity_file_classifier.py`, since Fidelity reuses filenames across export
+   types), and the master workbook `Stocks_Buy_Strategy.xlsx`. **If any of these
+   is missing, the whole run halts here** — every later stage is marked "Skipped"
+   rather than attempted — so a missing data file surfaces immediately with exactly
+   what's needed, not as a confusing failure deep into a multi-minute run. A
+   pending Fidelity export is checked for but never blocks — it's optional, same
+   as `spending_summary.py` already treats it.
+2. **Fidelity spending-summary build** — runs `spending_summary.py` against the
+   files pre-flight found, writing `spending_summary.xlsx`.
+3–7. **TradingView chart capture → OCR → master-sheet update → verification →
+   Downloads cleanup** — these are `run_full_pipeline.js`'s existing five steps,
+   run unmodified as a single child process; the app parses that script's own
+   `=== Step N/5: ... ===` console markers to report them as five separate stages
+   in the UI rather than re-implementing that logic. **If you rename or reorder
+   the step log lines in `run_full_pipeline.js`, update the `stageForStepName()`
+   regexes in `pipeline_app_server.js` to match**, or the app will silently stop
+   attributing log lines to the right stage.
+
+Each stage reports success/failure with the tail of what it actually did (e.g. a
+position-adjustment count, an applied/rejected/unmatched tally) — not just a
+checkmark. Only one run at a time (`POST /run` returns 409 if one is already in
+progress).
+
 ## Open items / things to verify on the next export run
 
 (none currently — add new items here as reviews surface them)
