@@ -1,0 +1,15 @@
+{
+  "_comment": "Tracks which Fidelity export files (from ~/Downloads) have most recently been ingested into spending_summary.xlsx. Fidelity's export filenames are not reliable type indicators — 'historic' and 'pending' exports can share the same base name (e.g. TransactionHistory.csv vs TransactionHistory (4).csv). Type must be determined from file content: pending exports have Completion date == 'Pending' on every row, Status values of Priced/Ordered, and an extra 'Expiry Date' column; historic exports have real completion dates and Status values of Completed/Cancelled with no 'Expiry Date' column. On each check, only files newer (by mtime) than the entries below count as new.",
+  "historic": {
+    "source_file": "TransactionHistory (3).csv",
+    "source_mtime": "2026-07-10T13:47:53.193051",
+    "imported_at": "2026-07-10T14:01:00",
+    "output_file": "spending_summary.xlsx"
+  },
+  "pending": {
+    "source_file": "TransactionHistory (4).csv",
+    "source_mtime": "2026-07-10T13:47:57.476607",
+    "imported_at": "2026-07-10T14:01:00",
+    "note": "Captured for tracking only — current spending_summary.py logic filters to Status == 'Completed', so pending-status rows are not yet consumed by any calculation. Revisit if pending transactions need to feed into holdings/spend figures."
+  }
+}
