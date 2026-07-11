@@ -151,9 +151,48 @@ position-adjustment count, an applied/rejected/unmatched tally) — not just a
 checkmark. Only one run at a time (`POST /run` returns 409 if one is already in
 progress).
 
+## Google Sheets sync (added 2026-07-11): Finance spreadsheet refresh
+
+After a pipeline run, `Stocks_Buy_Strategy.xlsx` gets synced into the user's
+**"Finance"** Google Sheet (id `1UjAz_QUuh86_e6yq8QJf2veI8IpkRCyVfWaK6maqiyc`).
+The xlsx is always the source of truth — the Google-side data tabs are wiped and
+re-imported wholesale each refresh, so never hand-edit them. Workflow (user's
+design, confirmed 2026-07-11):
+
+1. The Finance sheet keeps a permanent **`ClaudeCode`** tab that is NEVER deleted
+   (Google Sheets requires ≥1 sheet to exist; the tab doubles as an issues/run log —
+   e.g. the 2026-07-11 GOOGLEFINANCE commodity test results live there).
+2. Delete all data tabs (keep only `ClaudeCode`). This is the standing authorized
+   workflow — it prevents Google's "(1)" name-suffixing when the fresh tabs import.
+3. File → Import → **Upload** tab → click Browse → drive the native picker with
+   **`scripts/drive_open_dialog.ps1`** (see below) → Import location:
+   **"Insert new sheet(s)"** → tick **"Import theme"** (explicit user preference) →
+   Import data.
+
+**`scripts/drive_open_dialog.ps1`** types a path into the already-open native
+Windows file dialog and clicks its Open button, entirely via
+`SendMessage(WM_SETTEXT/BM_CLICK)` to the dialog's child controls — no window
+focus needed. Do NOT "simplify" it back to `AppActivate`+`SendKeys` (keystrokes
+landed in the wrong window — once typing the path straight into a terminal) or
+`SetForegroundWindow` (blocked by Windows foreground-lock for background
+processes). Both failure modes were hit for real before landing on this approach.
+
+**GOOGLEFINANCE cannot price commodities (verified 2026-07-11).** `TVC:GOLD`-style
+formulas return `#N/A`, and so do `CURRENCY:XAUUSD`/`XAGUSD`/`XPTUSD`/`XPDUSD` —
+Google has dropped metals support — while equities (`GOOG`) and FX
+(`CURRENCY:GBPUSD`) still work. So `ticker_normalize.py`'s
+`RELIABLE_GOOGLEFINANCE_COMMODITIES` claim is falsified. Agreed fix (user
+confirmed): the pipeline should write TradingView-captured numeric prices +
+timestamp into commodity rows instead of GOOGLEFINANCE formulas. Not yet
+implemented — tracked as an open item below.
+
 ## Open items / things to verify on the next export run
 
-(none currently — add new items here as reviews surface them)
+- Replace commodity GOOGLEFINANCE formulas with TradingView-captured prices
+  (see Google Sheets sync section above — user-confirmed approach, 2026-07-11).
+- Orphaned `sync_*` temp Google Sheets in the user's Drive (left by a failed
+  2026-07-10 sync attempt) still need manual deletion by the user — no Drive
+  delete tool available.
 
 ## Resolved (2026-07-10)
 
