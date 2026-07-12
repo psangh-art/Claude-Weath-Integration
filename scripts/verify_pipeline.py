@@ -221,7 +221,57 @@ def section_master_sheet(master_result):
             lower, upper, alert_low, alert_high = ('—' if c is None else c for c in cells)
             lines.append(f"| {a['ticker']} | {lower} | {upper} | {alert_low} | {alert_high} |\n")
         lines.append("\n")
-    return "".join(lines), {'ran': True}
+
+    # Cross-check the two per-run rewrites (commodity captured prices, below-alert
+    # block) against what the saved workbook ACTUALLY contains — this is the last
+    # gate before the workbook gets imported into the Finance Google Sheet, so a
+    # write that silently didn't land must show up here, not there.
+    commodity_prices = master_result.get('commodity_prices')
+    below_rows = master_result.get('below_alert_rows')
+    if commodity_prices is None and below_rows is None:
+        return "".join(lines), {'ran': True}  # result JSON predates these fields
+
+    ok = True
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(MASTER_SHEET_PATH, data_only=False)
+
+        lines.append(f"### Commodity captured prices ({len(commodity_prices or [])} this run)\n\n")
+        inv = wb['Investments']
+        ticker_rows = {}
+        for r in range(1, inv.max_row + 1):
+            t = inv.cell(row=r, column=3).value  # col C = Ticker
+            if isinstance(t, str):
+                ticker_rows[t.strip().upper()] = r
+        for cp in commodity_prices or []:
+            r = ticker_rows.get(cp['ticker'].upper())
+            actual = inv.cell(row=r, column=9).value if r else None  # col I = Current Price
+            if r and isinstance(actual, (int, float)) and abs(actual - cp['price']) < 0.01:
+                lines.append(f"- ✅ {cp['ticker']}: {actual} (value, not formula; checked {cp['checked_at']})\n")
+            else:
+                lines.append(f"- ❌ {cp['ticker']}: expected {cp['price']} in Investments col I, "
+                              f"found {actual!r}\n")
+                ok = False
+
+        soi = wb['Stocks of Interest']
+        actual_rows = sum(1 for r in range(5, 39) if soi.cell(row=r, column=1).value is not None)
+        expected_rows = min(len(below_rows or []), 34)
+        if actual_rows == expected_rows:
+            lines.append(f"\n✅ **Below-alert block**: {actual_rows} rows at the top of "
+                          "'Stocks of Interest' (matches this run)\n")
+        else:
+            lines.append(f"\n❌ **Below-alert block**: {actual_rows} rows in workbook, "
+                          f"{expected_rows} expected from this run\n")
+            ok = False
+        if 'Below Alert Low' in wb.sheetnames:
+            lines.append("❌ Obsolete 'Below Alert Low' sheet has reappeared — it was migrated "
+                          "into 'Stocks of Interest' on 2026-07-11 and nothing should recreate it\n")
+            ok = False
+        lines.append("\n")
+    except Exception as e:
+        lines.append(f"❌ Could not cross-check workbook contents: {e}\n\n")
+        ok = False
+    return "".join(lines), {'ran': True, 'ok': ok}
 
 
 def main():
@@ -254,6 +304,7 @@ def main():
         layouts_stats['failed_charts'] == 0
         and workbook_stats['ok']
         and (master_stats['ran'] or not os.path.exists(MASTER_SHEET_PATH))
+        and master_stats.get('ok', True)  # workbook cross-check, when the run recorded one
     )
     report.append(f"**Overall: {'✅ PASS' if overall_ok else '⚠️ SEE DETAILS BELOW'}**\n\n---\n\n")
     report.append(layouts_text)

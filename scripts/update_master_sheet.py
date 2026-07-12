@@ -147,6 +147,7 @@ def process(master_ws, charts, channel_by_ticker):
         if norm['kind'] == 'commodity' and isinstance(row.get('price'), (int, float)):
             master_ws.cell(row=master_row, column=COL_CURRENT_PRICE, value=round(row['price'], 2))
             master_ws.cell(row=master_row, column=col_last_checked, value=today)
+            matches[-1]['commodity_price_written'] = True
 
         if detection is None:
             unmatched.append({'ticker': master_ticker, 'company': company, 'reason': 'not yet attempted (no channel-detection result for this run)'})
@@ -469,6 +470,11 @@ def main():
             'skipped_manual': skipped_manual,
             'skipped_noise': skipped_noise,
             'unmatched': unmatched,
+            'below_alert_rows': below_rows,
+            'commodity_prices': [
+                {'ticker': m['ticker'], 'price': round(m['price'], 2), 'checked_at': m['checked_at']}
+                for m in matches if m.get('commodity_price_written')
+            ],
         }, f, indent=2)
 
     print(f"Applied: {len(applied)}, Rejected: {len(rejected)}, Manual-skipped: {len(skipped_manual)}, "
