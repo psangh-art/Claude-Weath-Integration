@@ -137,7 +137,8 @@ def process(master_ws, charts, channel_by_ticker):
             continue
 
         matches.append({'ticker': master_ticker, 'company': company, 'row': master_row,
-                        'price': row.get('price'), 'checked_at': row.get('priceCheckedAt')})
+                        'price': row.get('price'), 'checked_at': row.get('priceCheckedAt'),
+                        'chart_id': row.get('chartId')})
 
         # Commodities can't be priced by GOOGLEFINANCE at all any more (verified
         # 2026-07-11: TVC: and CURRENCY:XAU/XAG/XPT/XPD all return #N/A), so their
@@ -261,6 +262,7 @@ def build_below_alert_rows(master_ws, matches):
             'holdings': holdings if isinstance(holdings, (int, float)) else None,
             'target_value': target_value if isinstance(target_value, (int, float)) else None,
             'checked_at': m['checked_at'],
+            'chart_id': m.get('chart_id'),
         })
     rows.sort(key=lambda r: r['gap_pct'])
     return rows

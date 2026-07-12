@@ -34,7 +34,12 @@ BAND_ROW = 3             # coloured section band, like the section headers below
 HEADER_ROW = 4
 DATA_START_ROW = 5
 MAX_DATA_ROWS = 34       # rows 5..38; 39-40 stay blank as a separator
-LAST_COL = 9             # this table occupies columns A..I
+LAST_COL = 10            # this table occupies columns A..J
+
+# Per-row click-through to the stock's TradingView layout, matching the
+# Investments sheet's "TradingView" column (=HYPERLINK(chart/<chartId>/)).
+TV_LAYOUT_URL = 'https://www.tradingview.com/chart/{chart_id}/'
+TV_LINK_LABEL = '📊 Layout'
 
 # Palette + typography lifted from the section tables lower down this same sheet
 # (rows 41+), so the below-alert table reads as part of the same document rather
@@ -60,13 +65,19 @@ _TOP_RIGHT = Alignment(horizontal='right', vertical='top', wrap_text=False)
 # A), Ticker second (narrow col B). Numeric columns are right-aligned with the
 # same formats the tables below use (#,##0.00 for prices, #,##0 for whole-pound £).
 HEADER = ['Stock', 'Ticker', 'Current Price', 'Alert Low', 'Gap %', 'Alert High',
-          'Holdings (£)', 'Target Value (£)', 'Price Checked At']
+          'Holdings (£)', 'Target Value (£)', 'Price Checked At', 'TradingView']
 _NUM_FMT = {3: '#,##0.00', 4: '#,##0.00', 5: '0.0"%"', 6: '#,##0.00', 7: '#,##0', 8: '#,##0'}
 
 
 def _band(ws, row, text, fill, size, bold, italic=False):
-    """Render a full-width (A..I) coloured band on `row`, merged, bordered, with
+    """Render a full-width (A..J) coloured band on `row`, merged, bordered, with
     `text` in the top-left cell — the same treatment the section headers use."""
+    # Unmerge any existing band on this row FIRST (a previous run may have used a
+    # different width), so the cells below are writable rather than read-only
+    # MergedCells — then re-merge to the current width. Keeps this idempotent.
+    for m in list(ws.merged_cells.ranges):
+        if m.min_row == row and m.max_row == row:
+            ws.unmerge_cells(str(m))
     for c in range(1, LAST_COL + 1):
         cell = ws.cell(row=row, column=c)
         cell.value = None
@@ -75,9 +86,7 @@ def _band(ws, row, text, fill, size, bold, italic=False):
         cell.alignment = _TOP_LEFT
         cell.font = Font(name=FONT_NAME, size=size, bold=bold, italic=italic, color=WHITE)
     ws.cell(row=row, column=1, value=text)
-    rng = f'A{row}:{chr(64 + LAST_COL)}{row}'
-    if rng not in {str(m) for m in ws.merged_cells.ranges}:
-        ws.merge_cells(rng)
+    ws.merge_cells(f'A{row}:{chr(64 + LAST_COL)}{row}')
     ws.row_dimensions[row].height = 15
 
 
@@ -147,6 +156,15 @@ def refresh_block(ws, rows):
         ws.cell(row=row_n, column=7, value=r['holdings'])
         ws.cell(row=row_n, column=8, value=r['target_value'])
         ws.cell(row=row_n, column=9, value=r['checked_at'])
+
+        # Click-through to this stock's TradingView layout (blank if no chart).
+        chart_id = r.get('chart_id')
+        tv_cell = ws.cell(row=row_n, column=10)
+        if chart_id:
+            url = TV_LAYOUT_URL.format(chart_id=chart_id)
+            tv_cell.value = f'=HYPERLINK("{url}","{TV_LINK_LABEL}")'
+            tv_cell.font = Font(name=FONT_NAME, size=8, color=NAVY, underline='single')
+        tv_cell.alignment = _TOP_LEFT
 
         for c, fmt in _NUM_FMT.items():
             cell = ws.cell(row=row_n, column=c)
