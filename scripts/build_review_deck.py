@@ -158,7 +158,10 @@ def add_picture_fitted(slide, path, x, y, max_w, max_h):
     slide.shapes.add_picture(path, x, y + Emu(int((max_h - h) / 2)), width=Emu(w), height=Emu(h))
 
 
-def chart_slide(prs, chart, layout_name, master_key, master, channel, tv_alerts):
+VERDICT_COLOURS = {'Buy candidate': GREEN, 'Hold': NAVY, 'Watch': AMBER, 'Avoid': RED}
+
+
+def chart_slide(prs, chart, layout_name, master_key, master, channel, tv_alerts, analyst=None):
     slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
 
     ticker = chart.get('ticker') or '?'
@@ -217,6 +220,19 @@ def chart_slide(prs, chart, layout_name, master_key, master, channel, tv_alerts)
         lines.append((f"  rejected: {channel.get('reason') or 'no reliable read'}", 12, False, AMBER))
     else:
         lines.append(('  not attempted this run', 12, False, GREY))
+
+    # Analyst view (written by the investment-analyst agent into
+    # scripts/analyst_notes.json; rendered whenever present for this ticker)
+    if analyst:
+        verdict = analyst.get('verdict') or 'Watch'
+        colour = VERDICT_COLOURS.get(verdict, NAVY)
+        lines.append(('Analyst view', 13, True, NAVY))
+        buy = analyst.get('buy_price')
+        basis = analyst.get('buy_basis') or ''
+        buy_txt = f" — buy {fmt_num(buy)}" + (f' ({basis})' if basis and buy is not None else '')
+        lines.append((f'  {verdict}{buy_txt if buy is not None else ""}', 12, True, colour))
+        if analyst.get('note'):
+            lines.append((f"  {analyst['note']}", 10, False, GREY))
 
     lines.append((f'TradingView alerts ({len(tv_alerts)})', 13, True,
                   NAVY if has_tv_alert else RED))
@@ -380,6 +396,7 @@ def main():
     charts = load_json('layout_manifest_tmp.json') or []
     alerts = load_json('alerts_manifest_tmp.json') or []
     channels = {c['ticker']: c for c in (load_json('channel_results_tmp.json') or []) if c.get('ticker')}
+    analyst_notes = load_json('analyst_notes.json') or {}
     master_index = load_master_index()
 
     prs = Presentation()
@@ -445,8 +462,10 @@ def main():
             n = sum(1 for c in charts if c['name'] == current_layout)
             section_slide(prs, current_layout, f'{n} chart(s)')
         _, master = find_master(master_index, chart.get('ticker') or '')
+        t = (chart.get('ticker') or '').upper()
         chart_slide(prs, chart, current_layout, None, master,
-                    channels.get(chart.get('ticker')), alerts_for(alerts, chart.get('ticker') or ''))
+                    channels.get(chart.get('ticker')), alerts_for(alerts, chart.get('ticker') or ''),
+                    analyst=analyst_notes.get(t))
 
     # ── appendix: master rows without a chart ───────────────────────────────
     slide = prs.slides.add_slide(prs.slide_layouts[6])

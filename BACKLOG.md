@@ -9,16 +9,14 @@ Approved → In progress → Done (with commit/PR ref). Items marked
 
 | Item | Why it matters | Size | Status | Builder |
 |---|---|---|---|---|
-| Merge PR #8 (below-alert gap + 2026-07-12 batch) | Ships committed work to main | S | Waiting on user merge | user |
-| Add `.claude/worktrees/` to `.gitignore` | Prevents accidental commit of working copies; closes external-review finding | S | Proposed | main assistant |
-| `config.json` for hard-coded paths/IDs/port | Downloads paths, Python path, Finance sheet ID, port 4590 are scattered across ~10 scripts; single config makes machine migration painless | M | Proposed | main assistant |
+| Merge PR #8 (below-alert gap + full 2026-07-12 batch) | Ships committed work to main | S | Waiting on user merge | user |
+| First investment-analyst run (analyst notes + daily brief draft) | Exercises the new agent end to end; populates the deck's Analyst view | M | Proposed | investment-analyst |
 
 ## Next
 
 | Item | Why it matters | Size | Status | Builder |
 |---|---|---|---|---|
-| Per-run manifest snapshots into SQLite | Gateway to indicator change detection, day-over-day comparison, and every "Investment OS" analytics ambition | M | Proposed | main assistant |
-| pytest suite for pure logic (ticker_normalize, offset_formula, gap calc, fidelity classifier) | Catches regressions offline without TradingView running; complements test-analyst's data audits | M | Proposed | test-analyst (specs) + main assistant |
+| Schedule the daily brief (routine/cron) | Makes the analyst's daily report automatic instead of on-demand | S | Proposed — needs user OK on timing | main assistant |
 | TV charts for Brent (UKOIL), Palladium, Copper | Would give live captured prices for the 3 chartless commodities (currently #N/A / stale) | S | **User decision** — charts must be added in TradingView by the user | user |
 | WPP stale Alert Low (1121.92 vs live 274.6) | Wrong level in a live trading sheet; flagged 2026-07-12 | S | **User decision** — needs manual review | user |
 
@@ -32,4 +30,9 @@ Approved → In progress → Done (with commit/PR ref). Items marked
 
 | Item | Shipped |
 |---|---|
-| (seeded 2026-07-12 — completed items before this date live in CLAUDE.md's Resolved sections) | — |
+| `.claude/worktrees/` gitignored | 2026-07-12, commit beed2b3 |
+| `config.json` single source of truth (Python + Node loaders, 12 consumers switched) | 2026-07-12, commit beed2b3 |
+| Per-run manifest snapshots into SQLite (`history_store.py` record/summary/diff, wired into the pipeline) | 2026-07-12 |
+| pytest suite for pure logic — 21 tests passing (`tests/test_pure_logic.py`) | 2026-07-12 |
+| investment-analyst agent + Analyst-view hook in the review deck | 2026-07-12 |
+| (earlier completed items live in CLAUDE.md's Resolved sections) | — |

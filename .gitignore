@@ -18,3 +18,6 @@ scripts/pipeline_app/review_deck_summary.json
 
 # Git worktrees live under .claude/worktrees in the working copy - never track them
 .claude/worktrees/
+
+# Per-run history archive (machine data, appended by history_store.py)
+data/history.db

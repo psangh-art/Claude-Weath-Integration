@@ -117,6 +117,16 @@ function main() {
   console.log('\nDone. tradingview_layouts.xlsx, Stocks_Buy_Strategy.xlsx, and Feedback_for_Claude_Code.md are all up to date in Downloads.');
 }
 
+function recordHistory() {
+  // Quiet step (deliberately NOT a numbered "=== Step N/M ===" stage — the
+  // Production Centre parses those markers, and this needs no UI slot):
+  // append this run's manifests to data/history.db so day-over-day
+  // comparison and indicator change detection have something to work on.
+  const result = spawnSync('python', [path.join(__dirname, 'history_store.py'), 'record'], { encoding: 'utf-8' });
+  const line = (result.stdout || result.stderr || '').trim().split('\n').pop();
+  if (line) console.log(`History: ${line}`);
+}
+
 try {
   main();
 } finally {
@@ -124,6 +134,7 @@ try {
   // step stopped partway through — both report honestly on whatever manifests do
   // or don't exist rather than requiring a fully clean run (the deck's whole job
   // is to show what's missing).
+  recordHistory();
   runDeck();
   runVerify();
   runCleanup();
