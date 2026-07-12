@@ -38,7 +38,8 @@ LAST_COL = 10            # this table occupies columns A..J
 
 # Per-row click-through to the stock's TradingView layout, matching the
 # Investments sheet's "TradingView" column (=HYPERLINK(chart/<chartId>/)).
-TV_LAYOUT_URL = 'https://www.tradingview.com/chart/{chart_id}/'
+from config import CFG as _CFG
+TV_LAYOUT_URL = _CFG['tvLayoutUrlTemplate']
 TV_LINK_LABEL = '📊 Layout'
 
 # Palette + typography lifted from the section tables lower down this same sheet

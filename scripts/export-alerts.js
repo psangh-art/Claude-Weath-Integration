@@ -4,15 +4,15 @@
 // chart at the alert price and the Alerts panel in TradingView's UI. Unlike the
 // layout/indicator exports, this doesn't need to switch layouts or focus panes —
 // the pricealerts API returns every alert on the account in one call.
-import os from 'os';
 import path from 'path';
 import { writeFileSync, mkdirSync, appendFileSync } from 'fs';
 import { fileURLToPath } from 'url';
+import { downloadsDir } from './config.js';
 import * as health from '../src/core/health.js';
 import * as alerts from '../src/core/alerts.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const OUT_PATH = path.join(os.homedir(), 'Downloads', 'tradingview_alerts.csv');
+const OUT_PATH = path.join(downloadsDir(), 'tradingview_alerts.csv');
 
 const LOGS_DIR = path.join(__dirname, '..', 'logs');
 mkdirSync(LOGS_DIR, { recursive: true });

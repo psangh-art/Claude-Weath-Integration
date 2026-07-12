@@ -18,11 +18,11 @@
 // silently produced pictures openpyxl couldn't parse at all (0 images read back) with
 // no way to confirm real Excel handled it either, so don't switch back to it without
 // re-verifying against real Excel first.
-import os from 'os';
 import path from 'path';
 import { writeFileSync, mkdirSync, appendFileSync, existsSync, readdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
+import { downloadsDir, CFG } from './config.js';
 import * as health from '../src/core/health.js';
 import * as ui from '../src/core/ui.js';
 import * as pane from '../src/core/pane.js';
@@ -32,7 +32,7 @@ import * as alerts from '../src/core/alerts.js';
 import { evaluateAsync } from '../src/connection.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const OUT_PATH = path.join(os.homedir(), 'Downloads', 'tradingview_layouts.xlsx');
+const OUT_PATH = path.join(downloadsDir(), CFG.layoutsWorkbook);
 const MANIFEST_PATH = path.join(__dirname, 'layout_manifest_tmp.json');
 const CROP_MANIFEST_PATH = path.join(__dirname, 'crop_manifest_tmp.json');
 const INDICATOR_MANIFEST_PATH = path.join(__dirname, 'indicator_manifest_tmp.json');

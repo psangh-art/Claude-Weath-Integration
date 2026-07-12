@@ -10,16 +10,16 @@
 // see channel_detect.py's docstring). If it's missing, this still completes the
 // chart export/screenshot half and tells you exactly what's missing, rather than
 // failing the whole run.
-import os from 'os';
 import path from 'path';
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
 
+import { downloadsFile } from './config.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DOWNLOADS = path.join(os.homedir(), 'Downloads');
-const MASTER_SHEET_PATH = path.join(DOWNLOADS, 'Stocks_Buy_Strategy.xlsx');
-const FEEDBACK_PATH = path.join(DOWNLOADS, 'Feedback_for_Claude_Code.md');
+const MASTER_SHEET_PATH = downloadsFile('masterWorkbook');
+const FEEDBACK_PATH = downloadsFile('feedbackMd');
 const CHARTS_MANIFEST = path.join(__dirname, 'layout_manifest_tmp.json');
 const CHANNEL_INPUT = path.join(__dirname, 'channel_input_tmp.json');
 const CHANNEL_RESULTS = path.join(__dirname, 'channel_results_tmp.json');

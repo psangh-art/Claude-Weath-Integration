@@ -91,7 +91,8 @@ def find_consumables(downloads_dir):
 def main():
     args = [a for a in sys.argv[1:] if a != '--apply']
     apply = '--apply' in sys.argv
-    downloads_dir = args[0] if args else os.path.expanduser('~/Downloads')
+    from config import downloads_dir as _cfg_downloads
+    downloads_dir = args[0] if args else _cfg_downloads()
 
     hits = find_consumables(downloads_dir)
     if not hits:

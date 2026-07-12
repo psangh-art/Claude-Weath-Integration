@@ -37,14 +37,15 @@ if sys.platform == "win32":
         pass
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DOWNLOADS = os.path.join(os.path.expanduser('~'), 'Downloads')
-MASTER_PATH = os.path.join(DOWNLOADS, 'Stocks_Buy_Strategy.xlsx')
+from config import CFG, downloads_dir
+DOWNLOADS = downloads_dir()
+MASTER_PATH = os.path.join(DOWNLOADS, CFG['masterWorkbook'])
 # The Investment Production Centre front end serves these two: an in-Chrome
 # gallery view of the deck and a machine-readable summary for the output bay.
 PIPELINE_APP_DIR = os.path.join(SCRIPT_DIR, 'pipeline_app')
 GALLERY_PATH = os.path.join(PIPELINE_APP_DIR, 'review_deck.html')
 SUMMARY_PATH = os.path.join(PIPELINE_APP_DIR, 'review_deck_summary.json')
-TV_LAYOUT_URL = 'https://www.tradingview.com/chart/{chart_id}/'
+TV_LAYOUT_URL = CFG['tvLayoutUrlTemplate']
 
 # Master 'Investments' columns (same map as update_master_sheet.py)
 COL_SHARE_NAME, COL_TICKER, COL_HOLDINGS, COL_TARGET = 2, 3, 4, 6

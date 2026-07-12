@@ -39,7 +39,8 @@ from fidelity_file_classifier import find_latest
 
 
 def main():
-    downloads_dir = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/Downloads")
+    from config import downloads_dir as _cfg_downloads
+    downloads_dir = sys.argv[1] if len(sys.argv) > 1 else _cfg_downloads()
 
     required = []
     found = {}
