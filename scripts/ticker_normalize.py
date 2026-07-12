@@ -18,9 +18,13 @@ COMMODITY_MASTER_TO_TV = {
 }
 TV_TO_COMMODITY_MASTER = {v: k for k, v in COMMODITY_MASTER_TO_TV.items()}
 
-# Confirmed-reliable direct GOOGLEFINANCE("TVC:...") pattern (handoff doc section 6).
-# NDX/NASDAQ is a name-matching entry only, not a confirmed formula target.
-RELIABLE_GOOGLEFINANCE_COMMODITIES = {'GOLD', 'SILVER', 'PLATINUM', 'PALLADIUM', 'USOIL'}
+# GOOGLEFINANCE can no longer price commodities AT ALL — verified live 2026-07-11:
+# TVC:GOLD returns #N/A, and so do CURRENCY:XAUUSD/XAGUSD/XPTUSD/XPDUSD (Google
+# dropped metals support), while equities (LON:*/GOOG) and real FX (GBPUSD) still
+# work. The handoff doc section 6's "confirmed-reliable TVC:" claim is falsified.
+# Commodity rows get their Current Price written as a VALUE from the TradingView
+# capture instead (see update_master_sheet.py), so no commodity gets a formula.
+RELIABLE_GOOGLEFINANCE_COMMODITIES = set()
 
 # Macro/FX symbols that must never be forced into an equity row (handoff doc section 5)
 MACRO_EXCLUDE = {'JP10Y', 'US10Y', 'GBPUSD'}

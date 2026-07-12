@@ -2,126 +2,368 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Wealth Pipeline</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Investment Production Centre</title>
 <style>
-  :root {
-    --bg: #0f1420; --card: #171d2e; --border: #2a3348; --text: #e6e9f0; --muted: #8b93a7;
-    --pending: #4a5268; --running: #3d7bd9; --success: #2fa365; --failed: #d9524a; --skipped: #6b7284;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, Segoe UI, Arial, sans-serif; background: var(--bg); color: var(--text); }
-  header { padding: 24px 32px 8px; }
-  h1 { margin: 0 0 4px; font-size: 20px; }
-  p.sub { margin: 0; color: var(--muted); font-size: 13px; }
-  main { padding: 16px 32px 40px; max-width: 900px; }
-  #execute { background: var(--running); color: white; border: none; padding: 12px 28px; font-size: 15px;
-             border-radius: 6px; cursor: pointer; margin: 12px 0 24px; }
-  #execute:disabled { background: var(--pending); cursor: not-allowed; }
-  #execute:hover:not(:disabled) { filter: brightness(1.1); }
-  .stage { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin-bottom: 10px; }
-  .stage-head { display: flex; align-items: center; gap: 10px; }
-  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--pending); flex-shrink: 0; }
-  .dot.running { background: var(--running); animation: pulse 1.2s infinite; }
-  .dot.success { background: var(--success); }
-  .dot.failed { background: var(--failed); }
-  .dot.skipped { background: var(--skipped); }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-  .stage-name { font-weight: 600; font-size: 14px; }
-  .stage-status { margin-left: auto; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  .stage-message { margin-top: 8px; font-size: 13px; color: var(--muted); white-space: pre-wrap; }
-  .stage-message.failed-text { color: var(--failed); }
-  .log { margin-top: 8px; font-family: Consolas, monospace; font-size: 11px; color: var(--muted);
-         max-height: 120px; overflow-y: auto; background: #0b0f18; border-radius: 4px; padding: 8px; display: none; }
-  .log.show { display: block; }
-  #banner { display: none; padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
-  #banner.ok { background: rgba(47,163,101,0.15); border: 1px solid var(--success); }
-  #banner.bad { background: rgba(217,82,74,0.15); border: 1px solid var(--failed); }
+:root{
+  --bg:#0e1526; --panel:#16203a; --panel-2:#1b273f; --line:#263353;
+  --text:#e8ecf5; --muted:#8a97b4; --faint:#5b6684;
+  --accent:#e0a03d; --accent-soft:rgba(224,160,61,.14);
+  --running:#4c8df6; --success:#34b27b; --failed:#e5544b; --skipped:#4a5573;
+  --shadow:0 10px 30px rgba(0,0,0,.35);
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme:light){
+  :root{ --bg:#eef1f7; --panel:#ffffff; --panel-2:#f6f8fc; --line:#dce2ee;
+    --text:#17223c; --muted:#5b6684; --faint:#9aa3b8; --accent-soft:rgba(224,160,61,.16);
+    --shadow:0 10px 26px rgba(23,34,60,.10); }
+}
+:root[data-theme="dark"]{ --bg:#0e1526; --panel:#16203a; --panel-2:#1b273f; --line:#263353;
+  --text:#e8ecf5; --muted:#8a97b4; --faint:#5b6684; --accent-soft:rgba(224,160,61,.14);
+  --shadow:0 10px 30px rgba(0,0,0,.35); }
+:root[data-theme="light"]{ --bg:#eef1f7; --panel:#ffffff; --panel-2:#f6f8fc; --line:#dce2ee;
+  --text:#17223c; --muted:#5b6684; --faint:#9aa3b8; --accent-soft:rgba(224,160,61,.16);
+  --shadow:0 10px 26px rgba(23,34,60,.10); }
+
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.45;
+  -webkit-font-smoothing:antialiased;}
+.wrap{max-width:1200px;margin:0 auto;padding:0 24px 72px}
+.label{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600}
+
+/* ── top bar ─────────────────────────────────────────────── */
+.topbar{position:sticky;top:0;z-index:20;background:color-mix(in oklab,var(--bg) 86%,transparent);
+  backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.topbar .wrap{padding-top:16px;padding-bottom:16px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:14px;min-width:0}
+.mark{width:40px;height:40px;border-radius:11px;flex-shrink:0;display:grid;place-items:center;
+  background:linear-gradient(150deg,var(--accent),#b97f22);color:#1a1305;box-shadow:var(--shadow)}
+.mark svg{width:22px;height:22px}
+h1{margin:0;font-size:19px;letter-spacing:.01em;font-weight:700;white-space:nowrap}
+.tagline{margin:2px 0 0;font-size:12px;color:var(--muted)}
+.controls{margin-left:auto;display:flex;align-items:center;gap:14px}
+.pill{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;
+  padding:7px 13px;border-radius:999px;border:1px solid var(--line);background:var(--panel);
+  text-transform:uppercase;letter-spacing:.05em}
+.pill .led{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+.pill[data-s="running"] .led{background:var(--running);animation:pulse 1.1s infinite}
+.pill[data-s="running"]{color:var(--running);border-color:color-mix(in oklab,var(--running) 45%,var(--line))}
+.pill[data-s="done"] .led{background:var(--success)} .pill[data-s="done"]{color:var(--success)}
+.pill[data-s="failed"] .led{background:var(--failed)} .pill[data-s="failed"]{color:var(--failed)}
+.elapsed{font-family:var(--mono);font-size:15px;font-variant-numeric:tabular-nums;color:var(--muted);min-width:52px;text-align:right}
+button#run{font:inherit;font-weight:650;font-size:14px;color:#1a1305;cursor:pointer;
+  border:none;border-radius:10px;padding:11px 20px;display:inline-flex;align-items:center;gap:9px;
+  background:linear-gradient(150deg,var(--accent),#c98a28);box-shadow:var(--shadow)}
+button#run:hover:not(:disabled){filter:brightness(1.07)}
+button#run:disabled{background:var(--panel-2);color:var(--faint);cursor:not-allowed;box-shadow:none;border:1px solid var(--line)}
+button#run svg{width:16px;height:16px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ── panels ─────────────────────────────────────────────── */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-top:20px;box-shadow:var(--shadow)}
+.panel-head{display:flex;align-items:baseline;gap:12px;margin-bottom:14px}
+.panel-head .label{flex-shrink:0}
+.panel-head .hint{margin-left:auto;font-size:12px;color:var(--faint)}
+
+/* ── feedstock ──────────────────────────────────────────── */
+.files{display:flex;gap:10px;flex-wrap:wrap}
+.file{display:flex;align-items:center;gap:10px;background:var(--panel-2);border:1px solid var(--line);
+  border-radius:10px;padding:9px 13px 9px 11px;min-width:0}
+.file .fled{width:9px;height:9px;border-radius:50%;background:var(--faint);flex-shrink:0}
+.file.found .fled{background:var(--success);box-shadow:0 0 0 3px color-mix(in oklab,var(--success) 22%,transparent)}
+.file.missing{border-color:color-mix(in oklab,var(--failed) 45%,var(--line))}
+.file.missing .fled{background:var(--failed);box-shadow:0 0 0 3px color-mix(in oklab,var(--failed) 22%,transparent)}
+.file .fmeta{min-width:0}
+.file .fname{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px}
+.file .fstate{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.file.missing .fstate{color:var(--failed)}
+.file .note{font-size:11px;color:var(--faint)}
+.feed-empty{color:var(--muted);font-size:13px}
+
+/* ── production line (the deck) ─────────────────────────── */
+.deckprog{margin-left:auto;display:flex;align-items:center;gap:10px}
+.deckprog .ptext{font-family:var(--mono);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.track{width:150px;height:6px;border-radius:3px;background:var(--panel-2);overflow:hidden;border:1px solid var(--line)}
+.track>i{display:block;height:100%;width:0;border-radius:3px;background:linear-gradient(90deg,var(--accent),#c98a28);transition:width .5s ease}
+.strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
+.slide{position:relative;background:var(--panel-2);border:1px solid var(--line);border-radius:12px;
+  overflow:hidden;cursor:pointer;transition:transform .25s,border-color .25s,box-shadow .25s;
+  display:flex;flex-direction:column;min-height:132px}
+.slide:hover{transform:translateY(-2px)}
+.slide .bar{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);background:color-mix(in oklab,var(--panel) 60%,transparent)}
+.slide .num{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--faint);font-variant-numeric:tabular-nums}
+.slide .nm{font-size:12px;font-weight:650;line-height:1.25}
+.slide .body{flex:1;display:flex;align-items:center;gap:12px;padding:12px}
+.slide .ico{width:34px;height:34px;flex-shrink:0;display:grid;place-items:center;border-radius:9px;
+  background:var(--panel);border:1px solid var(--line);color:var(--muted)}
+.slide .ico svg{width:20px;height:20px}
+.slide .state{font-size:12px;color:var(--muted)}
+.slide .msg{font-size:11px;color:var(--faint);padding:0 12px 11px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.slide .msg:empty{display:none}
+.slide .corner{position:absolute;top:0;right:0;width:0;height:0;border-style:solid;border-width:0 26px 26px 0;border-color:transparent transparent transparent transparent;transition:border-color .3s}
+.slide .corner svg{position:absolute;top:1px;right:-24px;width:11px;height:11px;color:#0e1526;opacity:0}
+.slide.sel{border-color:var(--accent)}
+/* status states */
+.slide[data-s="running"]{border-color:color-mix(in oklab,var(--running) 55%,var(--line));box-shadow:0 0 0 1px color-mix(in oklab,var(--running) 40%,transparent),0 0 22px color-mix(in oklab,var(--running) 20%,transparent)}
+.slide[data-s="running"] .ico{color:var(--running);border-color:color-mix(in oklab,var(--running) 50%,var(--line));background:color-mix(in oklab,var(--running) 12%,var(--panel))}
+.slide[data-s="running"] .state{color:var(--running);font-weight:600}
+.slide[data-s="running"] .bar{background:linear-gradient(90deg,color-mix(in oklab,var(--running) 22%,transparent),transparent);background-size:220% 100%;animation:conveyor 1.4s linear infinite}
+.slide[data-s="success"]{border-color:color-mix(in oklab,var(--success) 40%,var(--line))}
+.slide[data-s="success"] .ico{color:var(--success);background:color-mix(in oklab,var(--success) 12%,var(--panel))}
+.slide[data-s="success"] .state{color:var(--success)}
+.slide[data-s="success"] .corner{border-color:transparent var(--success) transparent transparent}
+.slide[data-s="success"] .corner svg{opacity:1}
+.slide[data-s="failed"]{border-color:color-mix(in oklab,var(--failed) 55%,var(--line))}
+.slide[data-s="failed"] .ico{color:var(--failed);background:color-mix(in oklab,var(--failed) 12%,var(--panel))}
+.slide[data-s="failed"] .state{color:var(--failed);font-weight:600}
+.slide[data-s="skipped"]{opacity:.55}
+.slide[data-s="skipped"] .body::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(45deg,transparent,transparent 8px,color-mix(in oklab,var(--faint) 8%,transparent) 8px,color-mix(in oklab,var(--faint) 8%,transparent) 16px);pointer-events:none}
+.slide[data-s="pending"]{opacity:.72}
+
+/* stage detail log */
+.detail{margin-top:14px;border-top:1px solid var(--line);padding-top:14px}
+.detail-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.detail-head b{font-size:13px}
+.detail-head .tag{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.log{font-family:var(--mono);font-size:11.5px;color:var(--muted);background:var(--bg);
+  border:1px solid var(--line);border-radius:9px;padding:11px 13px;max-height:180px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.log:empty::after{content:"No output yet.";color:var(--faint)}
+
+/* ── output bay ─────────────────────────────────────────── */
+.products{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.product{background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:15px 16px;display:flex;flex-direction:column;gap:10px}
+.product.off{opacity:.6}
+.product .ptop{display:flex;align-items:center;gap:10px}
+.product .picon{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;background:var(--panel);border:1px solid var(--line);color:var(--accent)}
+.product .picon svg{width:18px;height:18px}
+.product h3{margin:0;font-size:14px}
+.product .pstate{margin-left:auto;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.product.ready .pstate{color:var(--success)}
+.product p{margin:0;font-size:12px;color:var(--muted)}
+.product .stat-row{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.product .stat-row b{color:var(--text);font-variant-numeric:tabular-nums}
+.product .stat-row .warnv b{color:var(--failed)}
+.pacts{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
+.pbtn{font:inherit;font-size:12px;font-weight:600;text-decoration:none;color:var(--text);
+  background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.pbtn:hover{border-color:var(--accent);color:var(--accent)}
+.pbtn.primary{background:var(--accent-soft);border-color:color-mix(in oklab,var(--accent) 45%,var(--line));color:var(--accent)}
+.pbtn[aria-disabled="true"]{opacity:.45;pointer-events:none}
+
+/* ── banner ─────────────────────────────────────────────── */
+#banner{margin-top:20px;padding:14px 18px;border-radius:12px;font-size:13.5px;display:none}
+#banner.show{display:block}
+#banner.ok{background:color-mix(in oklab,var(--success) 14%,var(--panel));border:1px solid color-mix(in oklab,var(--success) 45%,var(--line))}
+#banner.bad{background:color-mix(in oklab,var(--failed) 14%,var(--panel));border:1px solid color-mix(in oklab,var(--failed) 45%,var(--line))}
+
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes conveyor{0%{background-position:120% 0}100%{background-position:-120% 0}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (max-width:560px){.controls{width:100%;margin-left:0}.elapsed{margin-left:auto}}
 </style>
 </head>
 <body>
-<header>
-  <h1>Wealth Pipeline</h1>
-  <p class="sub">Fidelity spending summary + TradingView chart/alert pipeline, end to end.</p>
-</header>
-<main>
-  <button id="execute">Execute</button>
-  <div id="banner"></div>
-  <div id="stages"></div>
-</main>
-<script>
-const stagesEl = document.getElementById('stages');
-const executeBtn = document.getElementById('execute');
-const banner = document.getElementById('banner');
-const stageState = {};
-
-function statusLabel(status) {
-  return { pending: 'Waiting', running: 'Running…', success: 'Done', failed: 'Failed', skipped: 'Skipped' }[status] || status;
-}
-
-function render() {
-  stagesEl.innerHTML = '';
-  for (const s of Object.values(stageState).sort((a, b) => a.id - b.id)) {
-    const el = document.createElement('div');
-    el.className = 'stage';
-    const failedClass = s.status === 'failed' ? 'failed-text' : '';
-    el.innerHTML = `
-      <div class="stage-head">
-        <div class="dot ${s.status}"></div>
-        <div class="stage-name">${s.id}. ${s.name}</div>
-        <div class="stage-status">${statusLabel(s.status)}</div>
+<header class="topbar">
+  <div class="wrap">
+    <div class="brand">
+      <div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"/><path d="m5 15 4-5 3 3 4-6 3 4"/></svg></div>
+      <div>
+        <h1>Investment Production Centre</h1>
+        <p class="tagline">TradingView &rarr; Excel &rarr; Google Sheets &middot; live production status</p>
       </div>
-      ${s.message ? `<div class="stage-message ${failedClass}">${s.message}</div>` : ''}
-      ${s.log && s.log.length ? `<div class="log show">${s.log.slice(-40).map(l => l.replace(/</g,'&lt;')).join('\n')}</div>` : ''}
-    `;
+    </div>
+    <div class="controls">
+      <span class="pill" id="pill" data-s="idle"><span class="led"></span><span id="pilltext">Idle</span></span>
+      <span class="elapsed" id="elapsed">00:00</span>
+      <button id="run"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><span id="runtext">Run pipeline</span></button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="panel">
+    <div class="panel-head"><span class="label">Input feedstock</span><span class="hint">required files in Downloads</span></div>
+    <div class="files" id="files"><span class="feed-empty">Checking Downloads&hellip;</span></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <span class="label">Production line</span>
+      <div class="deckprog"><span class="ptext" id="progtext">0 / 0</span><div class="track"><i id="progfill"></i></div></div>
+    </div>
+    <div class="strip" id="stages"></div>
+    <div class="detail">
+      <div class="detail-head"><b id="detail-name">Stage output</b><span class="tag" id="detail-state"></span></div>
+      <div class="log" id="detail-log"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><span class="label">Output bay</span><span class="hint">built products</span></div>
+    <div class="products" id="products"></div>
+  </section>
+
+  <div id="banner"></div>
+</main>
+
+<script>
+const ICONS = {
+  1:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="m9 13 2 2 4-4"/>',
+  2:'<path d="M7 3h10v18l-2.3-1.6L12 21l-2.7-1.6L7 21z"/><path d="M10 8h4M10 12h4"/>',
+  3:'<path d="M4 5v14h16"/><path d="m7 14 3-4 3 2 4-6"/>',
+  4:'<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M4 12h16"/>',
+  5:'<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M4 15h16M10 4v16"/>',
+  6:'<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M12 16v4M8 20h8"/><path d="m8 11 2.5-2.5L13 11l3-3"/>',
+  7:'<path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/><path d="m9 12 2 2 4-4"/>',
+  8:'<path d="M14 3l-2.5 6.5M20.5 8.5 14 6"/><path d="M3.5 20.5 9 13l4.5 2.2-3.4 6.1z"/><path d="M9 13l4.5 2.2"/>',
+};
+const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-11"/></svg>';
+function svg(inner){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'+inner+'</svg>';}
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+const STATE_LABEL={pending:'Waiting',running:'Running',success:'Done',failed:'Failed',skipped:'Skipped'};
+const stagesEl=document.getElementById('stages');
+const runBtn=document.getElementById('run'), runText=document.getElementById('runtext');
+const pill=document.getElementById('pill'), pillText=document.getElementById('pilltext');
+const elapsedEl=document.getElementById('elapsed'), banner=document.getElementById('banner');
+const progText=document.getElementById('progtext'), progFill=document.getElementById('progfill');
+const detailName=document.getElementById('detail-name'), detailState=document.getElementById('detail-state'), detailLog=document.getElementById('detail-log');
+
+let stages={}, order=[], selectedId=null, pinned=false, timer=null, t0=0;
+
+function fmtElapsed(ms){const s=Math.floor(ms/1000);return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');}
+function setPill(s,text){pill.dataset.s=s;pillText.textContent=text;}
+
+function initStages(list){
+  stages={};order=[];stagesEl.innerHTML='';
+  list.forEach(s=>{
+    stages[s.id]={...s,status:'pending',message:'',log:[]};order.push(s.id);
+    const el=document.createElement('div');
+    el.className='slide';el.dataset.s='pending';el.dataset.id=s.id;
+    el.innerHTML=`<div class="bar"><span class="num">${String(s.id).padStart(2,'0')}</span><span class="nm">${esc(s.name)}</span></div>
+      <div class="body"><div class="ico">${svg(ICONS[s.id]||ICONS[5])}</div><div class="state">Waiting</div></div>
+      <div class="msg"></div><div class="corner">${CHECK}</div>`;
+    el.addEventListener('click',()=>{selectedId=s.id;pinned=true;renderDetail();highlight();});
     stagesEl.appendChild(el);
-  }
+  });
+  if(!selectedId&&order.length){selectedId=order[0];}
+  renderProgress();renderDetail();highlight();
+}
+function slideEl(id){return stagesEl.querySelector(`.slide[data-id="${id}"]`);}
+function highlight(){order.forEach(id=>slideEl(id)?.classList.toggle('sel',id===selectedId));}
+
+function applyStage(id){
+  const s=stages[id],el=slideEl(id);if(!s||!el)return;
+  el.dataset.s=s.status;
+  el.querySelector('.state').textContent=STATE_LABEL[s.status]||s.status;
+  el.querySelector('.msg').textContent=s.message||'';
+  renderProgress();
+  if(selectedId===id)renderDetail();
+}
+function renderProgress(){
+  const done=order.filter(id=>stages[id].status==='success').length;
+  progText.textContent=`${done} / ${order.length}`;
+  progFill.style.width=order.length?`${done/order.length*100}%`:'0';
+}
+function renderDetail(){
+  const s=stages[selectedId];if(!s){detailName.textContent='Stage output';detailLog.textContent='';detailState.textContent='';return;}
+  detailName.textContent=`${String(s.id).padStart(2,'0')} · ${s.name}`;
+  detailState.textContent=STATE_LABEL[s.status]||s.status;
+  detailLog.textContent=(s.log||[]).slice(-200).join('\n');
+  detailLog.scrollTop=detailLog.scrollHeight;
 }
 
-function initStages(list) {
-  for (const s of list) stageState[s.id] = { id: s.id, name: s.name, status: 'pending', message: '', log: [] };
-  render();
+/* ── feedstock ─────────────────────────────────────────── */
+function base(p){return String(p).split(/[\\/]/).pop();}
+async function loadFiles(){
+  try{
+    const r=await fetch('/files');const rep=await r.json();
+    const el=document.getElementById('files');el.innerHTML='';
+    const found=Object.entries(rep.found||{}).filter(([k,v])=>typeof v==='string'&&/[\\/]/.test(v));
+    found.forEach(([k,v])=>el.appendChild(fileChip(base(v),'Loaded','found')));
+    (rep.missing||[]).forEach(m=>el.appendChild(fileChip(base(m.expected),'Missing','missing',m.why)));
+    if(rep.found&&rep.found.fidelity_pending_note){
+      const n=document.createElement('div');n.className='file';n.innerHTML=`<span class="fled" style="background:var(--accent)"></span><div class="fmeta"><div class="fname">Fidelity pending export</div><div class="note">${esc(rep.found.fidelity_pending_note)}</div></div>`;el.appendChild(n);
+    }
+    if(!el.children.length)el.innerHTML='<span class="feed-empty">No file report available.</span>';
+  }catch(e){document.getElementById('files').innerHTML='<span class="feed-empty">Could not read file status.</span>';}
+}
+function fileChip(name,state,cls,why){
+  const d=document.createElement('div');d.className='file '+cls;if(why)d.title=why;
+  d.innerHTML=`<span class="fled"></span><div class="fmeta"><div class="fname">${esc(name)}</div><div class="fstate">${state}</div></div>`;
+  return d;
 }
 
-const es = new EventSource('/events');
-es.onmessage = (ev) => {
-  const data = JSON.parse(ev.data);
-  if (data.type === 'hello') {
-    initStages(data.stages);
-    executeBtn.disabled = data.running;
-  } else if (data.type === 'run-started') {
-    banner.style.display = 'none';
-    executeBtn.disabled = true;
-    for (const id in stageState) { stageState[id].status = 'pending'; stageState[id].message = ''; stageState[id].log = []; }
-    render();
-  } else if (data.type === 'stage') {
-    const s = stageState[data.id];
-    if (!s) return;
-    s.status = data.status;
-    if (data.message) s.message = data.message;
-    render();
-  } else if (data.type === 'log') {
-    const s = stageState[data.id];
-    if (!s) return;
-    s.log.push(data.line);
-    render();
-  } else if (data.type === 'run-complete') {
-    executeBtn.disabled = false;
-    banner.style.display = 'block';
-    banner.className = data.ok ? 'ok' : 'bad';
-    banner.textContent = data.ok
-      ? 'Pipeline completed successfully.'
-      : 'Pipeline stopped — see the failed/skipped stage(s) above for what needs fixing before re-running.';
+/* ── output bay ────────────────────────────────────────── */
+async function loadProducts(){
+  try{
+    const r=await fetch('/products');const p=await r.json();const el=document.getElementById('products');el.innerHTML='';
+    // Finance Google Sheet — always available
+    el.appendChild(product({icon:5,title:'Finance workbook',ready:true,desc:'Live Google Sheet the pipeline syncs into.',
+      acts:[{label:'Open in Google Sheets ↗',href:p.googleSheet.url,primary:true,external:true}]}));
+    // Review deck
+    const d=p.deck||{},sum=d.summary;
+    el.appendChild(product({icon:6,title:'Investment review deck',ready:!!d.exists,
+      desc:d.exists?'One slide per investment — flags missing charts &amp; alerts.':'Runs as pipeline step 4. Not built yet.',
+      stats:sum?[['charts',sum.charts,false],['missing',sum.missing_charts,sum.missing_charts>0],['no alerts',sum.no_alerts,sum.no_alerts>0],['held·no chart',sum.held_no_chart,sum.held_no_chart>0]]:null,
+      acts:d.exists?[{label:'View in browser ↗',href:d.viewUrl,primary:true,external:true},{label:'Download .pptx',href:d.pptxUrl}]:[]}));
+    // Spending summary
+    const sp=p.spending||{};
+    el.appendChild(product({icon:2,title:'Fidelity spending summary',ready:!!sp.exists,
+      desc:sp.exists?'Positions &amp; spending workbook from the Fidelity stage.':'Built by the Fidelity stage. Not present yet.',
+      acts:sp.exists?[{label:'Download .xlsx',href:sp.url}]:[]}));
+  }catch(e){/* leave as-is */}
+}
+function product({icon,title,ready,desc,stats,acts}){
+  const d=document.createElement('div');d.className='product '+(ready?'ready':'off');
+  const statHtml=stats?`<div class="stat-row">${stats.map(([k,v,warn])=>`<span class="${warn?'warnv':''}">${esc(k)} <b>${v}</b></span>`).join('')}</div>`:'';
+  const actHtml=(acts&&acts.length)?`<div class="pacts">${acts.map(a=>`<a class="pbtn ${a.primary?'primary':''}" href="${a.href}" ${a.external?'target="_blank" rel="noopener"':''}>${esc(a.label)}</a>`).join('')}</div>`
+    :`<div class="pacts"><span class="pbtn" aria-disabled="true">Not available yet</span></div>`;
+  d.innerHTML=`<div class="ptop"><div class="picon">${svg(ICONS[icon])}</div><h3>${esc(title)}</h3><span class="pstate">${ready?'Ready':'Pending'}</span></div>
+    <p>${desc}</p>${statHtml}${actHtml}`;
+  return d;
+}
+
+/* ── run control + SSE ─────────────────────────────────── */
+function startTimer(){t0=Date.now();elapsedEl.textContent='00:00';timer=setInterval(()=>elapsedEl.textContent=fmtElapsed(Date.now()-t0),1000);}
+function stopTimer(){clearInterval(timer);timer=null;}
+
+const es=new EventSource('/events');
+es.onmessage=ev=>{
+  const d=JSON.parse(ev.data);
+  if(d.type==='hello'){
+    initStages(d.stages);runBtn.disabled=d.running;
+    setPill(d.running?'running':'idle',d.running?'Running':'Idle');
+    if(d.running){runText.textContent='Running…';}
+  }else if(d.type==='run-started'){
+    banner.className='';banner.classList.remove('show');
+    runBtn.disabled=true;runText.textContent='Running…';setPill('running','Running');
+    order.forEach(id=>{stages[id].status='pending';stages[id].message='';stages[id].log=[];applyStage(id);});
+    pinned=false;startTimer();
+  }else if(d.type==='stage'){
+    const s=stages[d.id];if(!s)return;s.status=d.status;if(d.message)s.message=d.message;applyStage(d.id);
+    if(!pinned&&d.status==='running'){selectedId=d.id;renderDetail();highlight();}
+  }else if(d.type==='log'){
+    const s=stages[d.id];if(!s)return;s.log.push(d.line);if(selectedId===d.id)renderDetail();
+  }else if(d.type==='run-complete'){
+    stopTimer();runBtn.disabled=false;runText.textContent='Run pipeline';
+    setPill(d.ok?'done':'failed',d.ok?'Complete':'Stopped');
+    banner.className='show '+(d.ok?'ok':'bad');
+    banner.textContent=d.ok?'Pipeline completed. Products in the output bay are refreshed below.'
+      :'Pipeline stopped — open the failed or skipped stage above to see what needs fixing before re-running.';
+    loadProducts();loadFiles();
   }
 };
+es.onerror=()=>setPill('idle','Reconnecting…');
 
-executeBtn.addEventListener('click', () => {
-  fetch('/run', { method: 'POST' }).then(async (r) => {
-    if (r.status === 409) {
-      const body = await r.json();
-      alert(body.error);
-    }
-  });
+runBtn.addEventListener('click',()=>{
+  fetch('/run',{method:'POST'}).then(async r=>{if(r.status===409){const b=await r.json();alert(b.error);}});
 });
+
+loadFiles();loadProducts();
 </script>
 </body>
 </html>

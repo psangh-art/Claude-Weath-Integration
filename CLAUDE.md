@@ -117,12 +117,28 @@ extraction / TradingView-to-Excel work — `tradingview-mcp`'s duplicate copy of
 pipeline was reverted back to its prior state, since it's a separate 68-tool MCP
 server repo unrelated to this specific workflow.
 
-## Pipeline App (added 2026-07-10): unified GUI for the whole process
+## Pipeline App — "Investment Production Centre" (added 2026-07-10, rebuilt 2026-07-12)
 
 `Run Pipeline App.bat` starts `scripts/pipeline_app_server.js` (plain Node `http`,
-no new dependency) and opens `http://localhost:4590` — a single-page app with one
-**Execute** button and live per-stage status, so the whole thing can be watched
-running instead of read from a scrolling console. Seven stages, in order:
+no new dependency) and opens `http://localhost:4590` — the **Investment Production
+Centre**: a control-room "production line" screen. Input feedstock (the required
+files, found/loaded) flows through a PowerPoint-style filmstrip of the pipeline
+stages (live status, spotlighted active slide, deck-progress rail, per-stage log
+drawer), out to an **output bay** linking the built products. Front end is
+`scripts/pipeline_app/index.html` (self-contained, theme-aware). **The
+`app-developer` agent (`.claude/agents/app-developer.md`) owns this front end** —
+route it any UI/presentation change; it's scoped away from pipeline logic.
+
+Server routes beyond `/` + SSE `/events` + `POST /run`: `/files` (preflight status
+on load), `/products` (built-product availability + links), `/deck` (in-Chrome
+gallery of the review deck), `/deck.pptx` (download / open in PowerPoint),
+`/download/spending`, and `/asset?p=` (image proxy for the gallery, **whitelisted to
+the repo + Downloads only** — never serve an arbitrary path). `build_review_deck.py`
+emits the gallery (`pipeline_app/review_deck.html`, gitignored) + a summary JSON
+that feeds the output bay. Products linked: Finance Google Sheet, the review deck
+(view + download), and `spending_summary.xlsx`.
+
+Eight stages, in order:
 
 1. **Pre-flight file check** (`preflight_check.py`) — verifies every REQUIRED input
    file actually exists in `~/Downloads` *before* anything else runs: Amex
@@ -137,12 +153,14 @@ running instead of read from a scrolling console. Seven stages, in order:
    as `spending_summary.py` already treats it.
 2. **Fidelity spending-summary build** — runs `spending_summary.py` against the
    files pre-flight found, writing `spending_summary.xlsx`.
-3–7. **TradingView chart capture → OCR → master-sheet update → verification →
-   Downloads cleanup** — these are `run_full_pipeline.js`'s existing five steps,
-   run unmodified as a single child process; the app parses that script's own
-   `=== Step N/5: ... ===` console markers to report them as five separate stages
-   in the UI rather than re-implementing that logic. **If you rename or reorder
-   the step log lines in `run_full_pipeline.js`, update the `stageForStepName()`
+3–8. **TradingView chart capture → OCR → master-sheet update → PowerPoint review
+   deck → verification → Downloads cleanup** — these are `run_full_pipeline.js`'s
+   six steps (the deck build was added 2026-07-12 as step 4/6, in the always-run
+   finally block so a partial run still gets a "what's missing" deck), run
+   unmodified as a single child process; the app parses that script's own
+   `=== Step N/M: ... ===` console markers (regex is version-agnostic, `\d+/\d+`)
+   to report them as separate stages. **If you rename or reorder the step log
+   lines in `run_full_pipeline.js`, update the `STAGES` array + `stageForStepName()`
    regexes in `pipeline_app_server.js` to match**, or the app will silently stop
    attributing log lines to the right stage.
 
@@ -181,15 +199,64 @@ processes). Both failure modes were hit for real before landing on this approach
 formulas return `#N/A`, and so do `CURRENCY:XAUUSD`/`XAGUSD`/`XPTUSD`/`XPDUSD` —
 Google has dropped metals support — while equities (`GOOG`) and FX
 (`CURRENCY:GBPUSD`) still work. So `ticker_normalize.py`'s
-`RELIABLE_GOOGLEFINANCE_COMMODITIES` claim is falsified. Agreed fix (user
-confirmed): the pipeline should write TradingView-captured numeric prices +
-timestamp into commodity rows instead of GOOGLEFINANCE formulas. Not yet
-implemented — tracked as an open item below.
+`RELIABLE_GOOGLEFINANCE_COMMODITIES` claim is falsified. **Implemented 2026-07-12**:
+`RELIABLE_GOOGLEFINANCE_COMMODITIES` is now empty (commodities get no formula) and
+`update_master_sheet.py` writes each commodity's TradingView-captured price into
+Investments' Current Price as a plain VALUE, stamped via 'Chart Last Checked'.
+Only commodities with a TradingView chart get a price — **Brent (UKOIL), Palladium
+and Copper have no chart in the layouts**, so their cells keep whatever they had
+(Brent/Palladium show `#N/A` from old dead formulas; Copper's `CPER`-ETF formula
+still works). Adding TV charts for those three would auto-fix them on the next run.
+
+**Sync fully automated end-to-end (verified 2026-07-12):** tab deletion (right-click
+→ Delete → OK, driven by accessibility refs from the `find` tool — screenshot pixel
+coordinates were unreliable because the viewport/screenshot scale differ), then the
+Import dialog (its contents are in an iframe invisible to find/read_page, so
+screenshot coordinates ARE needed there), then `drive_open_dialog.ps1` for the native
+picker. A dated run entry gets appended to the `ClaudeCode` tab each sync.
+
+## Per-run verification of master-sheet writes (added 2026-07-12)
+
+`update_master_sheet.py`'s result JSON now records this run's `commodity_prices`
+and `below_alert_rows`, and `verify_pipeline.py` cross-checks BOTH against the
+saved workbook (value actually present in Investments col I; below-alert row count
+in the 'Stocks of Interest' rows 5-38 reserved block; no resurrected 'Below Alert
+Low' sheet) and fails the overall verdict on mismatch. This is deliberately the
+last gate before the workbook is imported into the Finance Google Sheet.
+
+## Stocks of Interest formatting + TradingView links (2026-07-12)
+
+- The below-alert block (rows 1-40) is styled to **match the section tables** below
+  it: Arial, thin borders, navy title band, `FF2E5077` subtitle/header bands, a red
+  `FFC00000` "BELOW ALERT LOW" section band, pale-red data rows, Stock-name-then-
+  Ticker identity columns. `refresh_block()` reproduces this every run.
+- **Every stock row links to its TradingView layout** via
+  `=HYPERLINK("…/chart/<chartId>/","📊 Layout")` (same pattern as Investments' col
+  AJ). Below-alert block: column J, reproduced by the pipeline (chartId threaded
+  through `update_master_sheet`'s matches). Section tables (hand-maintained): column
+  Q (P is 'Last Updated'), added by `add_tv_links_soi_2026-07-12.py`, gated on a
+  real-ticker regex so the FTSE-review-calendar / dividend-cover reference tables
+  further down the sheet are left untouched. `ticker→chartId` is matched through
+  `ticker_normalize`. Rows whose ticker has no captured chart get no link.
+
+## Review deck (added 2026-07-12)
+
+`python scripts/build_review_deck.py [out.pptx]` (default
+`~/Downloads/Investment_Review_Deck.pptx`) builds a PowerPoint-Online-compatible
+deck from the latest run: summary page (missing charts / no-alert tickers / held
+investments with no chart, each flagged red when non-empty), a section slide per
+layout, one slide per chart with the cropped image + live price + master-sheet
+holdings/alerts + OCR channel read + TradingView alerts, and an appendix of
+master rows with no chart. Requires `python-pptx` (installed for the
+`AppData\Local\Python` interpreter).
 
 ## Open items / things to verify on the next export run
 
-- Replace commodity GOOGLEFINANCE formulas with TradingView-captured prices
-  (see Google Sheets sync section above — user-confirmed approach, 2026-07-11).
+- Brent (UKOIL), Palladium and Copper have no TradingView chart, so no captured
+  price and no working formula (Copper's CPER formula still works) — user to add
+  TV charts if live pricing for them is wanted.
+- WPP's Alert Low (1121.92) is ~4x its live price (274.6, gap −75%) — looks like a
+  stale/misread level; flagged to the user 2026-07-12, needs a manual look.
 - Orphaned `sync_*` temp Google Sheets in the user's Drive (left by a failed
   2026-07-10 sync attempt) still need manual deletion by the user — no Drive
   delete tool available.

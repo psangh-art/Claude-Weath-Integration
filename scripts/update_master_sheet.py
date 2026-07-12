@@ -26,7 +26,11 @@ from ticker_normalize import normalize, master_tickers_match
 
 SHEET_NAME = 'Investments'
 COL_CHART = 1
+COL_SHARE_NAME = 2
 COL_TICKER = 3
+COL_HOLDINGS = 4
+COL_TARGET_VALUE = 6
+COL_CURRENT_PRICE = 9
 COL_ALERT_LOW = 12
 COL_ALERT_LOW_SOURCE = 13
 COL_ALERT_HIGH = 15
@@ -91,8 +95,11 @@ def append_note(ws, row, note):
 
 
 def process(master_ws, charts, channel_by_ticker):
-    """Returns (applied, rejected, skipped_manual, skipped_noise, unmatched) lists of
-    dicts describing what happened for each charted ticker, for the feedback log.
+    """Returns (applied, rejected, skipped_manual, skipped_noise, unmatched, matches)
+    — the first five are lists of dicts describing what happened for each charted
+    ticker, for the feedback log; `matches` records every charted ticker that found
+    a master row, with its captured live price, so main() can rebuild the
+    below-alert table after all Alert Low/High updates have landed.
     Every row that was actually looked at this run (applied, rejected, manual-skipped,
     or noise-skipped) gets a 'Chart Last Checked' timestamp — 'unmatched' rows are
     NOT stamped, since those were never actually attempted against this ticker."""
@@ -101,6 +108,7 @@ def process(master_ws, charts, channel_by_ticker):
     today = date.today().isoformat()
 
     applied, rejected, skipped_manual, skipped_noise, unmatched = [], [], [], [], []
+    matches = []
     seen_tickers = set()
 
     for row in charts:
@@ -127,6 +135,20 @@ def process(master_ws, charts, channel_by_ticker):
         if master_row is None:
             unmatched.append({'ticker': master_ticker, 'company': company, 'reason': 'no existing row in master sheet'})
             continue
+
+        matches.append({'ticker': master_ticker, 'company': company, 'row': master_row,
+                        'price': row.get('price'), 'checked_at': row.get('priceCheckedAt'),
+                        'chart_id': row.get('chartId')})
+
+        # Commodities can't be priced by GOOGLEFINANCE at all any more (verified
+        # 2026-07-11: TVC: and CURRENCY:XAU/XAG/XPT/XPD all return #N/A), so their
+        # Current Price cell gets the TradingView-captured live price written as a
+        # VALUE — replacing the dead formula — with 'Chart Last Checked' as its
+        # freshness stamp. Equity/index rows keep their working formulas.
+        if norm['kind'] == 'commodity' and isinstance(row.get('price'), (int, float)):
+            master_ws.cell(row=master_row, column=COL_CURRENT_PRICE, value=round(row['price'], 2))
+            master_ws.cell(row=master_row, column=col_last_checked, value=today)
+            matches[-1]['commodity_price_written'] = True
 
         if detection is None:
             unmatched.append({'ticker': master_ticker, 'company': company, 'reason': 'not yet attempted (no channel-detection result for this run)'})
@@ -207,7 +229,43 @@ def process(master_ws, charts, channel_by_ticker):
 
         master_ws.cell(row=master_row, column=col_last_checked, value=today)
 
-    return applied, rejected, skipped_manual, skipped_noise, unmatched
+    return applied, rejected, skipped_manual, skipped_noise, unmatched, matches
+
+
+def build_below_alert_rows(master_ws, matches):
+    """Every matched ticker whose captured live price sits below its (possibly
+    just-updated) Alert Low, worst gap first — the input for the below-alert
+    table at the top of 'Stocks of Interest'. Reads the master sheet AFTER
+    process() so freshly applied Alert Lows are what get compared."""
+    rows = []
+    for m in matches:
+        price = m['price']
+        if not isinstance(price, (int, float)):
+            continue
+        alert_low = master_ws.cell(row=m['row'], column=COL_ALERT_LOW).value
+        if not isinstance(alert_low, (int, float)) or not alert_low or price >= alert_low:
+            continue
+        alert_high = master_ws.cell(row=m['row'], column=COL_ALERT_HIGH).value
+        # Holdings/Target in Investments are sometimes FORMULAS (e.g. =ROUND(...));
+        # with data_only=False .value is the formula string, which is meaningless
+        # once written into the Stocks of Interest sheet. Only carry real numbers
+        # over — anything else becomes a blank cell rather than a broken formula.
+        holdings = master_ws.cell(row=m['row'], column=COL_HOLDINGS).value
+        target_value = master_ws.cell(row=m['row'], column=COL_TARGET_VALUE).value
+        rows.append({
+            'ticker': m['ticker'],
+            'share_name': master_ws.cell(row=m['row'], column=COL_SHARE_NAME).value or m['company'],
+            'price': price,
+            'alert_low': alert_low,
+            'alert_high': alert_high if isinstance(alert_high, (int, float)) else None,
+            'gap_pct': (price - alert_low) / alert_low * 100,
+            'holdings': holdings if isinstance(holdings, (int, float)) else None,
+            'target_value': target_value if isinstance(target_value, (int, float)) else None,
+            'checked_at': m['checked_at'],
+            'chart_id': m.get('chart_id'),
+        })
+    rows.sort(key=lambda r: r['gap_pct'])
+    return rows
 
 
 _TRACKER_HEADING_RE = re.compile(r'^##.*Coverage Tracker.*$', re.MULTILINE)
@@ -395,7 +453,14 @@ def main():
     wb = openpyxl.load_workbook(master_in, data_only=False)
     ws = wb[SHEET_NAME]
 
-    applied, rejected, skipped_manual, skipped_noise, unmatched = process(ws, charts, channel_by_ticker)
+    applied, rejected, skipped_manual, skipped_noise, unmatched, matches = process(ws, charts, channel_by_ticker)
+
+    # Rebuild the below-alert table at the top of 'Stocks of Interest' from this
+    # run's captured prices vs the (post-update) Alert Lows. Same workbook save.
+    below_rows = build_below_alert_rows(ws, matches)
+    from add_below_alert_sheet import refresh_block, SHEET_NAME as SOI_SHEET
+    refresh_block(wb[SOI_SHEET], below_rows)
+    print(f"Below-alert table: {len(below_rows)} ticker(s) under Alert Low -> top of '{SOI_SHEET}'")
 
     wb.save(master_out)
     update_feedback_md(feedback_path, applied, rejected, skipped_manual, skipped_noise, unmatched)
@@ -413,6 +478,11 @@ def main():
             'skipped_manual': skipped_manual,
             'skipped_noise': skipped_noise,
             'unmatched': unmatched,
+            'below_alert_rows': below_rows,
+            'commodity_prices': [
+                {'ticker': m['ticker'], 'price': round(m['price'], 2), 'checked_at': m['checked_at']}
+                for m in matches if m.get('commodity_price_written')
+            ],
         }, f, indent=2)
 
     print(f"Applied: {len(applied)}, Rejected: {len(rejected)}, Manual-skipped: {len(skipped_manual)}, "
