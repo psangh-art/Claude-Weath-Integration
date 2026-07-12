@@ -23,19 +23,62 @@ import sys
 import json
 from datetime import datetime
 import openpyxl
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 
 SHEET_NAME = 'Stocks of Interest'
 RESERVED_BLOCK = 40      # rows 1..40 belong to this table; row 41+ is the
                          # pre-existing Stocks of Interest content — never touch it
+TITLE_ROW = 1
+NOTE_ROW = 2
+BAND_ROW = 3             # coloured section band, like the section headers below
+HEADER_ROW = 4
 DATA_START_ROW = 5
 MAX_DATA_ROWS = 34       # rows 5..38; 39-40 stay blank as a separator
-HEADER_ROW = 4
-HEADER_FILL = PatternFill(fill_type='solid', fgColor='FFF2CC')
-GAP_BAD_FONT = Font(color='FFCC0000', bold=True)
+LAST_COL = 9             # this table occupies columns A..I
 
-HEADER = ['Ticker', 'Share Name', 'Current Price', 'Alert Low', 'Gap %', 'Alert High',
+# Palette + typography lifted from the section tables lower down this same sheet
+# (rows 41+), so the below-alert table reads as part of the same document rather
+# than a foreign block. Verified against the live workbook 2026-07-12.
+FONT_NAME = 'Arial'
+WHITE = 'FFFFFFFF'
+NAVY = 'FF1F3864'          # title band + ticker text (identity colour)
+SUBHEAD_FILL = 'FF2E5077'  # subtitle/note band + column-header band
+BAND_FILL = 'FFC00000'     # section band — red extends the existing green/amber/
+                           # blue priority ladder: "below alert low" is the most
+                           # urgent state (change here if a different colour is wanted)
+DATA_FILL = 'FFFDF0F0'     # pale-red data tint, matching the per-section pale tints
+                           # (green FFF0FFF4 / amber FFFFFDF0 / watchlist FFF7F9FC)
+GAP_BAD = 'FFCC0000'       # red-bold gap when a stock is >10% below its alert low
+
+_THIN = Side(style='thin')
+BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
+_TOP_LEFT = Alignment(horizontal='left', vertical='top', wrap_text=False)
+_TOP_LEFT_WRAP = Alignment(horizontal='left', vertical='top', wrap_text=True)
+_TOP_RIGHT = Alignment(horizontal='right', vertical='top', wrap_text=False)
+
+# Columns reordered to match the section tables below: Stock name first (wide col
+# A), Ticker second (narrow col B). Numeric columns are right-aligned with the
+# same formats the tables below use (#,##0.00 for prices, #,##0 for whole-pound £).
+HEADER = ['Stock', 'Ticker', 'Current Price', 'Alert Low', 'Gap %', 'Alert High',
           'Holdings (£)', 'Target Value (£)', 'Price Checked At']
+_NUM_FMT = {3: '#,##0.00', 4: '#,##0.00', 5: '0.0"%"', 6: '#,##0.00', 7: '#,##0', 8: '#,##0'}
+
+
+def _band(ws, row, text, fill, size, bold, italic=False):
+    """Render a full-width (A..I) coloured band on `row`, merged, bordered, with
+    `text` in the top-left cell — the same treatment the section headers use."""
+    for c in range(1, LAST_COL + 1):
+        cell = ws.cell(row=row, column=c)
+        cell.value = None
+        cell.fill = PatternFill(fill_type='solid', fgColor=fill)
+        cell.border = BORDER
+        cell.alignment = _TOP_LEFT
+        cell.font = Font(name=FONT_NAME, size=size, bold=bold, italic=italic, color=WHITE)
+    ws.cell(row=row, column=1, value=text)
+    rng = f'A{row}:{chr(64 + LAST_COL)}{row}'
+    if rng not in {str(m) for m in ws.merged_cells.ranges}:
+        ws.merge_cells(rng)
+    ws.row_dimensions[row].height = 15
 
 
 def refresh_block(ws, rows):
@@ -45,46 +88,70 @@ def refresh_block(ws, rows):
               f'{len(rows) - MAX_DATA_ROWS} omitted.', file=sys.stderr)
         rows = rows[:MAX_DATA_ROWS]
 
-    ws.cell(row=1, column=1, value='Stocks Trading Below Alert Low').font = Font(bold=True, size=14)
-    ws.cell(row=2, column=1, value=(
+    # Title / note / section bands (rows 1-3), mirroring the section-table header
+    # stack below (navy title, FF2E5077 italic subtitle, coloured section band).
+    _band(ws, TITLE_ROW, 'Stocks Trading Below Alert Low', NAVY, size=13, bold=True)
+    _band(ws, NOTE_ROW, (
         f'Auto-generated {datetime.now().date().isoformat()} from tradingview_layouts.xlsx live '
         'price capture cross-checked against Alert Low. Rebuilt by the pipeline into rows '
         f'1-{RESERVED_BLOCK} of this sheet each run — do not add manual content above row '
         f'{RESERVED_BLOCK + 1}.'
-    ))
+    ), SUBHEAD_FILL, size=8, bold=False, italic=True)
+    _band(ws, BAND_ROW, '🔴  BELOW ALERT LOW — price has fallen through the alert level  (Action required)',
+          BAND_FILL, size=10, bold=True)
 
+    # Column header row (FF2E5077 band, bold white, wrapped) — matches row 44 below.
     for c, h in enumerate(HEADER, 1):
         cell = ws.cell(row=HEADER_ROW, column=c, value=h)
-        cell.font = Font(bold=True)
-        cell.fill = HEADER_FILL
+        cell.font = Font(name=FONT_NAME, size=8, bold=True, color=WHITE)
+        cell.fill = PatternFill(fill_type='solid', fgColor=SUBHEAD_FILL)
+        cell.border = BORDER
+        cell.alignment = _TOP_LEFT_WRAP
+    ws.row_dimensions[HEADER_ROW].height = 15
 
-    # Clear the whole data region first so rows from a previous (longer) run
-    # can't linger below this run's shorter table.
+    # Reset the whole data region first so a shorter run leaves no styled ghosts.
     for r in range(DATA_START_ROW, DATA_START_ROW + MAX_DATA_ROWS):
-        for c in range(1, len(HEADER) + 1):
+        for c in range(1, LAST_COL + 1):
             cell = ws.cell(row=r, column=c)
             cell.value = None
             cell.font = Font()
             cell.fill = PatternFill()
+            cell.border = Border()
+            cell.alignment = Alignment()
             cell.number_format = 'General'
+        ws.row_dimensions[r].height = None
 
     for i, r in enumerate(rows):
         row_n = DATA_START_ROW + i
-        ws.cell(row=row_n, column=1, value=r['ticker']).font = Font(bold=True)
-        ws.cell(row=row_n, column=2, value=r['share_name'])
+        # base data-row styling on every cell (pale-red fill, thin border, Arial 8)
+        for c in range(1, LAST_COL + 1):
+            cell = ws.cell(row=row_n, column=c)
+            cell.fill = PatternFill(fill_type='solid', fgColor=DATA_FILL)
+            cell.border = BORDER
+            cell.font = Font(name=FONT_NAME, size=8)
+            cell.alignment = _TOP_LEFT
+        ws.row_dimensions[row_n].height = 15
+
+        name_cell = ws.cell(row=row_n, column=1, value=r['share_name'])
+        name_cell.font = Font(name=FONT_NAME, size=9, bold=True, color='FF000000')
+        ticker_cell = ws.cell(row=row_n, column=2, value=r['ticker'])
+        ticker_cell.font = Font(name=FONT_NAME, size=8, bold=True, color=NAVY)
+
         ws.cell(row=row_n, column=3, value=round(r['price'], 2))
         ws.cell(row=row_n, column=4, value=r['alert_low'])
         gap_cell = ws.cell(row=row_n, column=5, value=round(r['gap_pct'], 1))
-        gap_cell.number_format = '0.0"%"'
         if r['gap_pct'] <= -10:
-            gap_cell.font = GAP_BAD_FONT
+            gap_cell.font = Font(name=FONT_NAME, size=8, bold=True, color=GAP_BAD)
         ws.cell(row=row_n, column=6, value=r['alert_high'])
-        # £ amounts display as whole pounds (user rule, 2026-07-11)
-        holdings_cell = ws.cell(row=row_n, column=7, value=r['holdings'])
-        holdings_cell.number_format = '#,##0'
-        target_cell = ws.cell(row=row_n, column=8, value=r['target_value'])
-        target_cell.number_format = '#,##0'
+        # Holdings/Target £ display as whole pounds (user rule, 2026-07-11).
+        ws.cell(row=row_n, column=7, value=r['holdings'])
+        ws.cell(row=row_n, column=8, value=r['target_value'])
         ws.cell(row=row_n, column=9, value=r['checked_at'])
+
+        for c, fmt in _NUM_FMT.items():
+            cell = ws.cell(row=row_n, column=c)
+            cell.number_format = fmt
+            cell.alignment = _TOP_RIGHT
 
     return len(rows)
 

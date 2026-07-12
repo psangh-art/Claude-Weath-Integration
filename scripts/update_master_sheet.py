@@ -245,6 +245,12 @@ def build_below_alert_rows(master_ws, matches):
         if not isinstance(alert_low, (int, float)) or not alert_low or price >= alert_low:
             continue
         alert_high = master_ws.cell(row=m['row'], column=COL_ALERT_HIGH).value
+        # Holdings/Target in Investments are sometimes FORMULAS (e.g. =ROUND(...));
+        # with data_only=False .value is the formula string, which is meaningless
+        # once written into the Stocks of Interest sheet. Only carry real numbers
+        # over — anything else becomes a blank cell rather than a broken formula.
+        holdings = master_ws.cell(row=m['row'], column=COL_HOLDINGS).value
+        target_value = master_ws.cell(row=m['row'], column=COL_TARGET_VALUE).value
         rows.append({
             'ticker': m['ticker'],
             'share_name': master_ws.cell(row=m['row'], column=COL_SHARE_NAME).value or m['company'],
@@ -252,8 +258,8 @@ def build_below_alert_rows(master_ws, matches):
             'alert_low': alert_low,
             'alert_high': alert_high if isinstance(alert_high, (int, float)) else None,
             'gap_pct': (price - alert_low) / alert_low * 100,
-            'holdings': master_ws.cell(row=m['row'], column=COL_HOLDINGS).value,
-            'target_value': master_ws.cell(row=m['row'], column=COL_TARGET_VALUE).value,
+            'holdings': holdings if isinstance(holdings, (int, float)) else None,
+            'target_value': target_value if isinstance(target_value, (int, float)) else None,
             'checked_at': m['checked_at'],
         })
     rows.sort(key=lambda r: r['gap_pct'])
