@@ -171,6 +171,16 @@ def refresh_block(ws, rows):
             cell.number_format = fmt
             cell.alignment = _TOP_RIGHT
 
+    # Collapse the unused tail of the reserved block so the section tables below
+    # sit just under this table instead of after a wide blank gap. The rows stay
+    # present — the fixed reserved block is what lets the pipeline rewrite rows
+    # 1..RESERVED_BLOCK each run without disturbing the section tables — they're
+    # only HIDDEN; a run with more below-alert stocks unhides them as it fills.
+    # One blank separator row (the first unused row) is kept visible.
+    first_blank = DATA_START_ROW + len(rows)
+    for r in range(1, RESERVED_BLOCK + 1):
+        ws.row_dimensions[r].hidden = r > first_blank
+
     return len(rows)
 
 
