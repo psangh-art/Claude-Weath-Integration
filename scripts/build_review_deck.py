@@ -14,9 +14,11 @@ Data sources (all produced by run_full_pipeline.js):
 Usage: python build_review_deck.py [out.pptx]
   (default out: ~/Downloads/Investment_Review_Deck.pptx)
 """
+import html as _html
 import json
 import os
 import sys
+import urllib.parse
 from datetime import datetime
 
 import openpyxl
@@ -37,6 +39,12 @@ if sys.platform == "win32":
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DOWNLOADS = os.path.join(os.path.expanduser('~'), 'Downloads')
 MASTER_PATH = os.path.join(DOWNLOADS, 'Stocks_Buy_Strategy.xlsx')
+# The Investment Production Centre front end serves these two: an in-Chrome
+# gallery view of the deck and a machine-readable summary for the output bay.
+PIPELINE_APP_DIR = os.path.join(SCRIPT_DIR, 'pipeline_app')
+GALLERY_PATH = os.path.join(PIPELINE_APP_DIR, 'review_deck.html')
+SUMMARY_PATH = os.path.join(PIPELINE_APP_DIR, 'review_deck_summary.json')
+TV_LAYOUT_URL = 'https://www.tradingview.com/chart/{chart_id}/'
 
 # Master 'Investments' columns (same map as update_master_sheet.py)
 COL_SHARE_NAME, COL_TICKER, COL_HOLDINGS, COL_TARGET = 2, 3, 4, 6
@@ -232,6 +240,139 @@ def section_slide(prs, title, subtitle=''):
     box.fill.fore_color.rgb = NAVY
 
 
+def _asset_url(abs_path):
+    """The front-end server proxies whitelisted images at /asset?p=<abs path>."""
+    return 'asset?p=' + urllib.parse.quote(abs_path or '', safe='')
+
+
+def _e(v):
+    return _html.escape('' if v is None else str(v))
+
+
+def write_gallery(path, charts, alerts, channels, master_index, stats):
+    """Write an in-Chrome HTML view of the review deck — one card per chart,
+    grouped by layout, with the same flags the .pptx carries. Shares the
+    Investment Production Centre's dark-slate/amber design language."""
+    def card(chart):
+        ticker = chart.get('ticker') or '?'
+        _, master = find_master(master_index, ticker)
+        channel = channels.get(ticker)
+        tv_alerts = alerts_for(alerts, ticker)
+        img = chart.get('screenshot')
+        cid = chart.get('chartId')
+        has_master_alert = master is not None and isinstance(master.get('alert_low'), (int, float))
+        flags = []
+        if not (img and os.path.exists(img)):
+            flags.append('<span class="flag bad">Missing chart</span>')
+        if not tv_alerts and not has_master_alert:
+            flags.append('<span class="flag bad">No alerts</span>')
+        if master is None:
+            flags.append('<span class="flag warn">Not in master</span>')
+
+        media = (f'<img loading="lazy" src="{_asset_url(img)}" alt="{_e(ticker)} chart">'
+                 if img and os.path.exists(img)
+                 else '<div class="noimg">chart not captured</div>')
+        rows = [('Live price', fmt_num(chart.get('price')))]
+        if master:
+            rows += [('Holdings', fmt_pounds(master.get('holdings'))),
+                     ('Alert low', fmt_num(master.get('alert_low'))),
+                     ('Alert high', fmt_num(master.get('alert_high')))]
+        if channel and channel.get('kind') not in (None, 'rejected'):
+            rows.append(('Channel', f"{channel['kind']} {fmt_num(channel.get('lower'))}–{fmt_num(channel.get('upper'))}"))
+        rows.append(('TV alerts', str(len(tv_alerts))))
+        stat_html = ''.join(
+            f'<div class="kv"><span>{_e(k)}</span><b>{_e(v)}</b></div>' for k, v in rows)
+        tv_link = (f'<a class="tvlink" href="{TV_LAYOUT_URL.format(chart_id=cid)}" target="_blank" '
+                   f'rel="noopener">Open TradingView layout ↗</a>' if cid else '')
+        return (f'<article class="card">{media}'
+                f'<div class="cardbody"><header><h3>{_e(ticker)}</h3>'
+                f'<span class="co">{_e(chart.get("description") or "")}</span></header>'
+                f'<div class="flags">{"".join(flags)}</div>'
+                f'<div class="kvs">{stat_html}</div>{tv_link}</div></article>')
+
+    sections = []
+    current = None
+    buf = []
+    for chart in charts:
+        if chart['name'] != current:
+            if buf:
+                sections.append(f'<section class="layout"><h2>{_e(current)}</h2>'
+                                f'<div class="grid">{"".join(buf)}</div></section>')
+                buf = []
+            current = chart['name']
+        buf.append(card(chart))
+    if buf:
+        sections.append(f'<section class="layout"><h2>{_e(current)}</h2>'
+                        f'<div class="grid">{"".join(buf)}</div></section>')
+
+    chips = [
+        ('Layouts', stats['layouts'], 'ok'),
+        ('Charts', stats['charts'], 'ok'),
+        ('Missing charts', stats['missing_charts'], 'bad' if stats['missing_charts'] else 'ok'),
+        ('No alerts', stats['no_alerts'], 'bad' if stats['no_alerts'] else 'ok'),
+        ('Held, no chart', stats['held_no_chart'], 'bad' if stats['held_no_chart'] else 'ok'),
+    ]
+    chip_html = ''.join(
+        f'<div class="chip {tone}"><b>{v}</b><span>{_e(label)}</span></div>' for label, v, tone in chips)
+
+    doc = f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Investment Review Deck</title><style>
+:root{{--bg:#0e1526;--panel:#16203a;--line:#263353;--text:#e8ecf5;--muted:#8a97b4;
+--accent:#e0a03d;--good:#34b27b;--bad:#e5544b;--warn:#e0a03d;}}
+*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);
+font-family:system-ui,Segoe UI,Arial,sans-serif;line-height:1.45}}
+header.top{{padding:28px 32px 8px}}h1{{margin:0;font-size:24px;letter-spacing:.01em}}
+.sub{{color:var(--muted);font-size:13px;margin-top:4px}}
+.chips{{display:flex;flex-wrap:wrap;gap:10px;padding:16px 32px 8px}}
+.chip{{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+padding:10px 14px;min-width:96px;display:flex;flex-direction:column;gap:2px}}
+.chip b{{font-size:22px;font-variant-numeric:tabular-nums}}
+.chip span{{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}}
+.chip.bad b{{color:var(--bad)}}.chip.ok b{{color:var(--good)}}
+main{{padding:12px 32px 60px}}
+.layout{{margin-top:28px}}.layout h2{{font-size:13px;text-transform:uppercase;
+letter-spacing:.08em;color:var(--accent);border-bottom:1px solid var(--line);
+padding-bottom:8px;margin:0 0 16px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}}
+.card{{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+overflow:hidden;display:flex;flex-direction:column}}
+.card img{{width:100%;aspect-ratio:16/10;object-fit:cover;background:#0b0f18;display:block}}
+.noimg{{aspect-ratio:16/10;display:flex;align-items:center;justify-content:center;
+color:var(--muted);background:repeating-linear-gradient(45deg,#141d33,#141d33 10px,#111a2e 10px,#111a2e 20px);font-size:13px}}
+.cardbody{{padding:14px 16px 16px;display:flex;flex-direction:column;gap:10px}}
+.card header{{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}}
+.card h3{{margin:0;font-size:17px}}.co{{color:var(--muted);font-size:12px}}
+.flags{{display:flex;gap:6px;flex-wrap:wrap}}.flags:empty{{display:none}}
+.flag{{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+padding:3px 7px;border-radius:5px}}
+.flag.bad{{background:rgba(229,84,75,.16);color:#ff8a82;border:1px solid rgba(229,84,75,.4)}}
+.flag.warn{{background:rgba(224,160,61,.16);color:var(--accent);border:1px solid rgba(224,160,61,.4)}}
+.kvs{{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}}
+.kv{{display:flex;justify-content:space-between;font-size:12px;border-bottom:1px dotted var(--line);padding-bottom:3px}}
+.kv span{{color:var(--muted)}}.kv b{{font-variant-numeric:tabular-nums}}
+.tvlink{{color:var(--accent);font-size:12px;text-decoration:none;font-weight:600}}
+.tvlink:hover{{text-decoration:underline}}
+@media(prefers-color-scheme:light){{:root{{--bg:#f5f7fb;--panel:#fff;--line:#dde3ee;
+--text:#16203a;--muted:#5b6684}}}}
+</style></head><body>
+<header class="top"><h1>Investment Review Deck</h1>
+<div class="sub">{_e(stats['charts'])} charts across {_e(stats['layouts'])} layouts · built {_e(datetime.now().strftime('%Y-%m-%d %H:%M'))}</div></header>
+<div class="chips">{chip_html}</div>
+<main>{''.join(sections)}</main></body></html>"""
+
+    os.makedirs(PIPELINE_APP_DIR, exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(doc)
+
+
+def write_summary_json(path, stats, out_pptx):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump({'built_at': datetime.now().isoformat(timespec='seconds'),
+                   'pptx': out_pptx, **stats}, f, indent=2)
+
+
 def main():
     out_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(DOWNLOADS, 'Investment_Review_Deck.pptx')
 
@@ -327,6 +468,23 @@ def main():
     print(f'Deck: {n_slides} slides -> {out_path}')
     print(f'Missing charts: {len(missing_charts)}; no-alert tickers: {len(no_alert_tickers)}; '
           f'held-with-no-chart: {len(unchartered_held)}; watchlist-no-chart: {len(unchartered_watch)}')
+
+    # In-Chrome gallery + machine-readable summary for the Investment Production
+    # Centre front end (served at /deck and consumed by the output bay).
+    stats = {
+        'layouts': len(layout_names), 'charts': len(charts), 'alerts': len(alerts),
+        'master_rows': len(master_index), 'missing_charts': len(missing_charts),
+        'no_alerts': len(no_alert_tickers), 'held_no_chart': len(unchartered_held),
+        'watch_no_chart': len(unchartered_watch),
+        'missing_chart_tickers': missing_charts, 'no_alert_tickers': no_alert_tickers,
+        'held_no_chart_tickers': unchartered_held,
+    }
+    try:
+        write_gallery(GALLERY_PATH, charts, alerts, channels, master_index, stats)
+        write_summary_json(SUMMARY_PATH, stats, out_path)
+        print(f'Gallery: {GALLERY_PATH}')
+    except Exception as e:
+        print(f'(gallery/summary not written: {e})')
 
 
 if __name__ == '__main__':

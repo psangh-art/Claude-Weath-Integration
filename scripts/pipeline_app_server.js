@@ -19,6 +19,48 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DOWNLOADS = path.join(os.homedir(), 'Downloads');
 const PORT = 4590;
 
+const REPO_ROOT = path.join(__dirname, '..');
+const APP_DIR = path.join(__dirname, 'pipeline_app');
+const GALLERY_HTML = path.join(APP_DIR, 'review_deck.html');
+const DECK_SUMMARY = path.join(APP_DIR, 'review_deck_summary.json');
+const DECK_PPTX = path.join(DOWNLOADS, 'Investment_Review_Deck.pptx');
+const SPENDING_XLSX = path.join(DOWNLOADS, 'spending_summary.xlsx');
+// The Finance Google Sheet the pipeline syncs into (see CLAUDE.md).
+const FINANCE_SHEET_URL =
+  'https://docs.google.com/spreadsheets/d/1UjAz_QUuh86_e6yq8QJf2veI8IpkRCyVfWaK6maqiyc/edit';
+
+const CONTENT_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+
+function serveFile(res, filePath, { download } = {}) {
+  if (!fs.existsSync(filePath)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not found');
+    return;
+  }
+  const type = CONTENT_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
+  const headers = { 'Content-Type': type };
+  if (download) headers['Content-Disposition'] = `attachment; filename="${path.basename(filePath)}"`;
+  res.writeHead(200, headers);
+  fs.createReadStream(filePath).pipe(res);
+}
+
+// Only ever serve image files that live inside the repo (screenshots/) or the
+// user's Downloads — never an arbitrary path from the query string.
+function isAllowedAsset(abs) {
+  const resolved = path.resolve(abs);
+  const roots = [path.resolve(REPO_ROOT), path.resolve(DOWNLOADS)];
+  return roots.some((root) => resolved === root || resolved.startsWith(root + path.sep))
+    && /\.(png|jpe?g)$/i.test(resolved);
+}
+
 const PYTHON_CANDIDATES = [
   'C:\\Users\\Paul\\AppData\\Local\\Python\\bin\\python.exe', // has pandas/openpyxl — spending_summary.py needs these
   'python',
@@ -203,6 +245,43 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ started: true }));
     return;
   }
+
+  // Feedstock status on load: which required Downloads files exist, without
+  // running the pipeline. Mirrors preflight_check.py's report shape.
+  if (req.method === 'GET' && req.url === '/files') {
+    const result = spawnSync(PYTHON, [path.join(__dirname, 'preflight_check.py'), DOWNLOADS], { encoding: 'utf-8' });
+    let report;
+    try { report = JSON.parse(result.stdout); } catch { report = { ok: false, found: {}, missing: [], error: 'preflight parse failed' }; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(report));
+    return;
+  }
+
+  // Output bay: which products exist and where to open them.
+  if (req.method === 'GET' && req.url === '/products') {
+    let deckSummary = null;
+    try { deckSummary = JSON.parse(fs.readFileSync(DECK_SUMMARY, 'utf-8')); } catch { /* not built yet */ }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      googleSheet: { url: FINANCE_SHEET_URL },
+      deck: { exists: fs.existsSync(GALLERY_HTML), viewUrl: '/deck', pptxUrl: '/deck.pptx', summary: deckSummary },
+      spending: { exists: fs.existsSync(SPENDING_XLSX), url: '/download/spending' },
+    }));
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/deck') { serveFile(res, GALLERY_HTML); return; }
+  if (req.method === 'GET' && req.url === '/deck.pptx') { serveFile(res, DECK_PPTX, { download: true }); return; }
+  if (req.method === 'GET' && req.url === '/download/spending') { serveFile(res, SPENDING_XLSX, { download: true }); return; }
+
+  if (req.method === 'GET' && req.url.startsWith('/asset?')) {
+    const p = new URL(req.url, `http://localhost:${PORT}`).searchParams.get('p');
+    if (p && isAllowedAsset(p)) { serveFile(res, path.resolve(p)); return; }
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('Forbidden');
+    return;
+  }
+
   res.writeHead(404);
   res.end('Not found');
 });
