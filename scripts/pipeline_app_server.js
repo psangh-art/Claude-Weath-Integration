@@ -213,8 +213,23 @@ async function executeRun() {
   }
 
   const tvOk = await runTradingViewPipeline();
+  if (tvOk) consumeInputFiles();
   broadcast({ type: 'run-complete', ok: tvOk });
   running = false;
+}
+
+// After a FULLY successful run, the consumed bank/broker exports (and every
+// other version of them in Downloads) are sent to the Recycle Bin — user
+// policy 2026-07-12: "once files have been used they must be deleted". Failed
+// runs keep their inputs so they can be re-run. The master workbook is never
+// touched. See consume_input_files.py for the exact family matching.
+function consumeInputFiles() {
+  const result = spawnSync(PYTHON, [path.join(__dirname, 'consume_input_files.py'), DOWNLOADS, '--apply'], { encoding: 'utf-8' });
+  const output = (result.stdout || '') + (result.stderr || '');
+  for (const line of output.split('\n')) if (line.trim()) logEvent(8, line);
+  if (result.status !== 0) {
+    stageEvent(8, 'success', 'Cleanup done, but removing used input files failed — see log.');
+  }
 }
 
 const server = http.createServer((req, res) => {

@@ -250,6 +250,30 @@ holdings/alerts + OCR channel read + TradingView alerts, and an appendix of
 master rows with no chart. Requires `python-pptx` (installed for the
 `AppData\Local\Python` interpreter).
 
+## Input-file consumption + preserved tabs (2026-07-12)
+
+- **Used input files are deleted after a fully successful app run** (user policy
+  2026-07-12): `consume_input_files.py` sends the consumed bank/broker exports —
+  and every other version of them in Downloads (` (N)` duplicates, `Delete `
+  copies) — to the **Recycle Bin** (never hard-deleted; that's the deliberate
+  safety floor). Families: activity.csv (Amex), data.csv (Barclays),
+  AccountSummary.csv, TransactionHistory*/transactions*.csv (Fidelity). The
+  master workbook is NEVER touched. Wired into `pipeline_app_server.js` after
+  all stages succeed; failed runs keep their inputs for the re-run.
+  `cleanup_downloads.py` itself is still rename-only.
+- **`spending_summary.py` preserves manual tabs across rebuilds**: it recreates
+  the workbook from scratch each run, which used to silently drop
+  hand-maintained tabs — 'Payslip Summary' and 'Retirement Income Plan' were
+  lost this way (restored 2026-07-12 from the user's 2026-07-02 Drive copy,
+  data as of that date). `preserve_manual_sheets()` now carries over any sheet
+  in the existing file that the run didn't generate.
+- **Stats charts sit in a 3-across grid from the top**
+  (`arrange_stats_charts_2026-07-12.py`, one-off — re-run it if charts are
+  added/moved). 'Chart Last Checked' (Investments col AK) is styled to match
+  the other headers, enforced idempotently by `get_or_create_last_checked_col`.
+- Agents: **`test-analyst`** (end-to-end data-quality audits across every
+  pipeline hand-off, read-only) joins `app-developer` and `excel-formatter`.
+
 ## Open items / things to verify on the next export run
 
 - Brent (UKOIL), Palladium and Copper have no TradingView chart, so no captured
