@@ -28,8 +28,21 @@ function run(cmd, args) {
   return spawnSync(cmd, args, { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf-8' });
 }
 
+function runDeck() {
+  // Build the per-investment PowerPoint review deck (charts + live price +
+  // master-sheet holdings/alerts + OCR read + TradingView alerts, one slide per
+  // chart, flagging missing charts/alerts). Reads whatever manifests exist, so
+  // it produces a useful "what's missing" deck even after a partial run. See
+  // build_review_deck.py. Never blocks the run — a missing dep just logs here.
+  console.log('\n=== Step 4/6: building PowerPoint review deck ===\n');
+  const deckResult = spawnSync('python', [path.join(__dirname, 'build_review_deck.py')], { stdio: 'inherit' });
+  if (deckResult.status !== 0) {
+    console.error('Review-deck build could not run (see python output above) — nothing else in this run is affected.');
+  }
+}
+
 function runVerify() {
-  console.log('\n=== Step 4/5: verifying this run ===\n');
+  console.log('\n=== Step 5/6: verifying this run ===\n');
   const verifyResult = spawnSync('python', [path.join(__dirname, 'verify_pipeline.py'), '--live-alert-check'], { stdio: 'inherit' });
   if (verifyResult.status !== 0) {
     console.error('Verification report could not run (see python output above) — the export/update steps above may still be fine.');
@@ -42,7 +55,7 @@ function runCleanup() {
   // cleanup_downloads.py's docstring for the exact rules. Runs last, after
   // verification, so a file is never flagged before this run has actually
   // confirmed producing its replacement.
-  console.log('\n=== Step 5/5: flagging redundant Downloads files ===\n');
+  console.log('\n=== Step 6/6: flagging redundant Downloads files ===\n');
   const cleanupResult = spawnSync('python', [path.join(__dirname, 'cleanup_downloads.py'), '--apply'], { stdio: 'inherit' });
   if (cleanupResult.status !== 0) {
     console.error('Downloads cleanup could not run (see python output above) — nothing else in this run is affected.');
@@ -50,7 +63,7 @@ function runCleanup() {
 }
 
 function main() {
-  console.log('=== Step 1/5: capturing charts from TradingView ===\n');
+  console.log('=== Step 1/6: capturing charts from TradingView ===\n');
   const exportResult = spawnSync('node', [path.join(__dirname, 'export-layouts-excel.js')], { stdio: 'inherit' });
   if (exportResult.status !== 0) {
     console.error('\nChart export failed — stopping before the Google Finance / master-sheet steps.');
@@ -64,7 +77,7 @@ function main() {
     return;
   }
 
-  console.log('\n=== Step 2/5: OCR channel-boundary detection ===\n');
+  console.log('\n=== Step 2/6: OCR channel-boundary detection ===\n');
   const charts = JSON.parse(readFileSync(CHARTS_MANIFEST, 'utf-8'));
   const seen = new Set();
   const channelInput = [];
@@ -85,7 +98,7 @@ function main() {
   }
   writeFileSync(CHANNEL_RESULTS, detectResult.stdout);
 
-  console.log('\n=== Step 3/5: applying results into Stocks_Buy_Strategy.xlsx ===\n');
+  console.log('\n=== Step 3/6: applying results into Stocks_Buy_Strategy.xlsx ===\n');
   const updateResult = spawnSync('python', [
     path.join(__dirname, 'update_master_sheet.py'),
     MASTER_SHEET_PATH,
@@ -107,9 +120,11 @@ function main() {
 try {
   main();
 } finally {
-  // Always produce a verification report, even if an earlier step stopped
-  // partway through — verify_pipeline.py reports honestly on whatever manifests
-  // do or don't exist rather than requiring a fully clean run.
+  // Always produce the review deck and verification report, even if an earlier
+  // step stopped partway through — both report honestly on whatever manifests do
+  // or don't exist rather than requiring a fully clean run (the deck's whole job
+  // is to show what's missing).
+  runDeck();
   runVerify();
   runCleanup();
 }

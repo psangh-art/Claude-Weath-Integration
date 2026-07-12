@@ -5,9 +5,9 @@
 // the process failing confusingly deep into a multi-minute run.
 //
 // Reuses run_full_pipeline.js as-is for the chart-capture/OCR/master-update/
-// verify/cleanup stages (spawned as a child, its own "=== Step N/5: ... ==="
-// markers are parsed to report those five as separate stages here) rather than
-// re-implementing that logic — single source of truth stays in that file.
+// review-deck/verify/cleanup stages (spawned as a child, its own "=== Step N/M:
+// ... ===" markers are parsed to report those six as separate stages here)
+// rather than re-implementing that logic — single source of truth stays there.
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -34,8 +34,9 @@ const STAGES = [
   { id: 3, name: 'TradingView chart capture' },
   { id: 4, name: 'OCR channel-boundary detection' },
   { id: 5, name: 'Master-sheet update (Investments)' },
-  { id: 6, name: 'Verification' },
-  { id: 7, name: 'Downloads cleanup' },
+  { id: 6, name: 'PowerPoint review deck' },
+  { id: 7, name: 'Verification' },
+  { id: 8, name: 'Downloads cleanup' },
 ];
 
 let running = false;
@@ -100,8 +101,8 @@ function runFidelityBuild(found) {
   return true;
 }
 
-// Maps run_full_pipeline.js's own "=== Step N/5: <name> ===" console markers onto
-// stages 3-7 here, so its existing chart-capture/OCR/master-update/verify/cleanup
+// Maps run_full_pipeline.js's own "=== Step N/M: <name> ===" console markers onto
+// stages 3-8 here, so its existing chart-capture/OCR/master-update/deck/verify/cleanup
 // logic doesn't need to be duplicated.
 function runTradingViewPipeline() {
   return new Promise((resolve) => {
@@ -110,8 +111,9 @@ function runTradingViewPipeline() {
       if (/capturing charts/i.test(text)) return 3;
       if (/OCR channel/i.test(text)) return 4;
       if (/applying results/i.test(text)) return 5;
-      if (/verifying this run/i.test(text)) return 6;
-      if (/flagging redundant/i.test(text)) return 7;
+      if (/review deck/i.test(text)) return 6;
+      if (/verifying this run/i.test(text)) return 7;
+      if (/flagging redundant/i.test(text)) return 8;
       return null;
     };
 
@@ -123,7 +125,7 @@ function runTradingViewPipeline() {
       while ((idx = buf.indexOf('\n')) !== -1) {
         const line = buf.slice(0, idx);
         buf = buf.slice(idx + 1);
-        const marker = line.match(/=== Step \d\/5: (.+?) ===/);
+        const marker = line.match(/=== Step \d+\/\d+: (.+?) ===/);
         if (marker) {
           if (currentStage) stageEvent(currentStage, 'success');
           currentStage = stageForStepName(marker[1]);
