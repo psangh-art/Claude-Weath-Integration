@@ -181,15 +181,49 @@ processes). Both failure modes were hit for real before landing on this approach
 formulas return `#N/A`, and so do `CURRENCY:XAUUSD`/`XAGUSD`/`XPTUSD`/`XPDUSD` —
 Google has dropped metals support — while equities (`GOOG`) and FX
 (`CURRENCY:GBPUSD`) still work. So `ticker_normalize.py`'s
-`RELIABLE_GOOGLEFINANCE_COMMODITIES` claim is falsified. Agreed fix (user
-confirmed): the pipeline should write TradingView-captured numeric prices +
-timestamp into commodity rows instead of GOOGLEFINANCE formulas. Not yet
-implemented — tracked as an open item below.
+`RELIABLE_GOOGLEFINANCE_COMMODITIES` claim is falsified. **Implemented 2026-07-12**:
+`RELIABLE_GOOGLEFINANCE_COMMODITIES` is now empty (commodities get no formula) and
+`update_master_sheet.py` writes each commodity's TradingView-captured price into
+Investments' Current Price as a plain VALUE, stamped via 'Chart Last Checked'.
+Only commodities with a TradingView chart get a price — **Brent (UKOIL), Palladium
+and Copper have no chart in the layouts**, so their cells keep whatever they had
+(Brent/Palladium show `#N/A` from old dead formulas; Copper's `CPER`-ETF formula
+still works). Adding TV charts for those three would auto-fix them on the next run.
+
+**Sync fully automated end-to-end (verified 2026-07-12):** tab deletion (right-click
+→ Delete → OK, driven by accessibility refs from the `find` tool — screenshot pixel
+coordinates were unreliable because the viewport/screenshot scale differ), then the
+Import dialog (its contents are in an iframe invisible to find/read_page, so
+screenshot coordinates ARE needed there), then `drive_open_dialog.ps1` for the native
+picker. A dated run entry gets appended to the `ClaudeCode` tab each sync.
+
+## Per-run verification of master-sheet writes (added 2026-07-12)
+
+`update_master_sheet.py`'s result JSON now records this run's `commodity_prices`
+and `below_alert_rows`, and `verify_pipeline.py` cross-checks BOTH against the
+saved workbook (value actually present in Investments col I; below-alert row count
+in the 'Stocks of Interest' rows 5-38 reserved block; no resurrected 'Below Alert
+Low' sheet) and fails the overall verdict on mismatch. This is deliberately the
+last gate before the workbook is imported into the Finance Google Sheet.
+
+## Review deck (added 2026-07-12)
+
+`python scripts/build_review_deck.py [out.pptx]` (default
+`~/Downloads/Investment_Review_Deck.pptx`) builds a PowerPoint-Online-compatible
+deck from the latest run: summary page (missing charts / no-alert tickers / held
+investments with no chart, each flagged red when non-empty), a section slide per
+layout, one slide per chart with the cropped image + live price + master-sheet
+holdings/alerts + OCR channel read + TradingView alerts, and an appendix of
+master rows with no chart. Requires `python-pptx` (installed for the
+`AppData\Local\Python` interpreter).
 
 ## Open items / things to verify on the next export run
 
-- Replace commodity GOOGLEFINANCE formulas with TradingView-captured prices
-  (see Google Sheets sync section above — user-confirmed approach, 2026-07-11).
+- Brent (UKOIL), Palladium and Copper have no TradingView chart, so no captured
+  price and no working formula (Copper's CPER formula still works) — user to add
+  TV charts if live pricing for them is wanted.
+- WPP's Alert Low (1121.92) is ~4x its live price (274.6, gap −75%) — looks like a
+  stale/misread level; flagged to the user 2026-07-12, needs a manual look.
 - Orphaned `sync_*` temp Google Sheets in the user's Drive (left by a failed
   2026-07-10 sync attempt) still need manual deletion by the user — no Drive
   delete tool available.
