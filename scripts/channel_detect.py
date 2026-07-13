@@ -4,6 +4,13 @@ screenshot. Port of the algorithm specified in Claude_Code_Handoff_Instructions.
 section 4 — this is the "actual working method" from prior manual sessions, refined
 to cross-validate and reject rather than guess.
 
+Refinement (user decision 2026-07-13): boundaries are read AT TODAY'S DATE — the
+rightmost candle's x-position — by straight-line-fitting each drawn boundary across
+many sample x-positions and evaluating the fit there. The original scan took the
+first clean sample right-to-left, which on these charts was the blank future space
+right of the last candle, i.e. a projected-forward boundary that overstated Alert
+Low/High on ascending channels.
+
 Requires the Tesseract OCR binary (not just the `pytesseract` pip package) on PATH,
 or at TESSERACT_CMD env var. Install: https://github.com/UB-Mannheim/tesseract/wiki
 (on Windows, a one-time interactive install — this cannot be scripted unattended
@@ -53,6 +60,30 @@ def is_channel_blue(r, g, b):
     return 15 <= r <= 60 and 60 <= g <= 110 and 190 <= b <= 255
 
 
+def candle_mask(arr):
+    """Boolean mask of candle-coloured pixels (TradingView up-candle teal ~#089981,
+    down-candle red ~#F23645, with antialiasing tolerance). Deliberately tight so it
+    does NOT match the pale-green drawn-label text, muted volume bars, or the teal
+    dotted last-price line's axis chip."""
+    r = arr[..., 0].astype(np.int32)
+    g = arr[..., 1].astype(np.int32)
+    b = arr[..., 2].astype(np.int32)
+    green = (r <= 60) & (g >= 120) & (g <= 185) & (b >= 100) & (b <= 160)
+    red = (r >= 200) & (g >= 30) & (g <= 95) & (b >= 40) & (b <= 105)
+    return green | red
+
+
+def find_today_x(arr, w):
+    """x of the rightmost candle column == today's date on the chart. A column must
+    have >= 5 candle-coloured pixels so the 1-2px-tall dotted 'last price' line that
+    runs from the last candle to the right edge can't masquerade as a candle.
+    Returns None when no candle column is found (blank or non-candle chart)."""
+    right_bound = int(w * 0.85)  # price axis excluded
+    counts = candle_mask(arr[:, :right_bound]).sum(axis=0)
+    xs = np.nonzero(counts >= 5)[0]
+    return int(xs[-1]) if len(xs) else None
+
+
 def read_channel(image_path):
     """Returns a dict {kind, lower, upper, single_price, x_frac, reason}.
     kind is 'parallel' (two channel-blue lines -> lower+upper both set),
@@ -98,16 +129,14 @@ def read_channel(image_path):
     ys = np.array([c[1] for c in clean])
     a, b = np.polyfit(ys, vals, 1)  # price = a*y + b
 
-    # 4/5. Scan multiple x-positions right-to-left. Prefer an x-position with
-    #    EXACTLY 2 line clusters (a parallel channel). If none exists, fall back
-    #    to the first x-position with EXACTLY 1 cluster (a single trendline,
-    #    rather than a parallel channel) — the caller decides whether that's an
-    #    Alert Low or Alert High based on which side of the current price it
-    #    falls on. More than 2 clusters means an extra overlay is present
-    #    (ambiguous); 0 means nothing is drawn there.
-    single_fallback = None
-    for x_frac in [0.85, 0.80, 0.75, 0.70, 0.60, 0.50, 0.40, 0.30, 0.20, 0.10]:
-        x = int(w * x_frac)
+    # 4. Sample the drawn line(s) at many x-positions. At each x, cluster the
+    #    channel-blue pixels: EXACTLY 2 clusters = both boundaries cleanly visible
+    #    there, EXACTLY 1 = a single trendline (or one boundary). More than 2
+    #    (extra overlay / the channel's dashed midline) and 0 are skipped.
+    samples2 = []  # (x, upper_y, lower_y)
+    samples1 = []  # (x, y)
+    for i in range(17):
+        x = int(w * (0.85 - i * 0.05))
         rows = [y for y in range(h) if is_channel_blue(*arr[y, x])]
         clusters = []
         for y in rows:
@@ -117,19 +146,60 @@ def read_channel(image_path):
                 clusters.append([y])
         centers = sorted(sum(c) / len(c) for c in clusters)
         if len(centers) == 2:
-            lower_price = a * centers[-1] + b
-            upper_price = a * centers[0] + b
-            if lower_price > 0 and lower_price < upper_price:
-                return {'kind': 'parallel', 'lower': round(lower_price, 2), 'upper': round(upper_price, 2),
-                        'single_price': None, 'x_frac': x_frac, 'reason': None}
-        elif len(centers) == 1 and single_fallback is None:
-            price = a * centers[0] + b
-            if price > 0:
-                single_fallback = {'kind': 'single', 'lower': None, 'upper': None,
-                                    'single_price': round(price, 2), 'x_frac': x_frac, 'reason': None}
+            samples2.append((x, centers[0], centers[-1]))
+        elif len(centers) == 1:
+            samples1.append((x, centers[0]))
 
-    if single_fallback is not None:
-        return single_fallback
+    # 5. Read the boundaries AT TODAY'S DATE (the last candle's x-position), not
+    #    wherever a clean sample happened to be. The old first-clean-hit scan read
+    #    the channel in the blank future space right of the last candle — i.e. a
+    #    projected-forward boundary, overstating Alert Low/High on ascending
+    #    channels (user decision 2026-07-13: reads must be at today's date). The
+    #    lines are usually occluded by candles AT today's x itself, so fit each
+    #    boundary's straight line through its clean samples and evaluate the fit
+    #    at today's x.
+    today_x = find_today_x(arr, w)
+
+    def eval_line(pts, target_x):
+        """(x, y) samples of one straight drawn line -> (y at target_x, max fit
+        residual in px). A single sample can't be extrapolated — used as-is."""
+        if len(pts) == 1:
+            return float(pts[0][1]), 0.0
+        xs = np.array([p[0] for p in pts], dtype=float)
+        ys = np.array([p[1] for p in pts], dtype=float)
+        slope, intercept = np.polyfit(xs, ys, 1)
+        residual = float(np.max(np.abs(slope * xs + intercept - ys)))
+        return float(slope * target_x + intercept), residual
+
+    # Samples that don't lie on a straight line mean inconsistent cluster pairing
+    # across x-positions (an unrelated blue overlay got grouped in) — extrapolating
+    # a poisoned fit could land anywhere, so fall back to the single sample nearest
+    # today instead.
+    MAX_RESIDUAL_PX = 6.0
+
+    if samples2:
+        target_x = today_x if today_x is not None else max(s[0] for s in samples2)
+        upper_y, res_u = eval_line([(s[0], s[1]) for s in samples2], target_x)
+        lower_y, res_l = eval_line([(s[0], s[2]) for s in samples2], target_x)
+        if max(res_u, res_l) > MAX_RESIDUAL_PX:
+            _, upper_y, lower_y = min(samples2, key=lambda s: abs(s[0] - target_x))
+        lower_price = a * lower_y + b
+        upper_price = a * upper_y + b
+        if lower_price > 0 and lower_price < upper_price:
+            return {'kind': 'parallel', 'lower': round(lower_price, 2), 'upper': round(upper_price, 2),
+                    'single_price': None, 'x_frac': round(target_x / w, 3), 'reason': None}
+        return fail(f'boundaries at today\'s date are not a valid channel (lower {lower_price:.2f} vs upper {upper_price:.2f})')
+
+    if samples1:
+        target_x = today_x if today_x is not None else max(s[0] for s in samples1)
+        y, res = eval_line(samples1, target_x)
+        if res > MAX_RESIDUAL_PX:
+            _, y = min(samples1, key=lambda s: abs(s[0] - target_x))
+        price = a * y + b
+        if price > 0:
+            return {'kind': 'single', 'lower': None, 'upper': None,
+                    'single_price': round(price, 2), 'x_frac': round(target_x / w, 3), 'reason': None}
+
     return fail('no x-position found with exactly 1 or 2 channel-blue line clusters')
 
 

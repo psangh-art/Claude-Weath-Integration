@@ -42,6 +42,17 @@ something worth remembering.
   no-focus user32 approach as `drive_open_dialog.ps1`. The run ABORTS if the window
   still isn't maximized after the attempt (wrong-size captures silently change
   what's in frame).
+- **Channel boundaries are read at TODAY'S DATE, not the frame edge (user decision
+  2026-07-13).** `channel_detect.py` fits each drawn boundary's straight line across
+  up to 17 sample x-positions and evaluates the fit at the rightmost candle column
+  (= today; found via tight candle-colour mask so the dotted last-price line can't
+  match). The original handoff-doc section-4 scan took the first clean sample
+  right-to-left, which landed in the blank future space and returned
+  projected-forward boundaries — overstating Alert Low/High on ascending channels
+  (e.g. SDLF read 836/981 vs 774/919 at today). This refinement supersedes the
+  handoff doc's scan order on this specific point, per explicit user instruction —
+  if the handoff doc is revised, align it to this. Verified against SDLF/PRU/AEP
+  images; BEZ's genuine breakout still correctly rejects.
 
 - **One image per chart, not one image per layout.** `pane.js` + `crop_panes.py` crop
   individual panes out of a full-layout screenshot; `build_layout_excel.py` produces one
