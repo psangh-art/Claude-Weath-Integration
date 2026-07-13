@@ -111,6 +111,15 @@ async function main() {
     log('  auto-save already off.');
   }
 
+  // Window must be maximized before capture (user policy 2026-07-13): pane size
+  // drives both legibility and the visible date range, and the user sizes his
+  // charts maximized. Throws (aborting the run) if it can't be maximized.
+  log('Checking TradingView window is maximized...');
+  const win = await ui.ensureWindowMaximized();
+  log(win.wasMaximized
+    ? `  already maximized (${win.width}x${win.height}).`
+    : `  was NOT maximized — maximized it (now ${win.width}x${win.height}).`);
+
   log('Fetching saved layouts...');
   const chartListJson = await evaluateAsync(`
     JSON.stringify((window.TradingViewApi._loadChartService._state.value().chartList || []).map(c => ({id: c.id, url: c.url, name: c.name})))

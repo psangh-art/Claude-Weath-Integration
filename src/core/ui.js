@@ -1,4 +1,5 @@
 import { evaluate, evaluateAsync } from '../connection.js';
+import { spawnSync } from 'child_process';
 
 // NOTE: a resetView() helper (Alt+R "Reset chart view" per pane before capture)
 // used to live here. Removed 2026-07-13 by user decision: TradingView's reset
@@ -49,6 +50,55 @@ export async function ensureAutosaveDisabled() {
     wasEnabled: result?.wasEnabled ?? null,
     error: result?.error || null,
   };
+}
+
+/**
+ * Ensure the TradingView window is maximized before any chart capture (user policy
+ * 2026-07-13): pane size — and therefore candle/axis legibility AND the visible
+ * date range (TradingView keeps bar spacing, so a narrower pane shows less history)
+ * — depends directly on window size. The user sizes his charts with the window
+ * maximized, so captures must run maximized too or they won't match what he saved.
+ *
+ * TradingView Desktop is Electron and does NOT implement CDP's
+ * Browser.getWindowForTarget/setWindowBounds (probed live 2026-07-13), so the
+ * check is done via CDP (innerWidth vs screen.availWidth) and the fix natively:
+ * ShowWindowAsync(hwnd, SW_MAXIMIZE) on TradingView.exe's main window via
+ * PowerShell — same no-focus-needed user32 approach as drive_open_dialog.ps1.
+ * Throws if the window still isn't maximized after the attempt: capturing at the
+ * wrong size silently changes what's in frame, which is worse than not running.
+ */
+export async function ensureWindowMaximized() {
+  const readDims = () => evaluate(
+    `({ w: window.innerWidth, h: window.innerHeight, aw: screen.availWidth, ah: screen.availHeight })`
+  );
+  // Width within 8px of the available screen width is "maximized" — height is left
+  // slack (title bar / OS chrome sit outside innerHeight and vary by machine).
+  const isMaximized = d => d && d.w >= d.aw - 8;
+
+  const before = await readDims();
+  if (isMaximized(before)) {
+    return { success: true, wasMaximized: true, width: before.w, height: before.h };
+  }
+
+  const ps = spawnSync('powershell', ['-NoProfile', '-Command', `
+    Add-Type -Namespace Native -Name Win -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);'
+    $hit = $false
+    Get-Process TradingView -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object {
+      [Native.Win]::ShowWindowAsync($_.MainWindowHandle, 3) | Out-Null
+      $hit = $true
+    }
+    if (-not $hit) { exit 1 }
+  `], { timeout: 15000 });
+  if (ps.status !== 0) {
+    throw new Error(`TradingView window is not maximized (${before.w}x${before.h}, screen ${before.aw}x${before.ah}) and no TradingView.exe window could be found to maximize. Maximize it manually and re-run.`);
+  }
+
+  await new Promise(r => setTimeout(r, 1500));
+  const after = await readDims();
+  if (!isMaximized(after)) {
+    throw new Error(`TradingView window could not be maximized (still ${after.w}x${after.h}, screen ${after.aw}x${after.ah}). Captures at the wrong size change what's in frame — maximize the window manually and re-run.`);
+  }
+  return { success: true, wasMaximized: false, width: after.w, height: after.h };
 }
 
 export async function layoutList() {

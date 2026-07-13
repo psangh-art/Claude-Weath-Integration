@@ -31,6 +31,17 @@ something worth remembering.
   if on — **aborting the run if the toggle doesn't stick**, and warning loudly if a
   TradingView update ever hides the API. Any new script that switches layouts or
   clicks panes must call this guard first.
+- **Window-maximize guard before capture (user policy 2026-07-13).**
+  `ui.ensureWindowMaximized()` runs before the capture loop in
+  `export-layouts-excel.js`: pane size drives both legibility and the visible date
+  range (TradingView keeps bar spacing, so a narrower window shows less history),
+  and the user sizes his charts with the window maximized. TradingView Desktop
+  (Electron) does NOT implement CDP `Browser.setWindowBounds` (probed live), so the
+  check reads `innerWidth` vs `screen.availWidth` over CDP and the fix is native:
+  PowerShell `ShowWindowAsync(hwnd, SW_MAXIMIZE)` on TradingView.exe — the same
+  no-focus user32 approach as `drive_open_dialog.ps1`. The run ABORTS if the window
+  still isn't maximized after the attempt (wrong-size captures silently change
+  what's in frame).
 
 - **One image per chart, not one image per layout.** `pane.js` + `crop_panes.py` crop
   individual panes out of a full-layout screenshot; `build_layout_excel.py` produces one
