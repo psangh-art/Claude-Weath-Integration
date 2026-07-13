@@ -65,7 +65,17 @@ AGENTS = [
      'Gmail draft to the user.',
      'Decision support only — drafts, never sends; no trades; flags unreadable '
      'charts instead of guessing.'),
+    ('ChatGPT (external)',
+     'Independent code reviewer: periodic outside review of the system’s '
+     'architecture and scripts (e.g. the 2026-07-12 “Investment OS” review) — '
+     'challenges design choices, flags redundancy and hard-coding, proposes '
+     'next steps.',
+     'Advisory only — no repo access; every recommendation is challenged '
+     'against repo evidence, and only accepted items reach BACKLOG.md.'),
 ]
+
+EXTERNAL = {'ChatGPT (external)'}
+EXTERNAL_PILL = RGBColor(0x74, 0x8A, 0x5E)  # muted green — visually "not one of ours"
 
 
 def add_text(slide, x, y, w, h, text, size, bold=False, color=GREY, align=PP_ALIGN.LEFT):
@@ -110,14 +120,15 @@ def main():
     add_text(slide, Inches(0.4), Inches(0.2), Inches(9.5), Inches(0.4),
              'Claude Code agents — who builds and checks what', 18, bold=True, color=NAVY)
     add_text(slide, Inches(0.4), Inches(0.62), Inches(11.5), Inches(0.3),
-             'Specialist agents in .claude/agents/ — each owns one part of the system; '
-             'the user sets direction and merges all PRs', 11, color=GREY)
+             'Specialist agents in .claude/agents/ (plus ChatGPT as an outside reviewer) — '
+             'each owns one part of the system; the user sets direction and merges all PRs',
+             11, color=GREY)
 
-    # 5 rows must fit above the 7.5in slide bottom: last row top = 1.05 + 4*1.22
-    # = 5.93in, bottom = 7.05in.
-    row_h = Inches(1.12)
+    # 6 rows must fit above the 7.5in slide bottom: last row top = 0.98 + 5*1.06
+    # = 6.28in, bottom = 7.26in.
+    row_h = Inches(0.98)
     for i, (name, scope, boundary) in enumerate(AGENTS):
-        y = Inches(1.05 + i * 1.22)
+        y = Inches(0.98 + i * 1.06)
         num = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.4), y + Inches(0.1), Inches(0.3), Inches(0.3))
         num.fill.solid(); num.fill.fore_color.rgb = NAVY
         num.line.fill.background()
@@ -127,7 +138,7 @@ def main():
         r.font.size = Pt(12); r.font.bold = True; r.font.color.rgb = WHITE; r.font.name = 'Arial'
 
         pill = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.85), y, Inches(2.45), Inches(0.5))
-        pill.fill.solid(); pill.fill.fore_color.rgb = PILL
+        pill.fill.solid(); pill.fill.fore_color.rgb = EXTERNAL_PILL if name in EXTERNAL else PILL
         pill.line.fill.background()
         tf = pill.text_frame; tf.word_wrap = False
         tf.vertical_anchor = MSO_ANCHOR.MIDDLE
@@ -135,12 +146,12 @@ def main():
         r = p.add_run(); r.text = name
         r.font.size = Pt(13); r.font.bold = True; r.font.color.rgb = WHITE; r.font.name = 'Consolas'
 
-        add_text(slide, Inches(3.5), y, Inches(4.9), row_h, scope, 10.5, color=RGBColor(0, 0, 0))
-        add_text(slide, Inches(8.6), y, Inches(3.6), row_h, boundary, 10.5, color=TEAL)
+        add_text(slide, Inches(3.5), y, Inches(4.9), row_h, scope, 10, color=RGBColor(0, 0, 0))
+        add_text(slide, Inches(8.6), y, Inches(3.6), row_h, boundary, 10, color=TEAL)
 
-    add_text(slide, Inches(3.5), Inches(1.05) - Inches(0.28), Inches(4.9), Inches(0.25),
+    add_text(slide, Inches(3.5), Inches(0.98) - Inches(0.28), Inches(4.9), Inches(0.25),
              'OWNS', 9, bold=True, color=GREY)
-    add_text(slide, Inches(8.6), Inches(1.05) - Inches(0.28), Inches(3.6), Inches(0.25),
+    add_text(slide, Inches(8.6), Inches(0.98) - Inches(0.28), Inches(3.6), Inches(0.25),
              'STOPS AT', 9, bold=True, color=GREY)
 
     prs.save(deck_path)
