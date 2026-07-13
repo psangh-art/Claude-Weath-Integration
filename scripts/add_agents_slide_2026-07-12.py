@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""One-off (2026-07-12, user-requested): append a 'Claude Code agents' slide to
+"""Adds/refreshes the 'Claude Code agents' slide in
 Financial_Data_Pipeline_Architecture.pptx describing the repo's specialist
 agents (.claude/agents/*.md) — who owns what, and where each one's remit stops.
-Follows slide 2's visual language: numbered oval + rounded name pill + a scope
-column + a boundary column.
+Re-runnable: an existing agents slide is replaced, not duplicated — re-run this
+whenever an agent is added or its remit changes. Follows slide 2's visual
+language: numbered oval + rounded name pill + a scope column + a boundary
+column.
 
 Usage: python add_agents_slide_2026-07-12.py [deck.pptx]
 """
@@ -55,6 +57,14 @@ AGENTS = [
      'sync.',
      'The user sets direction and merges PRs; ad-hoc one-off fixes go straight to '
      'the main assistant.'),
+    ('investment-analyst',
+     'BlackRock-grade stock analysis: fundamentals (cash flow, debt, valuation), '
+     'buy prices from the user’s own charts (parallel-channel bottom, yellow '
+     'trendline fallback), Analyst view on each deck slide, image-quality logging, '
+     'and the daily market brief (oil/gold/FTSE/S&P + near-buy-point stocks) as a '
+     'Gmail draft to the user.',
+     'Decision support only — drafts, never sends; no trades; flags unreadable '
+     'charts instead of guessing.'),
 ]
 
 
@@ -73,6 +83,20 @@ def add_text(slide, x, y, w, h, text, size, bold=False, color=GREY, align=PP_ALI
     return box
 
 
+def remove_existing_agents_slide(prs):
+    """Re-runnable: drop any previously-added agents slide (identified by its
+    title text) so re-running replaces it instead of appending a duplicate."""
+    sld_ids = prs.slides._sldIdLst
+    for idx, slide in enumerate(list(prs.slides)):
+        texts = [sh.text_frame.text for sh in slide.shapes if sh.has_text_frame]
+        if any(t.startswith('Claude Code agents') for t in texts):
+            rId = sld_ids[idx].rId
+            prs.part.drop_rel(rId)
+            sld_ids.remove(sld_ids[idx])
+            print(f'Removed existing agents slide (was slide {idx + 1})')
+            return
+
+
 def main():
     deck_path = sys.argv[1] if len(sys.argv) > 1 else DECK
     backup = deck_path + '.bak-before-agents-slide-2026-07-12'
@@ -80,6 +104,7 @@ def main():
     print(f'Backup -> {backup}')
 
     prs = Presentation(deck_path)
+    remove_existing_agents_slide(prs)
     slide = prs.slides.add_slide(prs.slides[1].slide_layout)  # match slide 2's layout
 
     add_text(slide, Inches(0.4), Inches(0.2), Inches(9.5), Inches(0.4),
@@ -88,10 +113,11 @@ def main():
              'Specialist agents in .claude/agents/ — each owns one part of the system; '
              'the user sets direction and merges all PRs', 11, color=GREY)
 
-    top = Inches(1.15)
-    row_h = Inches(1.32)
+    # 5 rows must fit above the 7.5in slide bottom: last row top = 1.05 + 4*1.22
+    # = 5.93in, bottom = 7.05in.
+    row_h = Inches(1.12)
     for i, (name, scope, boundary) in enumerate(AGENTS):
-        y = Inches(1.15 + i * 1.42)
+        y = Inches(1.05 + i * 1.22)
         num = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.4), y + Inches(0.1), Inches(0.3), Inches(0.3))
         num.fill.solid(); num.fill.fore_color.rgb = NAVY
         num.line.fill.background()
@@ -112,9 +138,9 @@ def main():
         add_text(slide, Inches(3.5), y, Inches(4.9), row_h, scope, 10.5, color=RGBColor(0, 0, 0))
         add_text(slide, Inches(8.6), y, Inches(3.6), row_h, boundary, 10.5, color=TEAL)
 
-    add_text(slide, Inches(3.5), Inches(1.15) - Inches(0.28), Inches(4.9), Inches(0.25),
+    add_text(slide, Inches(3.5), Inches(1.05) - Inches(0.28), Inches(4.9), Inches(0.25),
              'OWNS', 9, bold=True, color=GREY)
-    add_text(slide, Inches(8.6), Inches(1.15) - Inches(0.28), Inches(3.6), Inches(0.25),
+    add_text(slide, Inches(8.6), Inches(1.05) - Inches(0.28), Inches(3.6), Inches(0.25),
              'STOPS AT', 9, bold=True, color=GREY)
 
     prs.save(deck_path)
