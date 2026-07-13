@@ -97,6 +97,20 @@ async function main() {
     return;
   }
 
+  // Hard guard before touching any layout: auto-save must be OFF, or capture-time
+  // interactions could be silently persisted back into the user's saved layouts
+  // (this really happened — see CLAUDE.md 2026-07-13). Throws (aborting the run)
+  // if it's on and can't be turned off.
+  log('Checking TradingView layout auto-save is off...');
+  const autosave = await ui.ensureAutosaveDisabled();
+  if (!autosave.found) {
+    log(`  WARNING: could not locate the auto-save setting (${autosave.error}) — verify it is off manually (save-menu dropdown). Proceeding: this run makes no view changes.`);
+  } else if (autosave.wasEnabled) {
+    log('  auto-save WAS ENABLED — disabled it for this and future sessions.');
+  } else {
+    log('  auto-save already off.');
+  }
+
   log('Fetching saved layouts...');
   const chartListJson = await evaluateAsync(`
     JSON.stringify((window.TradingViewApi._loadChartService._state.value().chartList || []).map(c => ({id: c.id, url: c.url, name: c.name})))
@@ -138,25 +152,22 @@ async function main() {
       return { status: 'full_layout_fallback', charts: [{ ticker: null, description: null, screenshot: shot.file_path, error: null }], indicators };
     }
 
-    // Reset zoom/pan to a consistent fitted view before capturing — a chart can be
-    // left scrolled/zoomed from whenever it was last interacted with. This is a
-    // view-only, unsaved change (see resetView()'s comment) so it never touches the
-    // saved layout itself. "Reset chart view" (Alt+R) only affects the currently
-    // FOCUSED pane, not the whole grid — confirmed by two independent runs producing
-    // byte-identical broken output for the same non-focused panes regardless of wait
-    // time, ruling out a load-timing race. So each pane must be focused individually
-    // before resetting it.
+    // Capture the layout exactly as saved — do NOT reset/refit the view first.
+    // An Alt+R "Reset chart view" used to run here per pane, but TradingView's
+    // reset snaps to its DEFAULT bar spacing/right-offset, not to the user's saved
+    // wide channel view — it zoomed charts in past their drawn trendlines and made
+    // whole layouts unreadable (user-confirmed 2026-07-13). The user sizes each
+    // chart in TradingView; layoutSwitch() has just loaded the saved state fresh
+    // from the server, so it's already the view we want. Each pane still gets
+    // focused: the Data Window / last-price reads below are focus-scoped.
     const lastPriceByPaneIndex = {};
     for (let pi = 0; pi < panes.length; pi++) {
       const p = panes[pi];
       await pane.focus({ index: p.index });
-      await ui.resetView();
-      await ui.waitForResetToSettle();
 
-      // Piggyback current indicator values onto this same per-pane focus pass
+      // Read current indicator values on this same per-pane focus pass
       // (rather than a separate full layout-switching loop) — the pane is
-      // already focused here for the reset-view fix, so reading Data Window
-      // values now is free.
+      // already focused here, so reading Data Window values now is free.
       const studyResult = await data.getStudyValues();
       for (const study of studyResult.studies || []) {
         for (const [field, value] of Object.entries(study.values)) {

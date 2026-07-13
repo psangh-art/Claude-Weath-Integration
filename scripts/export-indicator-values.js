@@ -57,6 +57,20 @@ async function main() {
     return;
   }
 
+  // Same hard guard as export-layouts-excel.js: auto-save must be OFF before any
+  // layout switching/clicking, or interactions could silently persist back into
+  // the user's saved layouts (see CLAUDE.md 2026-07-13). Throws if it can't be
+  // disabled.
+  log('Checking TradingView layout auto-save is off...');
+  const autosave = await ui.ensureAutosaveDisabled();
+  if (!autosave.found) {
+    log(`  WARNING: could not locate the auto-save setting (${autosave.error}) — verify it is off manually (save-menu dropdown). Proceeding: this run makes no view changes.`);
+  } else if (autosave.wasEnabled) {
+    log('  auto-save WAS ENABLED — disabled it for this and future sessions.');
+  } else {
+    log('  auto-save already off.');
+  }
+
   log('Fetching saved layouts...');
   const chartListJson = await evaluateAsync(`
     JSON.stringify((window.TradingViewApi._loadChartService._state.value().chartList || []).map(c => ({id: c.id, url: c.url, name: c.name})))

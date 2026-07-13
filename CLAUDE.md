@@ -7,6 +7,31 @@ something worth remembering.
 
 ## Confirmed working (do not regress)
 
+- **NO pre-capture view reset — capture each layout exactly as saved (user decision
+  2026-07-13).** The capture loop used to press Alt+R ("Reset chart view") on every
+  pane before screenshotting, on the theory that it normalised leftover pan/zoom.
+  In reality TradingView's reset snaps to its DEFAULT bar spacing/right-offset, not
+  the user's saved wide channel view — it zoomed charts in past their drawn
+  trendlines and made whole layouts unreadable (the 2026-07-13 analyst run flagged
+  PRU/LGEN/BEZ/SDLF in "FT100 Insurance" as over-zoomed with months of blank future
+  space; that was Alt+R's doing, NOT the saved layout's zoom state as first
+  suspected). The user sizes each chart in TradingView; `layoutSwitch()` loads the
+  saved state fresh from the server, so it's already the view to capture.
+  `resetView()`/`waitForResetToSettle()` were deleted from `src/core/ui.js` — do not
+  reintroduce any view reset/refit before capture. Per-pane `pane.focus()` clicks
+  remain: the Data Window / last-price reads are focus-scoped and clicking doesn't
+  change the view.
+- **Auto-save guard before every capture run (user policy 2026-07-13).** TradingView's
+  layout auto-save silently persisted the old Alt+R-reset views back into the user's
+  saved layouts (no "unsaved changes" dialog fires when auto-save is on) — the user
+  had to re-zoom every chart by hand. `ui.ensureAutosaveDisabled()` (in
+  `src/core/ui.js`) now runs first in both `export-layouts-excel.js` and
+  `export-indicator-values.js`: it reads `_saveChartService.autoSaveEnabled()` (a
+  WatchedValue; API confirmed by live CDP probe) and calls `setAutoSaveEnabled(false)`
+  if on — **aborting the run if the toggle doesn't stick**, and warning loudly if a
+  TradingView update ever hides the API. Any new script that switches layouts or
+  clicks panes must call this guard first.
+
 - **One image per chart, not one image per layout.** `pane.js` + `crop_panes.py` crop
   individual panes out of a full-layout screenshot; `build_layout_excel.py` produces one
   row per chart with its own image. This fixed a real problem: multi-pane grid

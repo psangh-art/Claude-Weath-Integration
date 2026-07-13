@@ -1,46 +1,54 @@
-import { evaluate, evaluateAsync, getClient } from '../connection.js';
+import { evaluate, evaluateAsync } from '../connection.js';
+
+// NOTE: a resetView() helper (Alt+R "Reset chart view" per pane before capture)
+// used to live here. Removed 2026-07-13 by user decision: TradingView's reset
+// snaps to its default zoom, not the user's saved wide channel view, so it zoomed
+// captures in past the drawn trendlines. Capture the saved layout as-is — the
+// user sizes charts in TradingView. Do not reintroduce a pre-capture view reset.
 
 /**
- * Dispatch TradingView's "Reset chart view" shortcut (Alt+R) so the capture always
- * starts from a consistent, fitted view instead of whatever pan/zoom state the chart
- * happened to be left in. This is a view-only change — it's never saved (no save
- * call follows it), and layoutSwitch's own navigation discards any unsaved state when
- * moving to the next layout, so it never persists back to the saved layout.
+ * Force TradingView's layout auto-save OFF before any capture run (user policy
+ * 2026-07-13): with auto-save ON, TradingView silently persisted capture-time view
+ * changes (the old Alt+R reset) back into the user's saved layouts — no "unsaved
+ * changes" dialog ever appeared to stop it, and every chart's saved zoom was
+ * overwritten. The capture flow no longer changes views at all, but this stays as
+ * a hard guard: a run must never be able to write back to saved layouts.
+ *
+ * API located by live CDP probe (2026-07-13): _saveChartService.autoSaveEnabled()
+ * returns a WatchedValue; setAutoSaveEnabled(false) is the toggle the save-menu
+ * checkbox uses. Throws if auto-save is on and the toggle fails to stick. If the
+ * API can't be found at all (TradingView update), returns found:false so the
+ * caller can warn loudly — the run itself makes no view changes, so proceeding is
+ * safe, but the guard being blind is worth surfacing every run.
  */
-export async function resetView() {
-  const client = await getClient();
-  await client.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 1, key: 'r', code: 'KeyR', windowsVirtualKeyCode: 82 });
-  await client.Input.dispatchKeyEvent({ type: 'keyUp', key: 'r', code: 'KeyR', windowsVirtualKeyCode: 82 });
-  return { success: true, action: 'reset_view' };
-}
+export async function ensureAutosaveDisabled() {
+  const result = await evaluate(`
+    (function() {
+      try {
+        var s = window.TradingViewApi._saveChartService;
+        if (!s || typeof s.autoSaveEnabled !== 'function' || typeof s.setAutoSaveEnabled !== 'function') {
+          return { found: false, error: 'autoSaveEnabled/setAutoSaveEnabled not present on _saveChartService' };
+        }
+        var read = function() {
+          var wv = s.autoSaveEnabled();
+          return (wv && typeof wv.value === 'function') ? !!wv.value() : !!wv;
+        };
+        var before = read();
+        if (before) s.setAutoSaveEnabled(false);
+        return { found: true, wasEnabled: before, nowEnabled: read() };
+      } catch (e) { return { found: false, error: e.message }; }
+    })()
+  `);
 
-/**
- * Poll the chart's visible time range after resetView() until it stops changing
- * (two consecutive reads match), instead of trusting a fixed sleep — mirrors
- * layoutSwitch()'s own verification-poll pattern. A fixed 800ms wait was proven
- * insufficient: on a cold-started layout with several panes still streaming in
- * historical bars, some panes' reset/redraw hadn't finished at 800ms, producing
- * blank or mis-scaled captures. This is bounded (never blocks indefinitely) and
- * simply returns settled:false if the range never stabilizes in time, so the
- * caller can proceed on a best-effort basis either way.
- */
-export async function waitForResetToSettle({ maxAttempts = 8, intervalMs = 300 } = {}) {
-  let prev;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    await new Promise(r => setTimeout(r, intervalMs));
-    const current = await evaluate(`
-      (function() {
-        try {
-          return JSON.stringify(window.TradingViewApi._activeChartWidgetWV.value().getVisibleRange());
-        } catch(e) { return null; }
-      })()
-    `);
-    if (current && current === prev) {
-      return { success: true, settled: true, attempts: attempt + 1 };
-    }
-    prev = current;
+  if (result?.found && result.nowEnabled) {
+    throw new Error('TradingView auto-save is ON and could not be disabled — aborting so the run cannot write back to saved layouts. Turn it off manually (save-menu dropdown) and re-run.');
   }
-  return { success: true, settled: false, attempts: maxAttempts };
+  return {
+    success: true,
+    found: !!result?.found,
+    wasEnabled: result?.wasEnabled ?? null,
+    error: result?.error || null,
+  };
 }
 
 export async function layoutList() {

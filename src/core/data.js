@@ -2,8 +2,7 @@ import { evaluate } from '../connection.js';
 
 /**
  * Read current indicator values from the Data Window for the currently FOCUSED
- * pane only (same focus-scoping limitation as resetView()/getVisibleRange() —
- * see pane.focus()). Marker/label-style indicators (e.g. "Dividend yield %")
+ * pane only (focus-scoped — see pane.focus()). Marker/label-style indicators (e.g. "Dividend yield %")
  * don't populate the Data Window at all and are simply omitted, not an error.
  */
 /**

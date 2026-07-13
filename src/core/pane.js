@@ -69,9 +69,8 @@ export async function waitForPanesToLoad({ maxAttempts = 12, intervalMs = 400 } 
 
 /**
  * Focus a specific pane by index (clicks its main div, same as a user click) —
- * "Reset chart view" (Alt+R) only resets the currently focused/active pane, not
- * every pane in a grid layout, so each pane must be focused individually before
- * resetting it.
+ * the Data Window and last-price reads (src/core/data.js) only see the currently
+ * focused/active pane, so each pane must be focused individually before reading it.
  */
 export async function focus({ index }) {
   const idx = Number(index);
