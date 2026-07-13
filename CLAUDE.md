@@ -273,6 +273,13 @@ master rows with no chart. Requires `python-pptx` (installed for the
   the other headers, enforced idempotently by `get_or_create_last_checked_col`.
 - Agents: **`test-analyst`** (end-to-end data-quality audits across every
   pipeline hand-off, read-only) joins `app-developer` and `excel-formatter`.
+  Later additions: **`product-owner`** (owns BACKLOG.md, 2026-07-12),
+  **`investment-analyst`** (stock analysis, buy prices, daily brief drafts,
+  2026-07-12), and **`data-developer`** (data ingestion + transforms — CSV
+  loaders, fidelity_file_classifier, ticker_normalize, pivots, master-sheet
+  derivations, 2026-07-13). The architecture deck's agents slide is refreshed
+  on request by re-running `add_agents_slide_2026-07-12.py` (re-runnable —
+  replaces the slide).
 
 ## Open items / things to verify on the next export run
 
