@@ -15,19 +15,20 @@ import os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
+import { downloadsDir, downloadsFile, pythonExe, financeSheetUrl, CFG } from './config.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DOWNLOADS = path.join(os.homedir(), 'Downloads');
-const PORT = 4590;
+const DOWNLOADS = downloadsDir();
+const PORT = CFG.appPort;
 
 const REPO_ROOT = path.join(__dirname, '..');
 const APP_DIR = path.join(__dirname, 'pipeline_app');
 const GALLERY_HTML = path.join(APP_DIR, 'review_deck.html');
 const DECK_SUMMARY = path.join(APP_DIR, 'review_deck_summary.json');
-const DECK_PPTX = path.join(DOWNLOADS, 'Investment_Review_Deck.pptx');
-const SPENDING_XLSX = path.join(DOWNLOADS, 'spending_summary.xlsx');
+const DECK_PPTX = downloadsFile('reviewDeckPptx');
+const SPENDING_XLSX = downloadsFile('spendingSummaryXlsx');
 // The Finance Google Sheet the pipeline syncs into (see CLAUDE.md).
-const FINANCE_SHEET_URL =
-  'https://docs.google.com/spreadsheets/d/1UjAz_QUuh86_e6yq8QJf2veI8IpkRCyVfWaK6maqiyc/edit';
+const FINANCE_SHEET_URL = financeSheetUrl();
 
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -61,14 +62,9 @@ function isAllowedAsset(abs) {
     && /\.(png|jpe?g)$/i.test(resolved);
 }
 
-const PYTHON_CANDIDATES = [
-  'C:\\Users\\Paul\\AppData\\Local\\Python\\bin\\python.exe', // has pandas/openpyxl — spending_summary.py needs these
-  'python',
-];
-const PYTHON = PYTHON_CANDIDATES.find((p) => {
-  if (p === 'python') return true;
-  try { return fs.existsSync(p); } catch { return false; }
-}) || 'python';
+// First configured interpreter that exists — the AppData one has pandas/openpyxl,
+// which spending_summary.py needs. Candidates live in config.json.
+const PYTHON = pythonExe();
 
 const STAGES = [
   { id: 1, name: 'Pre-flight file check' },
@@ -213,8 +209,23 @@ async function executeRun() {
   }
 
   const tvOk = await runTradingViewPipeline();
+  if (tvOk) consumeInputFiles();
   broadcast({ type: 'run-complete', ok: tvOk });
   running = false;
+}
+
+// After a FULLY successful run, the consumed bank/broker exports (and every
+// other version of them in Downloads) are sent to the Recycle Bin — user
+// policy 2026-07-12: "once files have been used they must be deleted". Failed
+// runs keep their inputs so they can be re-run. The master workbook is never
+// touched. See consume_input_files.py for the exact family matching.
+function consumeInputFiles() {
+  const result = spawnSync(PYTHON, [path.join(__dirname, 'consume_input_files.py'), DOWNLOADS, '--apply'], { encoding: 'utf-8' });
+  const output = (result.stdout || '') + (result.stderr || '');
+  for (const line of output.split('\n')) if (line.trim()) logEvent(8, line);
+  if (result.status !== 0) {
+    stageEvent(8, 'success', 'Cleanup done, but removing used input files failed — see log.');
+  }
 }
 
 const server = http.createServer((req, res) => {

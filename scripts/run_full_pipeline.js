@@ -10,16 +10,16 @@
 // see channel_detect.py's docstring). If it's missing, this still completes the
 // chart export/screenshot half and tells you exactly what's missing, rather than
 // failing the whole run.
-import os from 'os';
 import path from 'path';
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
 
+import { downloadsFile } from './config.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DOWNLOADS = path.join(os.homedir(), 'Downloads');
-const MASTER_SHEET_PATH = path.join(DOWNLOADS, 'Stocks_Buy_Strategy.xlsx');
-const FEEDBACK_PATH = path.join(DOWNLOADS, 'Feedback_for_Claude_Code.md');
+const MASTER_SHEET_PATH = downloadsFile('masterWorkbook');
+const FEEDBACK_PATH = downloadsFile('feedbackMd');
 const CHARTS_MANIFEST = path.join(__dirname, 'layout_manifest_tmp.json');
 const CHANNEL_INPUT = path.join(__dirname, 'channel_input_tmp.json');
 const CHANNEL_RESULTS = path.join(__dirname, 'channel_results_tmp.json');
@@ -117,6 +117,16 @@ function main() {
   console.log('\nDone. tradingview_layouts.xlsx, Stocks_Buy_Strategy.xlsx, and Feedback_for_Claude_Code.md are all up to date in Downloads.');
 }
 
+function recordHistory() {
+  // Quiet step (deliberately NOT a numbered "=== Step N/M ===" stage — the
+  // Production Centre parses those markers, and this needs no UI slot):
+  // append this run's manifests to data/history.db so day-over-day
+  // comparison and indicator change detection have something to work on.
+  const result = spawnSync('python', [path.join(__dirname, 'history_store.py'), 'record'], { encoding: 'utf-8' });
+  const line = (result.stdout || result.stderr || '').trim().split('\n').pop();
+  if (line) console.log(`History: ${line}`);
+}
+
 try {
   main();
 } finally {
@@ -124,6 +134,7 @@ try {
   // step stopped partway through — both report honestly on whatever manifests do
   // or don't exist rather than requiring a fully clean run (the deck's whole job
   // is to show what's missing).
+  recordHistory();
   runDeck();
   runVerify();
   runCleanup();

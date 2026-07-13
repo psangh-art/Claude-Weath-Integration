@@ -36,7 +36,8 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-DOWNLOADS = os.path.expanduser("~/Downloads")
+from config import downloads_dir
+DOWNLOADS = downloads_dir()
 STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fidelity_import_state.json")
 
 BAK_RE = re.compile(r"^(?P<base>.+)\.bak-.+$")

@@ -10,10 +10,10 @@
 // "Reset chart view" is NOT used here (unlike export-layouts-excel.js) since this
 // only reads numeric values, not pixel geometry, so a stale zoom/pan doesn't affect
 // correctness.
-import os from 'os';
 import path from 'path';
 import { writeFileSync, mkdirSync, appendFileSync } from 'fs';
 import { fileURLToPath } from 'url';
+import { downloadsDir } from './config.js';
 import * as health from '../src/core/health.js';
 import * as ui from '../src/core/ui.js';
 import * as pane from '../src/core/pane.js';
@@ -21,7 +21,7 @@ import * as data from '../src/core/data.js';
 import { evaluateAsync } from '../src/connection.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const OUT_PATH = path.join(os.homedir(), 'Downloads', 'tradingview_indicator_values.csv');
+const OUT_PATH = path.join(downloadsDir(), 'tradingview_indicator_values.csv');
 
 const LOGS_DIR = path.join(__dirname, '..', 'logs');
 mkdirSync(LOGS_DIR, { recursive: true });

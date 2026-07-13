@@ -68,18 +68,25 @@ button#run svg{width:16px;height:16px}
 .panel-head .hint{margin-left:auto;font-size:12px;color:var(--faint)}
 
 /* ── feedstock ──────────────────────────────────────────── */
-.files{display:flex;gap:10px;flex-wrap:wrap}
+.files{display:grid;grid-template-columns:repeat(auto-fit,minmax(228px,1fr));gap:14px;align-items:start}
+.fgroup{background:color-mix(in oklab,var(--panel-2) 55%,transparent);border:1px solid var(--line);
+  border-radius:13px;padding:12px 13px 13px}
+.fgroup-head{display:flex;align-items:center;gap:8px;font-size:11px;text-transform:uppercase;
+  letter-spacing:.08em;color:var(--muted);font-weight:700;margin:0 0 10px 2px}
+.fgroup-head::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0}
+.fgroup-items{display:flex;flex-direction:column;gap:8px}
 .file{display:flex;align-items:center;gap:10px;background:var(--panel-2);border:1px solid var(--line);
-  border-radius:10px;padding:9px 13px 9px 11px;min-width:0}
+  border-radius:10px;padding:9px 13px 9px 11px;min-width:0;width:100%}
 .file .fled{width:9px;height:9px;border-radius:50%;background:var(--faint);flex-shrink:0}
 .file.found .fled{background:var(--success);box-shadow:0 0 0 3px color-mix(in oklab,var(--success) 22%,transparent)}
 .file.missing{border-color:color-mix(in oklab,var(--failed) 45%,var(--line))}
 .file.missing .fled{background:var(--failed);box-shadow:0 0 0 3px color-mix(in oklab,var(--failed) 22%,transparent)}
-.file .fmeta{min-width:0}
-.file .fname{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px}
+.file .fmeta{min-width:0;flex:1}
+.file .fname{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .file .fstate{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
 .file.missing .fstate{color:var(--failed)}
-.file .note{font-size:11px;color:var(--faint)}
+.file .fpath{font-size:10.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;font-family:var(--mono)}
+.file .note{font-size:11px;color:var(--faint);margin-top:2px}
 .feed-empty{color:var(--muted);font-size:13px}
 
 /* ── production line (the deck) ─────────────────────────── */
@@ -278,22 +285,64 @@ function renderDetail(){
 
 /* ── feedstock ─────────────────────────────────────────── */
 function base(p){return String(p).split(/[\\/]/).pop();}
+function prettifyKey(k){return k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());}
+// Maps preflight_check.py's `found`/`missing` keys onto an institution group + a
+// human role label. Unknown keys (future preflight additions) fall back to an
+// "Other" group with a prettified key name, so they still render instead of vanishing.
+const FILE_META={
+  fidelity_account_summary:{group:'Fidelity',role:'Account Summary',order:1},
+  fidelity_historic:{group:'Fidelity',role:'Transactions (historic)',order:2},
+  fidelity_pending:{group:'Fidelity',role:'Transactions (pending)',order:3},
+  barclays:{group:'Barclays',role:'Transactions',order:1},
+  amex:{group:'Amex',role:'Transactions',order:1},
+  master_workbook:{group:'Master workbook',role:'Stocks Buy Strategy',order:1},
+};
+const GROUP_ORDER=['Fidelity','Barclays','Amex','Master workbook'];
+function metaFor(key){return FILE_META[key]||{group:'Other',role:prettifyKey(key),order:99};}
+
 async function loadFiles(){
+  const el=document.getElementById('files');
   try{
     const r=await fetch('/files');const rep=await r.json();
-    const el=document.getElementById('files');el.innerHTML='';
+    el.innerHTML='';
     const found=Object.entries(rep.found||{}).filter(([k,v])=>typeof v==='string'&&/[\\/]/.test(v));
-    found.forEach(([k,v])=>el.appendChild(fileChip(base(v),'Loaded','found')));
-    (rep.missing||[]).forEach(m=>el.appendChild(fileChip(base(m.expected),'Missing','missing',m.why)));
+    const entries=[
+      ...found.map(([k,v])=>({key:k,filename:base(v),state:'found'})),
+      ...(rep.missing||[]).map(m=>({key:m.key,filename:base(m.expected),state:'missing',why:m.why})),
+    ];
+
+    const groups={};
+    const ensureGroup=name=>groups[name]||(groups[name]={name,items:[]});
+    entries.forEach(e=>ensureGroup(metaFor(e.key).group).items.push(e));
     if(rep.found&&rep.found.fidelity_pending_note){
-      const n=document.createElement('div');n.className='file';n.innerHTML=`<span class="fled" style="background:var(--accent)"></span><div class="fmeta"><div class="fname">Fidelity pending export</div><div class="note">${esc(rep.found.fidelity_pending_note)}</div></div>`;el.appendChild(n);
+      ensureGroup('Fidelity').note=rep.found.fidelity_pending_note;
     }
+
+    const names=[...GROUP_ORDER.filter(n=>groups[n]),...Object.keys(groups).filter(n=>!GROUP_ORDER.includes(n))];
+    names.forEach(name=>el.appendChild(groupEl(groups[name])));
+
     if(!el.children.length)el.innerHTML='<span class="feed-empty">No file report available.</span>';
-  }catch(e){document.getElementById('files').innerHTML='<span class="feed-empty">Could not read file status.</span>';}
+  }catch(e){el.innerHTML='<span class="feed-empty">Could not read file status.</span>';}
 }
-function fileChip(name,state,cls,why){
-  const d=document.createElement('div');d.className='file '+cls;if(why)d.title=why;
-  d.innerHTML=`<span class="fled"></span><div class="fmeta"><div class="fname">${esc(name)}</div><div class="fstate">${state}</div></div>`;
+function groupEl(group){
+  const wrap=document.createElement('div');wrap.className='fgroup';
+  wrap.innerHTML=`<div class="fgroup-head">${esc(group.name)}</div>`;
+  const items=document.createElement('div');items.className='fgroup-items';
+  group.items.sort((a,b)=>metaFor(a.key).order-metaFor(b.key).order)
+    .forEach(e=>items.appendChild(fileChip(metaFor(e.key).role,e.filename,e.state,e.why)));
+  if(group.note){
+    const n=document.createElement('div');n.className='file';n.title=group.note;
+    n.innerHTML=`<span class="fled" style="background:var(--accent)"></span><div class="fmeta"><div class="fname">Transactions (pending)</div><div class="note">${esc(group.note)}</div></div>`;
+    items.appendChild(n);
+  }
+  wrap.appendChild(items);
+  return wrap;
+}
+function fileChip(role,filename,state,why){
+  const found=state==='found';
+  const d=document.createElement('div');d.className='file '+(found?'found':'missing');if(why)d.title=why;
+  d.innerHTML=`<span class="fled"></span><div class="fmeta"><div class="fname">${esc(role)}</div>
+    <div class="fstate">${found?'Loaded':'Missing'}</div><div class="fpath">${esc(filename)}</div></div>`;
   return d;
 }
 

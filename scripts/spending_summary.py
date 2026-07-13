@@ -17,7 +17,7 @@ import os
 import io
 import csv
 import pandas as pd
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
@@ -3486,7 +3486,55 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
             sheet.cell(row=1, column=col).fill = PatternFill("solid", fgColor="FFF3CD")
         sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=sheet.max_column)
 
+    preserve_manual_sheets(wb, output_path)
     wb.save(output_path)
+
+
+def copy_sheet_into(src_ws, dst_ws):
+    """Cell-by-cell copy of values + styles + merges + dimensions between
+    workbooks (openpyxl has no cross-workbook copy_worksheet)."""
+    from copy import copy as _copy
+    for row in src_ws.iter_rows():
+        for cell in row:
+            if cell.__class__.__name__ == 'MergedCell':
+                continue
+            dst = dst_ws.cell(row=cell.row, column=cell.column, value=cell.value)
+            if cell.has_style:
+                dst.font = _copy(cell.font)
+                dst.fill = _copy(cell.fill)
+                dst.border = _copy(cell.border)
+                dst.alignment = _copy(cell.alignment)
+                dst.number_format = cell.number_format
+                dst.protection = _copy(cell.protection)
+    for m in src_ws.merged_cells.ranges:
+        dst_ws.merge_cells(str(m))
+    for col, dim in src_ws.column_dimensions.items():
+        dst_ws.column_dimensions[col].width = dim.width
+    for r, dim in src_ws.row_dimensions.items():
+        dst_ws.row_dimensions[r].height = dim.height
+
+
+def preserve_manual_sheets(new_wb, output_path):
+    """This builder regenerates the whole workbook every run — but the user
+    keeps hand-maintained tabs (e.g. 'Payslip Summary', 'Retirement Income
+    Plan') alongside the generated ones, and a rebuild used to silently drop
+    them (lost tabs reported 2026-07-12, restored from the 2026-07-02 copy).
+    Carry over every sheet in the existing file whose name this run didn't
+    generate, so manual tabs survive rebuilds."""
+    if not os.path.exists(output_path):
+        return
+    try:
+        old_wb = load_workbook(output_path)
+    except Exception as e:
+        print(f"WARNING: could not read existing {output_path} to preserve "
+              f"manual tabs ({e}) — generated tabs only this run.", file=sys.stderr)
+        return
+    generated = set(new_wb.sheetnames)
+    for name in old_wb.sheetnames:
+        if name in generated:
+            continue
+        copy_sheet_into(old_wb[name], new_wb.create_sheet(name))
+        print(f"Preserved manual tab: {name}")
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────

@@ -25,15 +25,16 @@ from collections import defaultdict
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
-DOWNLOADS = os.path.join(os.path.expanduser('~'), 'Downloads')
+from config import CFG, downloads_dir
+DOWNLOADS = downloads_dir()
 
 CHARTS_MANIFEST = os.path.join(SCRIPT_DIR, 'layout_manifest_tmp.json')
 INDICATORS_MANIFEST = os.path.join(SCRIPT_DIR, 'indicator_manifest_tmp.json')
 ALERTS_MANIFEST = os.path.join(SCRIPT_DIR, 'alerts_manifest_tmp.json')
 CHANNEL_RESULTS = os.path.join(SCRIPT_DIR, 'channel_results_tmp.json')
 MASTER_UPDATE_RESULT = os.path.join(SCRIPT_DIR, 'master_update_result_tmp.json')
-WORKBOOK_PATH = os.path.join(DOWNLOADS, 'tradingview_layouts.xlsx')
-MASTER_SHEET_PATH = os.path.join(DOWNLOADS, 'Stocks_Buy_Strategy.xlsx')
+WORKBOOK_PATH = os.path.join(DOWNLOADS, CFG['layoutsWorkbook'])
+MASTER_SHEET_PATH = os.path.join(DOWNLOADS, CFG['masterWorkbook'])
 LOGS_DIR = os.path.join(REPO_ROOT, 'logs')
 
 

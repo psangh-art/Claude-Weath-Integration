@@ -1,0 +1,15 @@
+{
+  "downloadsDir": "~/Downloads",
+  "masterWorkbook": "Stocks_Buy_Strategy.xlsx",
+  "layoutsWorkbook": "tradingview_layouts.xlsx",
+  "feedbackMd": "Feedback_for_Claude_Code.md",
+  "reviewDeckPptx": "Investment_Review_Deck.pptx",
+  "spendingSummaryXlsx": "spending_summary.xlsx",
+  "pythonCandidates": [
+    "C:\\Users\\Paul\\AppData\\Local\\Python\\bin\\python.exe",
+    "python"
+  ],
+  "appPort": 4590,
+  "financeSheetId": "1UjAz_QUuh86_e6yq8QJf2veI8IpkRCyVfWaK6maqiyc",
+  "tvLayoutUrlTemplate": "https://www.tradingview.com/chart/{chart_id}/"
+}

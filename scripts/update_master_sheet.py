@@ -21,6 +21,7 @@ from datetime import date
 from copy import copy
 
 import openpyxl
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from ticker_normalize import normalize, master_tickers_match
 
@@ -51,18 +52,45 @@ def load_json(path):
         return json.load(f)
 
 
+_HEADER_NAVY = 'FF1F3864'
+_THIN_SIDE = Side(style='thin')
+_CELL_BORDER = Border(left=_THIN_SIDE, right=_THIN_SIDE, top=_THIN_SIDE, bottom=_THIN_SIDE)
+
+
 def get_or_create_last_checked_col(ws):
     """Find the 'Chart Last Checked' column by header text, or append a new one
     at the end of the sheet if it doesn't exist yet. Stable across runs once
     created — always looked up by header, never assumed to be a fixed index,
-    since this column was added after the sheet's original layout."""
+    since this column was added after the sheet's original layout.
+
+    The header cell is (re)styled every run to match the sheet's other headers
+    (Arial 9 bold white on navy, centered, wrapped, bordered) — the column was
+    originally created bare (AK2 flagged by the user 2026-07-12), and doing it
+    idempotently here means a future recreation can never regress it."""
     max_col = ws.max_column
+    col = None
     for c in range(1, max_col + 1):
         if ws.cell(row=HEADER_ROW, column=c).value == LAST_CHECKED_HEADER:
-            return c
-    new_col = max_col + 1
-    ws.cell(row=HEADER_ROW, column=new_col, value=LAST_CHECKED_HEADER)
-    return new_col
+            col = c
+            break
+    if col is None:
+        col = max_col + 1
+        ws.cell(row=HEADER_ROW, column=col, value=LAST_CHECKED_HEADER)
+    header = ws.cell(row=HEADER_ROW, column=col)
+    header.font = Font(name='Arial', size=9, bold=True, color='FFFFFFFF')
+    header.fill = PatternFill(fill_type='solid', fgColor=_HEADER_NAVY)
+    header.alignment = Alignment(horizontal='center', vertical='top', wrap_text=True)
+    header.border = _CELL_BORDER
+    return col
+
+
+def stamp_last_checked(ws, row, col, today):
+    """Write the 'Chart Last Checked' date with the sheet's body styling (Arial 9,
+    bordered, centered) so the column reads as part of the table, not an add-on."""
+    cell = ws.cell(row=row, column=col, value=today)
+    cell.font = Font(name='Arial', size=9)
+    cell.alignment = Alignment(horizontal='center', vertical='top')
+    cell.border = _CELL_BORDER
 
 
 def build_master_index(ws):
@@ -147,7 +175,7 @@ def process(master_ws, charts, channel_by_ticker):
         # freshness stamp. Equity/index rows keep their working formulas.
         if norm['kind'] == 'commodity' and isinstance(row.get('price'), (int, float)):
             master_ws.cell(row=master_row, column=COL_CURRENT_PRICE, value=round(row['price'], 2))
-            master_ws.cell(row=master_row, column=col_last_checked, value=today)
+            stamp_last_checked(master_ws, master_row, col_last_checked, today)
             matches[-1]['commodity_price_written'] = True
 
         if detection is None:
@@ -156,13 +184,13 @@ def process(master_ws, charts, channel_by_ticker):
 
         if detection.get('reason'):
             rejected.append({'ticker': master_ticker, 'company': company, 'reason': detection['reason']})
-            master_ws.cell(row=master_row, column=col_last_checked, value=today)
+            stamp_last_checked(master_ws, master_row, col_last_checked, today)
             continue
 
         existing_source = master_ws.cell(row=master_row, column=COL_ALERT_LOW_SOURCE).value
         if existing_source == 'Manual':
             skipped_manual.append({'ticker': master_ticker, 'company': company})
-            master_ws.cell(row=master_row, column=col_last_checked, value=today)
+            stamp_last_checked(master_ws, master_row, col_last_checked, today)
             continue
 
         kind = detection.get('kind', 'parallel')
@@ -177,7 +205,7 @@ def process(master_ws, charts, channel_by_ticker):
                 pct_change = abs(alert_low - existing_low) / existing_low
                 if pct_change <= REFRESH_NOISE_THRESHOLD:
                     skipped_noise.append({'ticker': master_ticker, 'company': company, 'existing_low': existing_low, 'new_low': alert_low})
-                    master_ws.cell(row=master_row, column=col_last_checked, value=today)
+                    stamp_last_checked(master_ws, master_row, col_last_checked, today)
                     continue
 
             master_ws.cell(row=master_row, column=COL_ALERT_LOW, value=alert_low)
@@ -200,7 +228,7 @@ def process(master_ws, charts, channel_by_ticker):
                 pct_change = abs(alert_low - existing_low) / existing_low
                 if pct_change <= REFRESH_NOISE_THRESHOLD:
                     skipped_noise.append({'ticker': master_ticker, 'company': company, 'existing_low': existing_low, 'new_low': alert_low})
-                    master_ws.cell(row=master_row, column=col_last_checked, value=today)
+                    stamp_last_checked(master_ws, master_row, col_last_checked, today)
                     continue
 
             master_ws.cell(row=master_row, column=COL_ALERT_LOW, value=alert_low)
@@ -224,10 +252,10 @@ def process(master_ws, charts, channel_by_ticker):
 
         else:
             rejected.append({'ticker': master_ticker, 'company': company, 'reason': f'unrecognized detection kind: {kind!r}'})
-            master_ws.cell(row=master_row, column=col_last_checked, value=today)
+            stamp_last_checked(master_ws, master_row, col_last_checked, today)
             continue
 
-        master_ws.cell(row=master_row, column=col_last_checked, value=today)
+        stamp_last_checked(master_ws, master_row, col_last_checked, today)
 
     return applied, rejected, skipped_manual, skipped_noise, unmatched, matches
 
