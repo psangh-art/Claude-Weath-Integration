@@ -12,5 +12,11 @@
   ],
   "appPort": 4590,
   "financeSheetId": "1UjAz_QUuh86_e6yq8QJf2veI8IpkRCyVfWaK6maqiyc",
-  "tvLayoutUrlTemplate": "https://www.tradingview.com/chart/{chart_id}/"
+  "tvLayoutUrlTemplate": "https://www.tradingview.com/chart/{chart_id}/",
+  "onedriveProductsDir": "C:\\Users\\Paul\\OneDrive\\Investment Production",
+  "productWebLinks": {
+    "reviewDeck": "",
+    "architecturePptx": "",
+    "spendingSummary": ""
+  }
 }
