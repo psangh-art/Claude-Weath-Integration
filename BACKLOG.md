@@ -9,7 +9,6 @@ Approved → In progress → Done (with commit/PR ref). Items marked
 
 | Item | Why it matters | Size | Status | Builder |
 |---|---|---|---|---|
-| Merge PR #8 (below-alert gap + full 2026-07-12 batch) | Ships committed work to main | S | Waiting on user merge | user |
 | First investment-analyst run (analyst notes + daily brief draft) | Exercises the new agent end to end; populates the deck's Analyst view | M | Proposed | investment-analyst |
 
 ## Next
@@ -30,6 +29,8 @@ Approved → In progress → Done (with commit/PR ref). Items marked
 
 | Item | Shipped |
 |---|---|
+| PR #8 merged (below-alert gap + full 2026-07-12 batch + architecture-deck updates) | 2026-07-13 |
+| data-developer agent (data ingestion + transforms) | 2026-07-13 |
 | `.claude/worktrees/` gitignored | 2026-07-12, commit beed2b3 |
 | `config.json` single source of truth (Python + Node loaders, 12 consumers switched) | 2026-07-12, commit beed2b3 |
 | Per-run manifest snapshots into SQLite (`history_store.py` record/summary/diff, wired into the pipeline) | 2026-07-12 |
