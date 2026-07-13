@@ -145,6 +145,12 @@ def read_channel(image_path):
             else:
                 clusters.append([y])
         centers = sorted(sum(c) / len(c) for c in clusters)
+        # A dashed/antialiased single line can split into two clusters a few px
+        # apart — merge them back into one line; two real channel boundaries are
+        # never this close (a <=10px-wide "channel" would fail the 8% width
+        # filter anyway, and losing the single-trendline read with it).
+        if len(centers) == 2 and centers[1] - centers[0] <= 10:
+            centers = [(centers[0] + centers[1]) / 2]
         if len(centers) == 2:
             samples2.append((x, centers[0], centers[-1]))
         elif len(centers) == 1:
@@ -160,45 +166,53 @@ def read_channel(image_path):
     #    at today's x.
     today_x = find_today_x(arr, w)
 
-    def eval_line(pts, target_x):
-        """(x, y) samples of one straight drawn line -> (y at target_x, max fit
-        residual in px). A single sample can't be extrapolated — used as-is."""
-        if len(pts) == 1:
-            return float(pts[0][1]), 0.0
-        xs = np.array([p[0] for p in pts], dtype=float)
-        ys = np.array([p[1] for p in pts], dtype=float)
-        slope, intercept = np.polyfit(xs, ys, 1)
-        residual = float(np.max(np.abs(slope * xs + intercept - ys)))
-        return float(slope * target_x + intercept), residual
-
-    # Samples that don't lie on a straight line mean inconsistent cluster pairing
-    # across x-positions (an unrelated blue overlay got grouped in) — extrapolating
-    # a poisoned fit could land anywhere, so fall back to the single sample nearest
-    # today instead.
+    # Extrapolating a fit is only trustworthy when the samples genuinely pin down
+    # one straight line: at least 3 of them (2 points always fit perfectly, so a
+    # mispaired 2-sample "fit" extrapolates anywhere — real captures produced
+    # negative prices this way), a small residual (inconsistent cluster pairing
+    # across x-positions poisons the fit), and a fitted y that lands in/near the
+    # frame (a drawn line can't be outside the pane it was drawn on). Otherwise
+    # fall back to the actual sample nearest today — a real pixel read, just at
+    # the closest position we could cleanly see the line.
     MAX_RESIDUAL_PX = 6.0
+
+    def read_line_at(pts, target_x):
+        """(x, y) samples of one drawn line -> (y at target_x or nearest-sample y,
+        x actually used)."""
+        if len(pts) >= 3:
+            xs = np.array([p[0] for p in pts], dtype=float)
+            ys = np.array([p[1] for p in pts], dtype=float)
+            slope, intercept = np.polyfit(xs, ys, 1)
+            residual = float(np.max(np.abs(slope * xs + intercept - ys)))
+            y = float(slope * target_x + intercept)
+            if residual <= MAX_RESIDUAL_PX and -0.1 * h <= y <= 1.1 * h:
+                return y, target_x
+        nearest = min(pts, key=lambda p: abs(p[0] - target_x))
+        return float(nearest[1]), nearest[0]
 
     if samples2:
         target_x = today_x if today_x is not None else max(s[0] for s in samples2)
-        upper_y, res_u = eval_line([(s[0], s[1]) for s in samples2], target_x)
-        lower_y, res_l = eval_line([(s[0], s[2]) for s in samples2], target_x)
-        if max(res_u, res_l) > MAX_RESIDUAL_PX:
-            _, upper_y, lower_y = min(samples2, key=lambda s: abs(s[0] - target_x))
+        upper_y, used_ux = read_line_at([(s[0], s[1]) for s in samples2], target_x)
+        lower_y, used_lx = read_line_at([(s[0], s[2]) for s in samples2], target_x)
         lower_price = a * lower_y + b
         upper_price = a * upper_y + b
         if lower_price > 0 and lower_price < upper_price:
             return {'kind': 'parallel', 'lower': round(lower_price, 2), 'upper': round(upper_price, 2),
-                    'single_price': None, 'x_frac': round(target_x / w, 3), 'reason': None}
-        return fail(f'boundaries at today\'s date are not a valid channel (lower {lower_price:.2f} vs upper {upper_price:.2f})')
+                    'single_price': None, 'x_frac': round((used_ux + used_lx) / 2 / w, 3), 'reason': None}
+        # Non-positive or inverted prices mean the blue marks we clustered are not
+        # a drawn channel at all (typically bottom-of-pane UI icons that happen to
+        # match channel blue) — same charts the old scan rejected as "no
+        # x-position found".
+        return fail(f'channel-blue marks do not resolve to a plausible channel at today\'s date '
+                    f'(lower {lower_price:.2f} vs upper {upper_price:.2f} — likely UI elements, not a drawn channel)')
 
     if samples1:
         target_x = today_x if today_x is not None else max(s[0] for s in samples1)
-        y, res = eval_line(samples1, target_x)
-        if res > MAX_RESIDUAL_PX:
-            _, y = min(samples1, key=lambda s: abs(s[0] - target_x))
+        y, used_x = read_line_at(samples1, target_x)
         price = a * y + b
         if price > 0:
             return {'kind': 'single', 'lower': None, 'upper': None,
-                    'single_price': round(price, 2), 'x_frac': round(target_x / w, 3), 'reason': None}
+                    'single_price': round(price, 2), 'x_frac': round(used_x / w, 3), 'reason': None}
 
     return fail('no x-position found with exactly 1 or 2 channel-blue line clusters')
 
