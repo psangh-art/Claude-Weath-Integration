@@ -20,6 +20,7 @@ import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from xlsx_sheet_copy import copy_sheet_into
 
 # Windows' default console codepage (cp1252) can't encode characters like
 # "→" used in console-only status prints below — reconfigure to UTF-8 so a
@@ -3488,30 +3489,6 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
 
     preserve_manual_sheets(wb, output_path)
     wb.save(output_path)
-
-
-def copy_sheet_into(src_ws, dst_ws):
-    """Cell-by-cell copy of values + styles + merges + dimensions between
-    workbooks (openpyxl has no cross-workbook copy_worksheet)."""
-    from copy import copy as _copy
-    for row in src_ws.iter_rows():
-        for cell in row:
-            if cell.__class__.__name__ == 'MergedCell':
-                continue
-            dst = dst_ws.cell(row=cell.row, column=cell.column, value=cell.value)
-            if cell.has_style:
-                dst.font = _copy(cell.font)
-                dst.fill = _copy(cell.fill)
-                dst.border = _copy(cell.border)
-                dst.alignment = _copy(cell.alignment)
-                dst.number_format = cell.number_format
-                dst.protection = _copy(cell.protection)
-    for m in src_ws.merged_cells.ranges:
-        dst_ws.merge_cells(str(m))
-    for col, dim in src_ws.column_dimensions.items():
-        dst_ws.column_dimensions[col].width = dim.width
-    for r, dim in src_ws.row_dimensions.items():
-        dst_ws.row_dimensions[r].height = dim.height
 
 
 def preserve_manual_sheets(new_wb, output_path):

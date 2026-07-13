@@ -114,6 +114,20 @@ function main() {
     return;
   }
 
+  // Sub-step of step 3 (deliberately NOT a numbered "=== Step N/M ===" marker —
+  // the Production Centre parses those): mirror spending_summary.xlsx's tabs
+  // into the master workbook so the Finance Google Sheet import carries them.
+  // A missing spending_summary.xlsx is a skip inside the script, not a failure.
+  console.log('\nIntegrating spending-summary tabs into Stocks_Buy_Strategy.xlsx...');
+  const integrateResult = spawnSync('python', [
+    path.join(__dirname, 'integrate_spending_tabs.py'),
+  ], { stdio: 'inherit' });
+  if (integrateResult.status !== 0) {
+    console.error('Spending-tab integration failed (master workbook itself is already updated and intact).');
+    process.exitCode = 1;
+    return;
+  }
+
   console.log('\nDone. tradingview_layouts.xlsx, Stocks_Buy_Strategy.xlsx, and Feedback_for_Claude_Code.md are all up to date in Downloads.');
 }
 

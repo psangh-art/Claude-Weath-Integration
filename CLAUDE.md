@@ -230,6 +230,22 @@ position-adjustment count, an applied/rejected/unmatched tally) — not just a
 checkmark. Only one run at a time (`POST /run` returns 409 if one is already in
 progress).
 
+## Spending tabs mirrored into the master workbook (2026-07-13)
+
+`scripts/integrate_spending_tabs.py` copies EVERY sheet of
+`spending_summary.xlsx` into `Stocks_Buy_Strategy.xlsx` as same-named tabs
+(user request 2026-07-13), so the master — and the Finance Google Sheet it's
+imported into — carries Wealth Summary / Targets / Payslip Summary /
+Retirement Income Plan alongside the investment tabs. Runs as a sub-step of
+run_full_pipeline's step 3 (deliberately not a numbered step marker — the
+Production Centre parses those). spending_summary.xlsx is the source of truth
+for these tabs (replaced in place each run, same tab position); the master's
+own six tabs are in a PROTECTED_MASTER_TABS set and can never be overwritten
+by a colliding sheet name. A missing spending_summary.xlsx skips cleanly (the
+spending build is optional). The cross-workbook sheet-copy logic lives in
+`scripts/xlsx_sheet_copy.py`, shared with spending_summary.py's
+preserve_manual_sheets() — one copy of that code, don't re-inline it.
+
 ## Google Sheets sync (added 2026-07-11): Finance spreadsheet refresh
 
 After a pipeline run, `Stocks_Buy_Strategy.xlsx` gets synced into the user's
