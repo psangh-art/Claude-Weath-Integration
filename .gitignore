@@ -21,3 +21,7 @@ scripts/pipeline_app/review_deck_summary.json
 
 # Per-run history archive (machine data, appended by history_store.py)
 data/history.db
+
+# Per-machine run state (data as-of dates, stage timings)
+data/ingestion_state.json
+data/stage_timings.json

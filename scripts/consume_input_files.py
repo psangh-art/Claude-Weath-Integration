@@ -29,6 +29,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime
 
 if sys.platform == "win32":
     try:
@@ -44,6 +45,41 @@ FAMILY_RES = [
     ('fidelity_summary', re.compile(r'^(Delete )?AccountSummary( \(\d+\))?\.csv$', re.IGNORECASE)),
     ('fidelity_transactions', re.compile(r'^(Delete )?(TransactionHistory|transactions).*\.csv$', re.IGNORECASE)),
 ]
+
+# Once a file is recycled its mtime is gone, so the data's as-of date is
+# recorded here first — preflight_check.py reads it back to show how old each
+# feed's data is (and to flag it red past the 6-week mark). Keys match
+# preflight_check.py's report keys, not the family names above.
+INGESTION_STATE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'ingestion_state.json')
+FAMILY_TO_STATE_KEY = {
+    'amex': 'amex',
+    'barclays': 'barclays',
+    'fidelity_summary': 'fidelity_account_summary',
+    'fidelity_transactions': 'fidelity_historic',
+}
+
+
+def record_ingestion(hits):
+    """Record each consumed family's newest file mtime as its data as-of date."""
+    state = {}
+    try:
+        with open(INGESTION_STATE, encoding='utf-8') as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        pass
+    for h in hits:
+        key = FAMILY_TO_STATE_KEY.get(h['family'])
+        if not key or 'mtime' not in h:
+            continue
+        as_of = datetime.fromtimestamp(h['mtime']).isoformat(timespec='seconds')
+        prev = state.get(key, {}).get('as_of')
+        if not prev or as_of > prev:
+            state[key] = {'as_of': as_of,
+                          'recorded_at': datetime.now().isoformat(timespec='seconds')}
+    os.makedirs(os.path.dirname(INGESTION_STATE), exist_ok=True)
+    with open(INGESTION_STATE, 'w', encoding='utf-8') as f:
+        json.dump(state, f, indent=2)
 
 FOF_SILENT = 0x0004
 FOF_NOCONFIRMATION = 0x0010
@@ -83,7 +119,8 @@ def find_consumables(downloads_dir):
             continue
         for family, rx in FAMILY_RES:
             if rx.match(name):
-                hits.append({'family': family, 'name': name, 'path': path})
+                hits.append({'family': family, 'name': name, 'path': path,
+                             'mtime': os.path.getmtime(path)})
                 break
     return hits
 
@@ -106,6 +143,7 @@ def main():
               'Re-run with --apply to remove them.')
         return
 
+    record_ingestion(hits)  # before recycling, while mtimes still exist
     rc = recycle([h['path'] for h in hits])
     remaining = [h['name'] for h in hits if os.path.exists(h['path'])]
     if rc == 0 and not remaining:

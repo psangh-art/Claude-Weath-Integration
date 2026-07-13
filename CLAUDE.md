@@ -136,23 +136,31 @@ gallery of the review deck), `/deck.pptx` (download / open in PowerPoint),
 the repo + Downloads only** — never serve an arbitrary path). `build_review_deck.py`
 emits the gallery (`pipeline_app/review_deck.html`, gitignored) + a summary JSON
 that feeds the output bay. Products linked: Finance Google Sheet, the review deck
-(view + download), and `spending_summary.xlsx`.
+(view + download), `spending_summary.xlsx`, and the architecture deck
+(`Financial_Data_Pipeline_Architecture.pptx`, `/architecture.pptx`, added
+2026-07-13). Per-stage durations of each run are kept in
+`data/stage_timings.json` (last 5 per stage, gitignored); the SSE `hello` /
+`run-started` events carry the medians as `timings` so the front end can show a
+%-complete bar weighted by how long each stage took in previous runs.
 
 Eight stages, in order:
 
-1. **Pre-flight file check** (`preflight_check.py`) — verifies every REQUIRED input
-   file actually exists in `~/Downloads` *before* anything else runs: Amex
-   (`activity.csv`), Barclays (`data.csv`), Fidelity `AccountSummary.csv`, a
-   Fidelity historic transaction export (classified by **content**, not filename —
-   `fidelity_file_classifier.py`, since Fidelity reuses filenames across export
-   types), and the master workbook `Stocks_Buy_Strategy.xlsx`. **If any of these
-   is missing, the whole run halts here** — every later stage is marked "Skipped"
-   rather than attempted — so a missing data file surfaces immediately with exactly
-   what's needed, not as a confusing failure deep into a multi-minute run. A
-   pending Fidelity export is checked for but never blocks — it's optional, same
-   as `spending_summary.py` already treats it.
+1. **Pre-flight file check** (`preflight_check.py`) — reports on the input files
+   in `~/Downloads` and their DATA AGE. **Rule change 2026-07-13 (user policy):
+   the bank/broker exports — Amex (`activity.csv`), Barclays (`data.csv`),
+   Fidelity `AccountSummary.csv` and the Fidelity historic export (classified by
+   content, `fidelity_file_classifier.py`) — are OPTIONAL.** The pipeline runs
+   without them (stage 2 is skipped, TradingView stages still run); only a
+   missing master workbook `Stocks_Buy_Strategy.xlsx` halts the run. Each input
+   reports an as-of date — file mtime while it sits in Downloads, or the
+   ingestion date recorded in `data/ingestion_state.json` (written by
+   `consume_input_files.py` just before recycling, gitignored) once consumed —
+   and is flagged **stale (red in the app) past 42 days / 6 weeks**, meaning a
+   fresh export is needed. A pending Fidelity export never blocks and is never
+   flagged.
 2. **Fidelity spending-summary build** — runs `spending_summary.py` against the
-   files pre-flight found, writing `spending_summary.xlsx`.
+   files pre-flight found, writing `spending_summary.xlsx`. Skipped (not failed)
+   when the exports aren't present; a failure here no longer blocks stages 3-8.
 3–8. **TradingView chart capture → OCR → master-sheet update → PowerPoint review
    deck → verification → Downloads cleanup** — these are `run_full_pipeline.js`'s
    six steps (the deck build was added 2026-07-12 as step 4/6, in the always-run
@@ -162,7 +170,13 @@ Eight stages, in order:
    to report them as separate stages. **If you rename or reorder the step log
    lines in `run_full_pipeline.js`, update the `STAGES` array + `stageForStepName()`
    regexes in `pipeline_app_server.js` to match**, or the app will silently stop
-   attributing log lines to the right stage.
+   attributing log lines to the right stage. The per-step **failure strings**
+   ("Chart export failed…", "Downloads cleanup could not run…", etc.) are parsed
+   too (`FAILURE_LINE` in the server, added 2026-07-13): run_full_pipeline's
+   finally block keeps running after an early failure, so the child's exit code
+   alone lands on the *last* stage — a real chart-capture failure was once shown
+   as a stage-8 cleanup failure this way. Failure is now pinned on the stage that
+   printed its failure line; renaming those strings needs the same regex update.
 
 Each stage reports success/failure with the tail of what it actually did (e.g. a
 position-adjustment count, an applied/rejected/unmatched tally) — not just a
