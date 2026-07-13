@@ -67,6 +67,25 @@ button#run svg{width:16px;height:16px}
 .panel-head .label{flex-shrink:0}
 .panel-head .hint{margin-left:auto;font-size:12px;color:var(--faint)}
 
+/* ── overall progress (prominent, run-scoped) ──────────────── */
+.progress-panel{display:flex;flex-direction:column;gap:11px;
+  border-color:color-mix(in oklab,var(--accent) 30%,var(--line));
+  background:linear-gradient(180deg,color-mix(in oklab,var(--accent) 6%,var(--panel)),var(--panel))}
+.progress-panel[hidden]{display:none}
+.progress-top{display:flex;align-items:baseline;gap:12px}
+.progress-top .label{flex-shrink:0}
+.progress-pct{margin-left:auto;font-family:var(--mono);font-size:26px;font-weight:750;color:var(--accent);
+  font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.progress-track{width:100%;height:12px;border-radius:7px;background:var(--panel-2);
+  border:1px solid var(--line);overflow:hidden}
+.progress-track>i{display:block;height:100%;width:0;border-radius:7px;
+  background:linear-gradient(90deg,var(--accent),#c98a28);transition:width .6s cubic-bezier(.4,0,.2,1);
+  background-size:220% 100%}
+.progress-panel[data-live="1"] .progress-track>i{animation:shimmer 2.2s linear infinite}
+.progress-sub{margin:0;font-size:12px;color:var(--muted)}
+.progress-panel[data-est="1"] .progress-pct{color:var(--muted)}
+@keyframes shimmer{0%{background-position:0% 0}100%{background-position:220% 0}}
+
 /* ── feedstock ──────────────────────────────────────────── */
 .files{display:grid;grid-template-columns:repeat(auto-fit,minmax(228px,1fr));gap:14px;align-items:start}
 .fgroup{background:color-mix(in oklab,var(--panel-2) 55%,transparent);border:1px solid var(--line);
@@ -76,16 +95,26 @@ button#run svg{width:16px;height:16px}
 .fgroup-head::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0}
 .fgroup-items{display:flex;flex-direction:column;gap:8px}
 .file{display:flex;align-items:center;gap:10px;background:var(--panel-2);border:1px solid var(--line);
-  border-radius:10px;padding:9px 13px 9px 11px;min-width:0;width:100%}
-.file .fled{width:9px;height:9px;border-radius:50%;background:var(--faint);flex-shrink:0}
+  border-radius:10px;padding:9px 13px 9px 11px;min-width:0;width:100%;transition:border-color .2s,background .2s}
+.file .fled{width:9px;height:9px;border-radius:50%;background:var(--faint);flex-shrink:0;align-self:flex-start;margin-top:3px}
 .file.found .fled{background:var(--success);box-shadow:0 0 0 3px color-mix(in oklab,var(--success) 22%,transparent)}
 .file.missing{border-color:color-mix(in oklab,var(--failed) 45%,var(--line))}
 .file.missing .fled{background:var(--failed);box-shadow:0 0 0 3px color-mix(in oklab,var(--failed) 22%,transparent)}
+.file.stale{border-color:color-mix(in oklab,var(--failed) 55%,var(--line));
+  background:color-mix(in oklab,var(--failed) 8%,var(--panel-2))}
+.file.stale .fled{background:var(--failed);box-shadow:0 0 0 3px color-mix(in oklab,var(--failed) 22%,transparent)}
+.file.consumed .fled{background:var(--accent);opacity:.7}
+.file.none .fled{background:var(--faint)}
 .file .fmeta{min-width:0;flex:1}
 .file .fname{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .file .fstate{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
 .file.missing .fstate{color:var(--failed)}
+.file.stale .fstate{color:var(--failed);font-weight:700}
+.file.none .fstate{color:var(--faint)}
 .file .fpath{font-size:10.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;font-family:var(--mono)}
+.file .fage{font-size:11px;color:var(--muted);margin-top:3px}
+.file.stale .fage{color:var(--failed);font-weight:600}
+.file .fhint{font-size:10.5px;color:var(--failed);margin-top:3px;font-weight:700}
 .file .note{font-size:11px;color:var(--faint);margin-top:2px}
 .feed-empty{color:var(--muted);font-size:13px}
 
@@ -191,8 +220,17 @@ button#run svg{width:16px;height:16px}
 </header>
 
 <main class="wrap">
+  <section class="panel progress-panel" id="progress-panel" hidden>
+    <div class="progress-top">
+      <span class="label">Overall progress</span>
+      <span class="progress-pct" id="progress-pct">0%</span>
+    </div>
+    <div class="progress-track"><i id="progress-fill"></i></div>
+    <p class="progress-sub" id="progress-sub"></p>
+  </section>
+
   <section class="panel">
-    <div class="panel-head"><span class="label">Input feedstock</span><span class="hint">required files in Downloads</span></div>
+    <div class="panel-head"><span class="label">Input feedstock</span><span class="hint">bank/broker exports are optional &middot; master workbook required</span></div>
     <div class="files" id="files"><span class="feed-empty">Checking Downloads&hellip;</span></div>
   </section>
 
@@ -226,6 +264,7 @@ const ICONS = {
   6:'<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M12 16v4M8 20h8"/><path d="m8 11 2.5-2.5L13 11l3-3"/>',
   7:'<path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/><path d="m9 12 2 2 4-4"/>',
   8:'<path d="M14 3l-2.5 6.5M20.5 8.5 14 6"/><path d="M3.5 20.5 9 13l4.5 2.2-3.4 6.1z"/><path d="M9 13l4.5 2.2"/>',
+  9:'<rect x="3" y="3" width="7" height="7" rx="1.4"/><rect x="14" y="3" width="7" height="7" rx="1.4"/><rect x="14" y="14" width="7" height="7" rx="1.4"/><rect x="3" y="14" width="7" height="7" rx="1.4"/><path d="M10 6.5h4M17.5 10v4M14 17.5h-4M6.5 14v-4"/>',
 };
 const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-11"/></svg>';
 function svg(inner){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'+inner+'</svg>';}
@@ -284,10 +323,14 @@ function renderDetail(){
 }
 
 /* ── feedstock ─────────────────────────────────────────── */
+// Bank/broker exports are OPTIONAL (user policy 2026-07-13) — the pipeline runs
+// without them. Each box shows how old its data is (as_of/age_days from
+// preflight_check.py's `files` map) rather than a bare found/missing light.
+// Only the master workbook missing is genuinely blocking.
 function base(p){return String(p).split(/[\\/]/).pop();}
 function prettifyKey(k){return k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());}
-// Maps preflight_check.py's `found`/`missing` keys onto an institution group + a
-// human role label. Unknown keys (future preflight additions) fall back to an
+// Maps preflight_check.py's `files` keys onto an institution group + a human
+// role label. Unknown keys (future preflight additions) fall back to an
 // "Other" group with a prettified key name, so they still render instead of vanishing.
 const FILE_META={
   fidelity_account_summary:{group:'Fidelity',role:'Account Summary',order:1},
@@ -299,50 +342,80 @@ const FILE_META={
 };
 const GROUP_ORDER=['Fidelity','Barclays','Amex','Master workbook'];
 function metaFor(key){return FILE_META[key]||{group:'Other',role:prettifyKey(key),order:99};}
+const STATE_BADGE={missing:'Missing',stale:'Stale',found:'Loaded',consumed:'Consumed',none:'Not supplied'};
+
+// Only master_workbook missing is truly blocking; stale is a separate, non-blocking
+// red flag (data present or previously seen, just past the 6-week freshness window).
+function classifyFile(entry,isBlocking){
+  if(isBlocking&&!entry.present)return 'missing';
+  if(entry.stale)return 'stale';
+  if(entry.present)return 'found';
+  if(entry.as_of)return 'consumed';
+  return 'none';
+}
+function friendlyDate(iso){
+  if(!iso)return null;
+  const d=new Date(iso);
+  if(isNaN(d))return null;
+  return d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
+}
+function ageLabel(n){
+  if(n==null)return null;
+  if(n<=0)return 'today';
+  if(n===1)return '1 day ago';
+  return n+' days ago';
+}
+function dataAgeLine(entry,state){
+  const fd=friendlyDate(entry.as_of);
+  if(!fd)return 'No data yet';
+  const age=ageLabel(entry.age_days);
+  const prefix=state==='consumed'?'Consumed — data as of ':'Data as of ';
+  return prefix+fd+(age?` · ${age}`:'');
+}
 
 async function loadFiles(){
   const el=document.getElementById('files');
   try{
     const r=await fetch('/files');const rep=await r.json();
-    el.innerHTML='';
-    const found=Object.entries(rep.found||{}).filter(([k,v])=>typeof v==='string'&&/[\\/]/.test(v));
-    const entries=[
-      ...found.map(([k,v])=>({key:k,filename:base(v),state:'found'})),
-      ...(rep.missing||[]).map(m=>({key:m.key,filename:base(m.expected),state:'missing',why:m.why})),
-    ];
-
-    const groups={};
-    const ensureGroup=name=>groups[name]||(groups[name]={name,items:[]});
-    entries.forEach(e=>ensureGroup(metaFor(e.key).group).items.push(e));
-    if(rep.found&&rep.found.fidelity_pending_note){
-      ensureGroup('Fidelity').note=rep.found.fidelity_pending_note;
-    }
-
-    const names=[...GROUP_ORDER.filter(n=>groups[n]),...Object.keys(groups).filter(n=>!GROUP_ORDER.includes(n))];
-    names.forEach(name=>el.appendChild(groupEl(groups[name])));
-
-    if(!el.children.length)el.innerHTML='<span class="feed-empty">No file report available.</span>';
+    renderFiles(rep,el);
   }catch(e){el.innerHTML='<span class="feed-empty">Could not read file status.</span>';}
 }
-function groupEl(group){
+function renderFiles(rep,el){
+  el.innerHTML='';
+  const filesMap=rep.files||{};
+  const missingKeys=new Set((rep.missing||[]).map(m=>m.key));
+  const groups={};
+  const ensureGroup=name=>groups[name]||(groups[name]={name,items:[]});
+  Object.entries(filesMap).forEach(([key,entry])=>{
+    const state=classifyFile(entry,missingKeys.has(key));
+    ensureGroup(metaFor(key).group).items.push({key,entry,state});
+  });
+  const names=[...GROUP_ORDER.filter(n=>groups[n]),...Object.keys(groups).filter(n=>!GROUP_ORDER.includes(n))];
+  names.forEach(name=>el.appendChild(groupEl(groups[name],rep.stale_days||42)));
+  if(!el.children.length)el.innerHTML='<span class="feed-empty">No file report available.</span>';
+}
+function groupEl(group,staleDays){
   const wrap=document.createElement('div');wrap.className='fgroup';
   wrap.innerHTML=`<div class="fgroup-head">${esc(group.name)}</div>`;
   const items=document.createElement('div');items.className='fgroup-items';
   group.items.sort((a,b)=>metaFor(a.key).order-metaFor(b.key).order)
-    .forEach(e=>items.appendChild(fileChip(metaFor(e.key).role,e.filename,e.state,e.why)));
-  if(group.note){
-    const n=document.createElement('div');n.className='file';n.title=group.note;
-    n.innerHTML=`<span class="fled" style="background:var(--accent)"></span><div class="fmeta"><div class="fname">Transactions (pending)</div><div class="note">${esc(group.note)}</div></div>`;
-    items.appendChild(n);
-  }
+    .forEach(it=>items.appendChild(fileChip(metaFor(it.key).role,it.entry,it.state,staleDays)));
   wrap.appendChild(items);
   return wrap;
 }
-function fileChip(role,filename,state,why){
-  const found=state==='found';
-  const d=document.createElement('div');d.className='file '+(found?'found':'missing');if(why)d.title=why;
-  d.innerHTML=`<span class="fled"></span><div class="fmeta"><div class="fname">${esc(role)}</div>
-    <div class="fstate">${found?'Loaded':'Missing'}</div><div class="fpath">${esc(filename)}</div></div>`;
+function fileChip(role,entry,state,staleDays){
+  const d=document.createElement('div');d.className='file '+state;
+  if(entry.note)d.title=entry.note;
+  const pathLine=entry.path?`<div class="fpath">${esc(base(entry.path))}</div>`:'';
+  const ageLine=dataAgeLine(entry,state);
+  const staleHint=state==='stale'?`<div class="fhint">Fresh export needed — data is over ${staleDays} days old.</div>`:'';
+  const noteLine=entry.note?`<div class="note">${esc(entry.note)}</div>`:'';
+  d.innerHTML=`<span class="fled"></span><div class="fmeta">
+    <div class="fname">${esc(role)}</div>
+    <div class="fstate">${STATE_BADGE[state]||state}</div>
+    ${pathLine}
+    <div class="fage">${esc(ageLine)}</div>
+    ${staleHint}${noteLine}</div>`;
   return d;
 }
 
@@ -364,6 +437,11 @@ async function loadProducts(){
     el.appendChild(product({icon:2,title:'Fidelity spending summary',ready:!!sp.exists,
       desc:sp.exists?'Positions &amp; spending workbook from the Fidelity stage.':'Built by the Fidelity stage. Not present yet.',
       acts:sp.exists?[{label:'Download .xlsx',href:sp.url}]:[]}));
+    // Architecture deck
+    const arch=p.architecture||{};
+    el.appendChild(product({icon:9,title:'Architecture deck',ready:!!arch.exists,
+      desc:arch.exists?'Financial_Data_Pipeline_Architecture.pptx — how data flows end to end.':'Financial_Data_Pipeline_Architecture.pptx — not generated yet.',
+      acts:arch.exists?[{label:'Download .pptx',href:arch.pptxUrl,primary:true}]:[]}));
   }catch(e){/* leave as-is */}
 }
 function product({icon,title,ready,desc,stats,acts}){
@@ -380,26 +458,92 @@ function product({icon,title,ready,desc,stats,acts}){
 function startTimer(){t0=Date.now();elapsedEl.textContent='00:00';timer=setInterval(()=>elapsedEl.textContent=fmtElapsed(Date.now()-t0),1000);}
 function stopTimer(){clearInterval(timer);timer=null;}
 
+/* ── overall % progress, weighted by median stage duration from past runs ── */
+const FALLBACK_STAGE_SECONDS=30;
+let expectedDurations={},hasTimingHistory=false,runningSince={},progressTicker=null;
+const progPanel=document.getElementById('progress-panel'),progPct=document.getElementById('progress-pct'),
+  progFillBar=document.getElementById('progress-fill'),progSub=document.getElementById('progress-sub');
+function setExpectedDurations(timings){
+  expectedDurations=timings||{};
+  hasTimingHistory=Object.keys(expectedDurations).length>0;
+}
+function expectedFor(id){
+  const v=expectedDurations[id];
+  return (typeof v==='number'&&v>0)?v:FALLBACK_STAGE_SECONDS;
+}
+// Denominator: expected duration of every stage still part of this run (a stage
+// that arrives 'skipped' drops out entirely). Numerator: expected duration of
+// every stage that has finished (success/failed) + min(elapsed,expected) for
+// whichever stage is currently running — capped so it never ticks past its
+// own weight, so the bar never goes backwards.
+function computeProgress(){
+  let denom=0,numer=0;
+  order.forEach(id=>{
+    const s=stages[id];if(!s||s.status==='skipped')return;
+    const exp=expectedFor(id);
+    denom+=exp;
+    if(s.status==='success'||s.status==='failed'){numer+=exp;}
+    else if(s.status==='running'){
+      const startedAt=runningSince[id]||Date.now();
+      numer+=Math.min((Date.now()-startedAt)/1000,exp);
+    }
+  });
+  return {pct:denom?Math.min(100,numer/denom*100):0,denom};
+}
+function renderProgressBar(){
+  const {pct,denom}=computeProgress();
+  progFillBar.style.width=(denom?pct:0)+'%';
+  progPct.textContent=Math.round(pct)+'%';
+  progPanel.dataset.est=hasTimingHistory?'0':'1';
+  progSub.textContent=hasTimingHistory
+    ?'Weighted by typical duration for each stage from previous runs.'
+    :'Estimating — no run-timing history yet, using flat per-stage weights until this run finishes.';
+}
+function startProgressTicker(){
+  clearInterval(progressTicker);
+  progressTicker=setInterval(renderProgressBar,1000);
+}
+function stopProgressTicker(){clearInterval(progressTicker);progressTicker=null;}
+
 const es=new EventSource('/events');
 es.onmessage=ev=>{
   const d=JSON.parse(ev.data);
   if(d.type==='hello'){
     initStages(d.stages);runBtn.disabled=d.running;
     setPill(d.running?'running':'idle',d.running?'Running':'Idle');
-    if(d.running){runText.textContent='Running…';}
+    setExpectedDurations(d.timings);
+    if(d.running){
+      runText.textContent='Running…';
+      progPanel.hidden=false;progPanel.dataset.live='1';
+      renderProgressBar();startProgressTicker();
+    }
   }else if(d.type==='run-started'){
     banner.className='';banner.classList.remove('show');
     runBtn.disabled=true;runText.textContent='Running…';setPill('running','Running');
     order.forEach(id=>{stages[id].status='pending';stages[id].message='';stages[id].log=[];applyStage(id);});
     pinned=false;startTimer();
+    setExpectedDurations(d.timings);runningSince={};
+    progPanel.hidden=false;progPanel.dataset.live='1';
+    progFillBar.style.width='0%';progPct.textContent='0%';
+    renderProgressBar();startProgressTicker();
   }else if(d.type==='stage'){
     const s=stages[d.id];if(!s)return;s.status=d.status;if(d.message)s.message=d.message;applyStage(d.id);
+    if(d.status==='running')runningSince[d.id]=Date.now();else delete runningSince[d.id];
+    renderProgressBar();
+    // A skipped stage (e.g. stage 2 when no bank/broker exports are present) is
+    // a normal, non-failure outcome — it never sets the pill/banner to failed;
+    // only the final run-complete 'ok' flag from the server does that.
     if(!pinned&&d.status==='running'){selectedId=d.id;renderDetail();highlight();}
   }else if(d.type==='log'){
     const s=stages[d.id];if(!s)return;s.log.push(d.line);if(selectedId===d.id)renderDetail();
+  }else if(d.type==='files'){
+    renderFiles(d.report,document.getElementById('files'));
   }else if(d.type==='run-complete'){
-    stopTimer();runBtn.disabled=false;runText.textContent='Run pipeline';
+    stopTimer();stopProgressTicker();runBtn.disabled=false;runText.textContent='Run pipeline';
     setPill(d.ok?'done':'failed',d.ok?'Complete':'Stopped');
+    progPanel.dataset.live='0';
+    if(d.ok){progFillBar.style.width='100%';progPct.textContent='100%';progSub.textContent='Pipeline completed.';}
+    else{renderProgressBar();progSub.textContent='Stopped — frozen at the point of failure. See the failed stage above.';}
     banner.className='show '+(d.ok?'ok':'bad');
     banner.textContent=d.ok?'Pipeline completed. Products in the output bay are refreshed below.'
       :'Pipeline stopped — open the failed or skipped stage above to see what needs fixing before re-running.';

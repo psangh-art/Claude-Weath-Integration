@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Local web app for the unified pipeline: one Execute button, live per-stage
-// status, and a hard stop (not a warning) if a required input file — e.g. a
-// Fidelity export — is missing, so the user can supply it and re-run rather than
-// the process failing confusingly deep into a multi-minute run.
+// status, and a per-input data-age report. The bank/broker exports (Fidelity,
+// Barclays, Amex) are OPTIONAL — without them the spending-summary stage is
+// skipped and the TradingView stages still run; each feedstock box shows how
+// old its data is and turns red past 6 weeks (see preflight_check.py). Only a
+// missing master workbook halts the run.
 //
 // Reuses run_full_pipeline.js as-is for the chart-capture/OCR/master-update/
 // review-deck/verify/cleanup stages (spawned as a child, its own "=== Step N/M:
@@ -27,6 +29,8 @@ const GALLERY_HTML = path.join(APP_DIR, 'review_deck.html');
 const DECK_SUMMARY = path.join(APP_DIR, 'review_deck_summary.json');
 const DECK_PPTX = downloadsFile('reviewDeckPptx');
 const SPENDING_XLSX = downloadsFile('spendingSummaryXlsx');
+const ARCH_PPTX = downloadsFile('architecturePptx');
+const TIMINGS_PATH = path.join(REPO_ROOT, 'data', 'stage_timings.json');
 // The Finance Google Sheet the pipeline syncs into (see CLAUDE.md).
 const FINANCE_SHEET_URL = financeSheetUrl();
 
@@ -85,7 +89,46 @@ function broadcast(event) {
   for (const res of sseClients) res.write(payload);
 }
 
+// ── Stage timings: per-stage durations from previous runs feed the front
+// end's %-complete bar (each stage weighted by how long it took last time).
+// Kept as {stageId: [last few seconds]} in data/stage_timings.json.
+function loadTimings() {
+  try { return JSON.parse(fs.readFileSync(TIMINGS_PATH, 'utf-8')); } catch { return {}; }
+}
+
+function expectedDurations() {
+  const timings = loadTimings();
+  const expected = {};
+  for (const s of STAGES) {
+    const samples = (timings[s.id] || []).slice().sort((a, b) => a - b);
+    if (samples.length) expected[s.id] = samples[Math.floor(samples.length / 2)]; // median
+  }
+  return expected;
+}
+
+let stageStartedAt = {};   // id -> ms, while a stage is running
+let runDurations = {};     // id -> seconds, completed stages of the current run
+
+function recordRunTimings() {
+  const timings = loadTimings();
+  for (const [id, secs] of Object.entries(runDurations)) {
+    timings[id] = [...(timings[id] || []), secs].slice(-5);
+  }
+  try {
+    fs.mkdirSync(path.dirname(TIMINGS_PATH), { recursive: true });
+    fs.writeFileSync(TIMINGS_PATH, JSON.stringify(timings, null, 2));
+  } catch (err) {
+    console.error(`Could not save stage timings: ${err.message}`);
+  }
+}
+
 function stageEvent(id, status, message) {
+  if (status === 'running') {
+    stageStartedAt[id] = Date.now();
+  } else if ((status === 'success' || status === 'failed') && stageStartedAt[id]) {
+    runDurations[id] = (Date.now() - stageStartedAt[id]) / 1000;
+    delete stageStartedAt[id];
+  }
   broadcast({ type: 'stage', id, name: STAGES.find((s) => s.id === id).name, status, message: message || '' });
 }
 
@@ -106,12 +149,22 @@ function runPreflight() {
   }
   if (!report.ok) {
     const lines = report.missing.map((m) => `Missing: ${m.expected}\n  (${m.why})`).join('\n');
-    stageEvent(1, 'failed', `${report.missing.length} required file(s) missing:\n${lines}\n\nSupply the file(s) in Downloads and click Execute again.`);
+    stageEvent(1, 'failed', `${lines}\n\nSupply the file(s) in Downloads and click Execute again.`);
     return null;
   }
-  const note = report.found.fidelity_pending_note ? ` (${report.found.fidelity_pending_note})` : '';
-  stageEvent(1, 'success', `All required files found.${note}`);
-  return report.found;
+  broadcast({ type: 'files', report });
+  const notes = [];
+  const absent = Object.entries(report.files || {})
+    .filter(([k, f]) => !f.present && k !== 'master_workbook' && k !== 'fidelity_pending');
+  if (absent.length) {
+    notes.push(`${absent.length} bank/broker export(s) not present — spending-summary stage will be skipped.`);
+  }
+  const stale = Object.values(report.files || {}).filter((f) => f.stale);
+  if (stale.length) {
+    notes.push(`Data over ${report.stale_days} days old (fresh export needed): ${stale.map((f) => f.label).join(', ')}.`);
+  }
+  stageEvent(1, 'success', notes.length ? notes.join('\n') : 'All input files present and fresh.');
+  return report;
 }
 
 function runFidelityBuild(found) {
@@ -145,6 +198,7 @@ function runFidelityBuild(found) {
 function runTradingViewPipeline() {
   return new Promise((resolve) => {
     let currentStage = null;
+    const failedStages = new Set();
     const stageForStepName = (text) => {
       if (/capturing charts/i.test(text)) return 3;
       if (/OCR channel/i.test(text)) return 4;
@@ -154,6 +208,11 @@ function runTradingViewPipeline() {
       if (/flagging redundant/i.test(text)) return 8;
       return null;
     };
+    // run_full_pipeline.js prints one of these when a step fails, then carries on
+    // with its finally-block steps — so the exit code alone can't say WHICH stage
+    // failed. Attribute the failure to the stage that printed its failure line.
+    // (Coupled to run_full_pipeline.js's error strings, like the step markers.)
+    const FAILURE_LINE = /^(Chart export failed|Channel detection could not run|Master-sheet update failed|Review-deck build could not run|Verification report could not run|Downloads cleanup could not run)/;
 
     const child = spawn('node', [path.join(__dirname, 'run_full_pipeline.js')], { cwd: path.join(__dirname, '..') });
     let buf = '';
@@ -165,10 +224,14 @@ function runTradingViewPipeline() {
         buf = buf.slice(idx + 1);
         const marker = line.match(/=== Step \d+\/\d+: (.+?) ===/);
         if (marker) {
-          if (currentStage) stageEvent(currentStage, 'success');
+          if (currentStage && !failedStages.has(currentStage)) stageEvent(currentStage, 'success');
           currentStage = stageForStepName(marker[1]);
           if (currentStage) stageEvent(currentStage, 'running');
         } else if (line.trim() && currentStage) {
+          if (FAILURE_LINE.test(line.trim()) && !failedStages.has(currentStage)) {
+            failedStages.add(currentStage);
+            stageEvent(currentStage, 'failed', line.trim());
+          }
           logEvent(currentStage, line);
         }
       }
@@ -177,10 +240,15 @@ function runTradingViewPipeline() {
     child.stderr.on('data', onData);
 
     child.on('close', (code) => {
-      if (currentStage) stageEvent(currentStage, code === 0 ? 'success' : 'failed', code === 0 ? '' : `Exited with code ${code} — see log above.`);
+      if (currentStage && !failedStages.has(currentStage)) {
+        // A non-zero exit whose failure was already pinned on an earlier stage
+        // (e.g. chart capture) must not paint the last-running stage red too.
+        const unattributed = code !== 0 && failedStages.size === 0;
+        stageEvent(currentStage, unattributed ? 'failed' : 'success', unattributed ? `Exited with code ${code} — see log above.` : '');
+      }
       // Any stage that never got a marker (e.g. chart export failed before
       // reaching later steps) is left as 'pending' by the caller and shown skipped.
-      resolve(code === 0);
+      resolve(code === 0 && failedStages.size === 0);
     });
   });
 }
@@ -188,29 +256,34 @@ function runTradingViewPipeline() {
 async function executeRun() {
   if (running) return;
   running = true;
-  broadcast({ type: 'run-started' });
+  stageStartedAt = {};
+  runDurations = {};
+  broadcast({ type: 'run-started', timings: expectedDurations() });
 
   for (const s of STAGES) stageEvent(s.id, 'pending');
 
-  const found = runPreflight();
-  if (!found) {
+  const report = runPreflight();
+  if (!report) {
     for (const s of STAGES) if (s.id > 1) stageEvent(s.id, 'skipped', 'Skipped — pre-flight check failed.');
     broadcast({ type: 'run-complete', ok: false });
     running = false;
     return;
   }
 
-  const fidelityOk = runFidelityBuild(found);
-  if (!fidelityOk) {
-    for (const s of STAGES) if (s.id > 2) stageEvent(s.id, 'skipped', 'Skipped — Fidelity build failed.');
-    broadcast({ type: 'run-complete', ok: false });
-    running = false;
-    return;
+  // The bank/broker exports are optional (user policy 2026-07-13): without
+  // them the spending build is skipped and the TradingView stages still run.
+  // A failed spending build likewise doesn't block the chart pipeline.
+  let spendingOk = true;
+  if (!report.spending_ready) {
+    stageEvent(2, 'skipped', 'Skipped — bank/broker exports not in Downloads. Data ages shown in the feedstock panel; supply fresh files to rebuild spending_summary.xlsx.');
+  } else {
+    spendingOk = runFidelityBuild(report.found);
   }
 
   const tvOk = await runTradingViewPipeline();
-  if (tvOk) consumeInputFiles();
-  broadcast({ type: 'run-complete', ok: tvOk });
+  if (tvOk && spendingOk) consumeInputFiles();
+  recordRunTimings();
+  broadcast({ type: 'run-complete', ok: tvOk && spendingOk });
   running = false;
 }
 
@@ -240,7 +313,7 @@ const server = http.createServer((req, res) => {
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
     });
-    res.write(`data: ${JSON.stringify({ type: 'hello', stages: STAGES, running })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'hello', stages: STAGES, running, timings: expectedDurations() })}\n\n`);
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
     return;
@@ -277,12 +350,14 @@ const server = http.createServer((req, res) => {
       googleSheet: { url: FINANCE_SHEET_URL },
       deck: { exists: fs.existsSync(GALLERY_HTML), viewUrl: '/deck', pptxUrl: '/deck.pptx', summary: deckSummary },
       spending: { exists: fs.existsSync(SPENDING_XLSX), url: '/download/spending' },
+      architecture: { exists: fs.existsSync(ARCH_PPTX), pptxUrl: '/architecture.pptx' },
     }));
     return;
   }
 
   if (req.method === 'GET' && req.url === '/deck') { serveFile(res, GALLERY_HTML); return; }
   if (req.method === 'GET' && req.url === '/deck.pptx') { serveFile(res, DECK_PPTX, { download: true }); return; }
+  if (req.method === 'GET' && req.url === '/architecture.pptx') { serveFile(res, ARCH_PPTX, { download: true }); return; }
   if (req.method === 'GET' && req.url === '/download/spending') { serveFile(res, SPENDING_XLSX, { download: true }); return; }
 
   if (req.method === 'GET' && req.url.startsWith('/asset?')) {

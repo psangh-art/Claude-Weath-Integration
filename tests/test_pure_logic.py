@@ -173,6 +173,37 @@ class TestBuildBelowAlertRows:
         assert [r['ticker'] for r in rows] == ['B', 'A']
 
 
+# ── preflight file ageing (optional inputs, 6-week staleness) ───────────────
+
+from datetime import datetime, timedelta  # noqa: E402
+
+import preflight_check as pf  # noqa: E402
+
+
+class TestFileEntry:
+    def test_present_file_uses_mtime(self, tmp_path):
+        p = tmp_path / 'activity.csv'
+        p.write_text('x', encoding='utf-8')
+        e = pf.file_entry('amex', 'Amex', str(p), {})
+        assert e['present'] and e['age_days'] == 0 and not e['stale']
+
+    def test_absent_file_falls_back_to_ingestion_state(self):
+        as_of = (datetime.now() - timedelta(days=10)).isoformat(timespec='seconds')
+        e = pf.file_entry('amex', 'Amex', None, {'amex': {'as_of': as_of}})
+        assert not e['present']
+        assert e['age_days'] == 10
+        assert not e['stale']
+
+    def test_older_than_six_weeks_is_stale(self):
+        as_of = (datetime.now() - timedelta(days=pf.STALE_DAYS + 1)).isoformat(timespec='seconds')
+        e = pf.file_entry('amex', 'Amex', None, {'amex': {'as_of': as_of}})
+        assert e['stale']
+
+    def test_never_seen_is_stale(self):
+        e = pf.file_entry('amex', 'Amex', None, {})
+        assert e['as_of'] is None and e['age_days'] is None and e['stale']
+
+
 # ── fidelity_file_classifier ────────────────────────────────────────────────
 
 from fidelity_file_classifier import classify  # noqa: E402

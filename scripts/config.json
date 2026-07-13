@@ -4,6 +4,7 @@
   "layoutsWorkbook": "tradingview_layouts.xlsx",
   "feedbackMd": "Feedback_for_Claude_Code.md",
   "reviewDeckPptx": "Investment_Review_Deck.pptx",
+  "architecturePptx": "Financial_Data_Pipeline_Architecture.pptx",
   "spendingSummaryXlsx": "spending_summary.xlsx",
   "pythonCandidates": [
     "C:\\Users\\Paul\\AppData\\Local\\Python\\bin\\python.exe",
