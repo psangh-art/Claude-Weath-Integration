@@ -35,6 +35,19 @@ class TestNormalize:
         assert normalize('USOIL')['master_ticker'] == 'OIL'
         assert normalize('NASDAQ')['master_ticker'] == 'NDX'
 
+    def test_brent_maps_to_ukoil_master_row(self):
+        # The TV chart is 'Crude Oil Brent Cash' (BRENT); the master row is UKOIL.
+        n = normalize('BRENT')
+        assert n['kind'] == 'commodity'
+        assert n['master_ticker'] == 'UKOIL'
+        assert n['google_finance_formula'] is None
+
+    def test_futures_suffix_stripped(self):
+        # TradingView continuous futures carry a '1!' suffix (real case: COPPER1!).
+        n = normalize('COPPER1!')
+        assert n['kind'] == 'commodity'
+        assert n['master_ticker'] == 'COPP'
+
     def test_macro_symbols_never_match_equity_rows(self):
         for t in ('GBPUSD', 'US10Y', 'JP10Y'):
             n = normalize(t)

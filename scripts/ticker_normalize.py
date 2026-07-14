@@ -12,11 +12,15 @@ COMMODITY_MASTER_TO_TV = {
     'SLVR': 'SILVER',
     'COPP': 'COPPER',
     'OIL': 'USOIL',
+    'UKOIL': 'BRENT',  # master row 'Brent Oil' is UKOIL; the TV chart is 'Crude Oil Brent Cash'
     'PLAT': 'PLATINUM',
     'PALL': 'PALLADIUM',
     'NDX': 'NASDAQ',
 }
 TV_TO_COMMODITY_MASTER = {v: k for k, v in COMMODITY_MASTER_TO_TV.items()}
+
+# TradingView continuous-futures symbols carry a '1!'/'2!' suffix (e.g. COPPER1!)
+_FUTURES_SUFFIX_RE = re.compile(r'\d+!$')
 
 # GOOGLEFINANCE can no longer price commodities AT ALL — verified live 2026-07-11:
 # TVC:GOLD returns #N/A, and so do CURRENCY:XAUUSD/XAGUSD/XPTUSD/XPDUSD (Google
@@ -47,7 +51,7 @@ def normalize(ticker, symbol=None):
     if not ticker:
         return None
     t = ticker.strip()
-    upper = t.upper()
+    upper = _FUTURES_SUFFIX_RE.sub('', t.upper())
 
     if upper in TV_TO_COMMODITY_MASTER:
         master = TV_TO_COMMODITY_MASTER[upper]

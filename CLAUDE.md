@@ -217,10 +217,12 @@ Google has dropped metals support — while equities (`GOOG`) and FX
 `RELIABLE_GOOGLEFINANCE_COMMODITIES` is now empty (commodities get no formula) and
 `update_master_sheet.py` writes each commodity's TradingView-captured price into
 Investments' Current Price as a plain VALUE, stamped via 'Chart Last Checked'.
-Only commodities with a TradingView chart get a price — **Brent (UKOIL), Palladium
-and Copper have no chart in the layouts**, so their cells keep whatever they had
-(Brent/Palladium show `#N/A` from old dead formulas; Copper's `CPER`-ETF formula
-still works). Adding TV charts for those three would auto-fix them on the next run.
+Only commodities with a TradingView chart get a price. The user added charts for
+Brent, Palladium and Copper on 2026-07-13; `ticker_normalize.py` now maps the TV
+chart symbol `BRENT` to master ticker `UKOIL` and strips TradingView's
+continuous-futures `1!`/`2!` suffix (`COPPER1!` → `COPP`), so all three populate
+on the next run. Their old dead `TVC:`/`CPER` formulas in col J are superseded by
+the written value in col I.
 
 **Sync fully automated end-to-end (verified 2026-07-12):** tab deletion (right-click
 → Delete → OK, driven by accessibility refs from the `find` tool — screenshot pixel
@@ -297,9 +299,11 @@ master rows with no chart. Requires `python-pptx` (installed for the
 
 ## Open items / things to verify on the next export run
 
-- Brent (UKOIL), Palladium and Copper have no TradingView chart, so no captured
-  price and no working formula (Copper's CPER formula still works) — user to add
-  TV charts if live pricing for them is wanted.
+- Brent/Palladium/Copper charts were added by the user 2026-07-13 and the symbol
+  mapping fixed (`BRENT`→UKOIL, futures `1!` suffix stripped) — verify on the next
+  run that all three get a captured price written to Investments col I. Their dead
+  col-J formulas (`TVC:UKOIL`, `TVC:PALLADIUM`) will still show `#N/A` — consider
+  clearing them once the value-writes are confirmed.
 - WPP's Alert Low (1121.92) is ~4x its live price (274.6, gap −75%) — looks like a
   stale/misread level; flagged to the user 2026-07-12, needs a manual look.
 - Orphaned `sync_*` temp Google Sheets in the user's Drive (left by a failed
