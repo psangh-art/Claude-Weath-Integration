@@ -75,6 +75,30 @@ something worth remembering.
     images) shows only magnitude shifts in the expected direction, zero detections
     gained or lost. (AZN's yellow-drawn channel still yields a stray-blue false
     single — pre-existing, unrelated to this fix, worth a separate look.)
+  - **Yellow hand-drawn TREND LINES now feed alerts (user rule 2026-07-14).** Some
+    charts have no blue TradingView channel — the user marks support/resistance with
+    straight YELLOW trend lines instead (AZN is all-yellow: alert-low line ~10,960,
+    alert-high line ~15,700, no blue). `channel_detect.py` now detects them:
+    `trend_yellow_mask` (R≥220,G≥205,B≤95 — line core ~#FDEA3B; excludes the pale
+    app icon and amber event chips), `_extract_straight_lines` (RANSAC + a COVERAGE
+    check so a wavy yellow indicator/EMA is rejected — real trend lines are dead
+    straight, measured <2px residual), and `read_yellow_trendlines` (prices at
+    today_x, must reach near today, land in-frame, within 0.3–3× price).
+    **Governing selection rule (replaces blue-only):** on each side of today's price,
+    use the line CLOSEST to price among {blue parallel rails, yellow trend lines} —
+    Alert Low = nearest support below, Alert High = nearest resistance above; a
+    yellow line beyond the blue rail is out-competed automatically. Every candidate
+    is split by which side of price it sits on (NOT by blue lower/upper role — a
+    price that has broken just outside the channel would otherwise give a degenerate
+    alert_high < alert_low; that's how the SILVER 58.38/58.36 bug appeared and was
+    fixed). Blue-only charts are byte-identical to before (verified). The axis OCR
+    was refactored into shared `fit_price_axis` (blue + yellow price the same axis).
+    Two behaviour consequences flagged to the user: (1) ~6 charts where price sits
+    just outside the blue channel now emit a single-sided alert instead of a full
+    parallel; (2) where the nearest yellow support is <5% below price, `alert_low ×
+    1.05` (in `update_master_sheet.py`) lands at/above current price, so those
+    stocks (CNA, BLND, LAND, SILVER, HIK, UU., CRDA…) flag as at/below Alert Low —
+    inherent to the nearest-line rule, revisit the ×1.05 buffer if unwanted.
 
 - **One image per chart, not one image per layout.** `pane.js` + `crop_panes.py` crop
   individual panes out of a full-layout screenshot; `build_layout_excel.py` produces one

@@ -106,6 +106,18 @@ def candle_mask(arr):
     return green | red
 
 
+def trend_yellow_mask(arr):
+    """Boolean mask of the user's hand-drawn yellow trend-line pixels (line core is
+    ~#FDEA3B, R 250-255 / G 230-235 / B 55-60, with antialiasing tolerance). Tight
+    on the low end so it does NOT match the pale-yellow app icon top-left
+    (~#EAC102, G 193) or the amber event-marker chips at the bottom (~#CDA05C,
+    R 205). Candles never match (up-green has R<=60; red has G<=95)."""
+    r = arr[..., 0].astype(np.int32)
+    g = arr[..., 1].astype(np.int32)
+    b = arr[..., 2].astype(np.int32)
+    return (r >= 220) & (g >= 205) & (b <= 95)
+
+
 def find_today_x(arr, w):
     """x of the rightmost candle column == today's date on the chart. A column must
     have >= 5 candle-coloured pixels so the 1-2px-tall dotted 'last price' line that
@@ -146,23 +158,13 @@ def find_today_x(arr, w):
     return int(plot_xs[-1])               # rightmost real candle in the plot
 
 
-def read_channel(image_path, known_price=None):
-    """Returns a dict {kind, lower, upper, single_price, x_frac, reason}.
-    kind is 'parallel' (two channel-blue lines -> lower+upper both set),
-    'single' (exactly one line -> single_price set, direction not yet decided),
-    or None (nothing usable found -> reason explains why). Never guess — a
-    rejection is a valid, expected, and safe outcome.
-
-    known_price (the current price from the master sheet, if available) hardens the
-    axis OCR: it bounds which numeric tokens are plausible price labels and rejects
-    an axis whose read doesn't bracket the current price (a systematic misread)."""
-    img = Image.open(image_path).convert('RGB')
-    arr = np.array(img)
-    h, w, _ = arr.shape
-
-    def fail(reason):
-        return {'kind': None, 'lower': None, 'upper': None, 'single_price': None, 'x_frac': None, 'reason': reason}
-
+def fit_price_axis(img, arr, w, h, known_price=None):
+    """OCR the right-hand price axis and fit price = a*y + b. Returns (a, b, None)
+    on success, or (None, None, reason) when the axis can't be trusted. Shared by
+    blue-channel and yellow-trendline detection so both price the same axis reads
+    identically. known_price (if given) hardens the OCR: it bounds which numeric
+    tokens are plausible price labels and rejects an axis that doesn't bracket the
+    current price (a systematic misread)."""
     # 1. OCR the right-hand price axis (full height — the date labels below the plot
     #    are handled by the calendar-year token filter below, so we don't crop them
     #    out here: cropping the bottom strip also dropped legitimate low price ticks
@@ -192,7 +194,7 @@ def read_channel(image_path, known_price=None):
     labels.sort(key=lambda x: x[1])  # sort top-to-bottom
 
     if not labels:
-        return fail('no OCR-readable axis labels')
+        return None, None, 'no OCR-readable axis labels'
 
     # 2. The price axis is perfectly linear in y, so every genuine label lies on a
     #    single price=a*y+b line, evenly spaced. Fit that line ROBUSTLY (Theil-Sen:
@@ -216,7 +218,7 @@ def read_channel(image_path, known_price=None):
         clean = list(labels)
 
     if len(clean) < 3:
-        return fail('fewer than 3 clean axis labels after noise filtering')
+        return None, None, 'fewer than 3 clean axis labels after noise filtering'
 
     # 2c. A trustworthy read must bracket the current price: the last candle is
     #     on-screen, so its price falls between the top and bottom axis labels. If
@@ -226,13 +228,37 @@ def read_channel(image_path, known_price=None):
     lbl_vals = [c[0] for c in clean]
     lo_lbl, hi_lbl = min(lbl_vals), max(lbl_vals)
     if known_price is not None and not (lo_lbl * 0.9 <= known_price <= hi_lbl * 1.1):
-        return fail(f'OCR axis labels [{lo_lbl:g}-{hi_lbl:g}] do not bracket known price '
-                    f'{known_price:g} — axis read untrustworthy')
+        return None, None, (f'OCR axis labels [{lo_lbl:g}-{hi_lbl:g}] do not bracket known price '
+                            f'{known_price:g} — axis read untrustworthy')
 
     # 3. Least-squares fit across ALL clean labels, not just two endpoints.
     vals = np.array([c[0] for c in clean])
     ys = np.array([c[1] for c in clean])
     a, b = np.polyfit(ys, vals, 1)  # price = a*y + b
+    return float(a), float(b), None
+
+
+def read_channel(image_path, known_price=None):
+    """Returns a dict {kind, lower, upper, single_price, x_frac, reason}.
+    kind is 'parallel' (two channel-blue lines -> lower+upper both set),
+    'single' (exactly one line -> single_price set, direction not yet decided),
+    or None (nothing usable found -> reason explains why). Never guess — a
+    rejection is a valid, expected, and safe outcome.
+
+    known_price (the current price from the master sheet, if available) hardens the
+    axis OCR: it bounds which numeric tokens are plausible price labels and rejects
+    an axis whose read doesn't bracket the current price (a systematic misread)."""
+    img = Image.open(image_path).convert('RGB')
+    arr = np.array(img)
+    h, w, _ = arr.shape
+
+    def fail(reason):
+        return {'kind': None, 'lower': None, 'upper': None, 'single_price': None, 'x_frac': None, 'reason': reason}
+
+    # 1-3. OCR + robust fit of the price axis (shared with yellow-trendline reads).
+    a, b, axis_reason = fit_price_axis(img, arr, w, h, known_price)
+    if axis_reason is not None:
+        return fail(axis_reason)
 
     # 4. Sample the drawn line(s) at many x-positions. At each x, cluster the
     #    channel-blue pixels: EXACTLY 2 clusters = both boundaries cleanly visible
@@ -360,6 +386,102 @@ def plausibility_filter(kind, lower, upper, known_price=None):
     return 'no channel or trendline detected'
 
 
+def _extract_straight_lines(mask, w, h, max_lines=6, resid_px=3.0,
+                            min_span_frac=0.12, min_coverage=0.6):
+    """Extract distinct STRAIGHT drawn lines from a colour mask. Returns a list of
+    (slope, intercept, xmin, xmax) in pixel space, one per accepted line.
+
+    Used for the user's hand-drawn yellow trend lines, which are dead-straight
+    (measured residual <2px over the full span on USOIL/CRDA/DGE). RANSAC finds the
+    dominant line, then a COVERAGE check (fraction of columns across the line's span
+    that actually carry a mask pixel within resid_px of it) rejects wavy indicators:
+    a yellow EMA is only locally linear, so no single straight line covers a long
+    span of it. Inliers are removed and the search repeats for further lines (a
+    chart can carry several trend lines, e.g. a drawn channel's two rails)."""
+    ys, xs = np.nonzero(mask)
+    if len(xs) < 40:
+        return []
+    pts = np.column_stack([xs, ys]).astype(float)
+    rng = np.random.RandomState(0)
+    if len(pts) > 4000:
+        pts = pts[rng.choice(len(pts), 4000, replace=False)]
+    min_span = min_span_frac * w
+    lines = []
+    for _ in range(max_lines):
+        if len(pts) < 40:
+            break
+        X, Y = pts[:, 0], pts[:, 1]
+        best_inl, best_count = None, 0
+        for _ in range(400):
+            i, j = rng.randint(0, len(pts)), rng.randint(0, len(pts))
+            x1, y1 = pts[i]; x2, y2 = pts[j]
+            if abs(x2 - x1) < 5:            # need a horizontal span, not two stacked px
+                continue
+            slope = (y2 - y1) / (x2 - x1)
+            intercept = y1 - slope * x1
+            inl = np.abs(slope * X + intercept - Y) <= resid_px
+            c = int(inl.sum())
+            if c > best_count:
+                best_count, best_inl = c, inl
+        if best_inl is None or best_count < 40:
+            break
+        xin = X[best_inl]
+        span = float(xin.max() - xin.min())
+        slope, intercept = np.polyfit(xin, Y[best_inl], 1)   # refit on inliers
+        pts = pts[~best_inl]
+        if span < min_span:
+            continue
+        # Coverage: does the line trace a real drawn stroke across its span, or is it
+        # just the best fit through a diffuse/ wavy blob?
+        cols = range(int(xin.min()), int(xin.max()) + 1, 3)
+        hit = tot = 0
+        for x in cols:
+            tot += 1
+            yl = slope * x + intercept
+            y0 = max(0, int(yl - resid_px)); y1 = min(h, int(yl + resid_px) + 1)
+            if y0 < y1 and mask[y0:y1, x].any():
+                hit += 1
+        if tot and hit / tot >= min_coverage:
+            lines.append((float(slope), float(intercept), float(xin.min()), float(xin.max())))
+    return lines
+
+
+def read_yellow_trendlines(image_path, known_price=None):
+    """Prices (at today's date) of the user's hand-drawn yellow trend lines. Returns
+    a list of floats — empty when the axis can't be read or no straight yellow line
+    is found. Each line is validated straight (via _extract_straight_lines), must
+    reach near today's x (so its value there is a real read, not a long
+    extrapolation), land inside the pane, and sit within a plausible ratio of the
+    current price. Direction (support vs resistance) is decided by the caller from
+    which side of the price it falls on."""
+    img = Image.open(image_path).convert('RGB')
+    arr = np.array(img)
+    h, w, _ = arr.shape
+    a, b, axis_reason = fit_price_axis(img, arr, w, h, known_price)
+    if axis_reason is not None:
+        return []
+    today_x = find_today_x(arr, w)
+    if today_x is None:
+        return []
+    out = []
+    for slope, intercept, xmin, xmax in _extract_straight_lines(trend_yellow_mask(arr), w, h):
+        # Only trust the value at today's x if the drawn line actually reaches there
+        # (allow a modest 0.15w extrapolation past its drawn extent — trend lines are
+        # often drawn a little short of, or into, the future edge).
+        if today_x < xmin - 0.15 * w or today_x > xmax + 0.15 * w:
+            continue
+        y_today = slope * today_x + intercept
+        if not (-0.05 * h <= y_today <= 1.05 * h):
+            continue
+        price = a * y_today + b
+        if price <= 0:
+            continue
+        if known_price is not None and not (0.3 <= price / known_price <= 3.0):
+            continue
+        out.append(round(price, 2))
+    return out
+
+
 def process_one(ticker, screenshot_path, known_price=None):
     if is_macro_reference(ticker):
         return {'ticker': ticker, 'screenshot': screenshot_path, 'kind': None, 'lower': None, 'upper': None,
@@ -370,26 +492,66 @@ def process_one(ticker, screenshot_path, known_price=None):
                  'x_frac': None, 'reason': 'screenshot file not found'}
 
     raw = read_channel(screenshot_path, known_price)
-    kind, lower, upper, x_frac, reason = raw['kind'], raw['lower'], raw['upper'], raw['x_frac'], raw['reason']
+    x_frac = raw['x_frac']
 
-    if reason is None and kind == 'single':
-        # A lone trendline: decide Alert Low vs Alert High by which side of the
-        # current price it falls on. Never guess when we don't have a price to
-        # compare against — reject instead.
-        if known_price is None:
-            kind, reason = None, 'single trendline detected but no current price available to determine Alert Low vs Alert High'
-        elif raw['single_price'] < known_price:
-            kind, lower, upper = 'single_low', raw['single_price'], None
+    # Gather candidate boundary lines from BOTH sources, then pick the line closest
+    # to today's price on each side (user rule 2026-07-14): Alert Low = nearest line
+    # below price, Alert High = nearest line above price, choosing among the blue
+    # parallel-channel boundaries AND the user's hand-drawn yellow trend lines. A
+    # yellow line further from price than the blue boundary is naturally out-competed
+    # (a yellow below the channel's lower rail loses to that rail; a yellow between
+    # the rail and price wins). below/above hold prices strictly on that side.
+    candidates = []                # every boundary / trend line price found
+    blue_reason = raw['reason']
+
+    if raw['kind'] == 'parallel':
+        # Blue channel keeps its full plausibility gate (width 8-150%, price
+        # bracketed) before its rails count — a noise channel contributes nothing.
+        pf = plausibility_filter('parallel', raw['lower'], raw['upper'], known_price)
+        if pf is None:
+            candidates += [raw['lower'], raw['upper']]
         else:
-            kind, lower, upper = 'single_high', None, raw['single_price']
+            blue_reason = pf
+    elif raw['kind'] == 'single' and known_price is not None:
+        sp = raw['single_price']
+        side = 'single_low' if sp < known_price else 'single_high'
+        pf = plausibility_filter(side, sp if side == 'single_low' else None,
+                                 sp if side == 'single_high' else None, known_price)
+        if pf is None:
+            candidates.append(sp)
+        else:
+            blue_reason = pf
 
-    if reason is None:
-        reason = plausibility_filter(kind, lower, upper, known_price)
-        if reason is not None:
-            kind, lower, upper, x_frac = None, None, None, None
+    yellow = read_yellow_trendlines(screenshot_path, known_price) if known_price is not None else []
+    candidates += yellow
+
+    # Split EVERY candidate by which side of today's price it sits on (not by its
+    # blue lower/upper role — when price has broken just outside the channel, a rail
+    # can be on the far side of price, and forcing it to its old role produced a
+    # degenerate alert_high < alert_low). Nearest on each side wins.
+    below = [c for c in candidates if known_price is not None and c < known_price]
+    above = [c for c in candidates if known_price is not None and c > known_price]
+    alert_low = max(below) if below else None      # nearest support below price
+    alert_high = min(above) if above else None     # nearest resistance above price
+
+    def src(val):
+        if val is None:
+            return None
+        return 'yellow' if val in yellow else 'blue'
+
+    if alert_low is not None and alert_high is not None:
+        kind, lower, upper, reason = 'parallel', alert_low, alert_high, None
+    elif alert_low is not None:
+        kind, lower, upper, reason = 'single_low', alert_low, None, None
+    elif alert_high is not None:
+        kind, lower, upper, reason = 'single_high', None, alert_high, None
+    else:
+        kind, lower, upper = None, None, None
+        reason = blue_reason or 'no channel or trend line found near price'
 
     return {'ticker': ticker, 'screenshot': screenshot_path, 'kind': kind, 'lower': lower, 'upper': upper,
-             'x_frac': x_frac, 'reason': reason}
+             'x_frac': x_frac, 'reason': reason,
+             'alert_low_src': src(alert_low), 'alert_high_src': src(alert_high)}
 
 
 def main():
