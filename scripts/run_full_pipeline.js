@@ -28,6 +28,38 @@ function run(cmd, args) {
   return spawnSync(cmd, args, { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf-8' });
 }
 
+const CDP_PORT = 9222;
+
+function cdpUp() {
+  const r = spawnSync('curl', ['-s', '-m', '3', `http://localhost:${CDP_PORT}/json/version`], { encoding: 'utf-8' });
+  return r.status === 0 && /Protocol-Version/.test(r.stdout || '');
+}
+
+// Guarantee TradingView is reachable over CDP before capture. If the debug port
+// is already up we do NOTHING — an already-debug-ready TradingView is never
+// force-killed, so unsaved chart edits are safe. Only when the port is down do we
+// relaunch via launch_tv_debug.bat (which taskkills + reopens TV with the port).
+// TradingView layouts live server-side, so a relaunch loads them fresh and does
+// not modify the user's charts. This makes "start TV with the debug port" a
+// non-issue on every run (user request 2026-07-14).
+function ensureCdp() {
+  if (cdpUp()) {
+    console.log(`TradingView CDP already up on ${CDP_PORT}.`);
+    return true;
+  }
+  console.log(`TradingView CDP not responding on ${CDP_PORT} — relaunching TradingView with the debug port...`);
+  console.log('(Layouts are saved server-side; this reloads them and does not modify your charts.)');
+  const res = spawnSync('cmd.exe', ['/c', path.join(__dirname, 'launch_tv_debug.bat'), String(CDP_PORT)],
+    { stdio: 'inherit', timeout: 90000 });
+  if (!cdpUp()) {
+    console.error(`Could not bring up TradingView CDP on ${CDP_PORT}` +
+      (res.error ? ` (${res.error.message})` : '') +
+      '. Start it with scripts\\launch_tv_debug.bat and re-run.');
+    return false;
+  }
+  return true;
+}
+
 function runDeck() {
   // Build the per-investment PowerPoint review deck (charts + live price +
   // master-sheet holdings/alerts + OCR read + TradingView alerts, one slide per
@@ -63,6 +95,10 @@ function runCleanup() {
 }
 
 function main() {
+  if (!ensureCdp()) {
+    process.exitCode = 1;
+    return;
+  }
   console.log('=== Step 1/6: capturing charts from TradingView ===\n');
   const exportResult = spawnSync('node', [path.join(__dirname, 'export-layouts-excel.js')], { stdio: 'inherit' });
   if (exportResult.status !== 0) {

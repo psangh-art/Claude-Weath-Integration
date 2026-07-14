@@ -32,7 +32,16 @@ Usage:
 """
 import sys
 import os
+import re
 import json
+
+# Pin Tesseract's OpenMP threading to a single thread BEFORE it runs. Tesseract's
+# LSTM engine is otherwise non-deterministic across runs on marginal (faint/small)
+# axis text: the exact same screenshot flipped between "readable" and "no OCR-
+# readable labels" run-to-run, and once even emitted a wrong channel. Single-
+# threaded LSTM inference is reproducible. setdefault() so a caller can override.
+os.environ.setdefault('OMP_THREAD_LIMIT', '1')
+os.environ.setdefault('OMP_NUM_THREADS', '1')
 
 try:
     from PIL import Image
@@ -44,6 +53,30 @@ except ImportError as e:
 
 if os.environ.get('TESSERACT_CMD'):
     pytesseract.pytesseract.tesseract_cmd = os.environ['TESSERACT_CMD']
+
+
+# Macro/reference charts (stock-index, government-bond-yield, FX-pair) carry a
+# price axis Tesseract can't read (small decimals / index scales) AND are not
+# buy-list instruments that need channel alerts — a channel read on them is
+# neither achievable nor wanted, so they're skipped rather than counted as OCR
+# failures. Their last price is still captured separately by the export step.
+_CURRENCIES = {'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'CAD', 'NZD',
+               'CNY', 'CNH', 'HKD', 'SEK', 'NOK', 'SGD'}
+_EXPLICIT_MACRO = {'NASDAQ', 'DJI', 'DXY', 'VIX'}
+
+
+def is_macro_reference(ticker):
+    """True for index / bond-yield / FX-pair symbols that should be excluded from
+    channel detection. Deliberately narrow — equity indices actually tracked for a
+    channel (e.g. SPX) and commodities (GOLD/SILVER/…) are NOT excluded."""
+    t = (ticker or '').upper().strip()
+    if not t:
+        return False
+    if re.match(r'^[A-Z]{2,4}\d{1,2}Y$', t):          # bond yields: US10Y, JP10Y, DE30Y
+        return True
+    if re.fullmatch(r'[A-Z]{6}', t) and t[:3] in _CURRENCIES and t[3:] in _CURRENCIES:
+        return True                                    # FX pairs: GBPUSD, EURUSD, USDJPY
+    return t in _EXPLICIT_MACRO
 
 
 def check_tesseract_available():
@@ -84,17 +117,27 @@ def find_today_x(arr, w):
     return int(xs[-1]) if len(xs) else None
 
 
-def read_channel(image_path):
+def read_channel(image_path, known_price=None):
     """Returns a dict {kind, lower, upper, single_price, x_frac, reason}.
     kind is 'parallel' (two channel-blue lines -> lower+upper both set),
     'single' (exactly one line -> single_price set, direction not yet decided),
     or None (nothing usable found -> reason explains why). Never guess — a
-    rejection is a valid, expected, and safe outcome."""
+    rejection is a valid, expected, and safe outcome.
+
+    known_price (the current price from the master sheet, if available) hardens the
+    axis OCR: it bounds which numeric tokens are plausible price labels and rejects
+    an axis whose read doesn't bracket the current price (a systematic misread)."""
     img = Image.open(image_path).convert('RGB')
     arr = np.array(img)
     h, w, _ = arr.shape
 
-    # 1. OCR the right-hand price axis.
+    def fail(reason):
+        return {'kind': None, 'lower': None, 'upper': None, 'single_price': None, 'x_frac': None, 'reason': reason}
+
+    # 1. OCR the right-hand price axis (full height — the date labels below the plot
+    #    are handled by the calendar-year token filter below, so we don't crop them
+    #    out here: cropping the bottom strip also dropped legitimate low price ticks
+    #    on some charts and shifted the axis fit).
     axis_crop = img.crop((int(w * 0.85), 0, w, h))
     data = pytesseract.image_to_data(axis_crop, output_type=pytesseract.Output.DICT)
     labels = []
@@ -102,27 +145,60 @@ def read_channel(image_path):
         txt = data['text'][i].strip().replace(',', '')
         try:
             val = float(txt)
-            y_center = data['top'][i] + data['height'][i] / 2
-            labels.append((val, y_center))
         except ValueError:
             continue
+        if not np.isfinite(val):   # "nan"/"inf" tokens parse as float but aren't prices
+            continue
+        # Drop calendar-year tokens (2015-2035 integers) that survive the crop,
+        # unless a real price genuinely sits in that band (within 20% of known).
+        if val == int(val) and 2015 <= val <= 2035 and (
+                known_price is None or abs(val - known_price) / known_price > 0.20):
+            continue
+        # Drop gross outliers far from the current price — these are mis-OCR'd
+        # on-chart annotation text (alert-label boxes, ids) rather than axis ticks.
+        if known_price is not None and not (known_price / 5.0 <= val <= known_price * 5.0):
+            continue
+        y_center = data['top'][i] + data['height'][i] / 2
+        labels.append((val, y_center))
     labels.sort(key=lambda x: x[1])  # sort top-to-bottom
-
-    def fail(reason):
-        return {'kind': None, 'lower': None, 'upper': None, 'single_price': None, 'x_frac': None, 'reason': reason}
 
     if not labels:
         return fail('no OCR-readable axis labels')
 
-    # 2. Filter stray OCR noise — axis labels should be strictly monotonic
-    #    decreasing top-to-bottom. A common failure: an x-axis year label (e.g.
-    #    "2028") gets caught in the crop and breaks a naive endpoint-only fit.
-    clean = [labels[0]]
-    for val, y in labels[1:]:
-        if val < clean[-1][0]:
-            clean.append((val, y))
+    # 2. The price axis is perfectly linear in y, so every genuine label lies on a
+    #    single price=a*y+b line, evenly spaced. Fit that line ROBUSTLY (Theil-Sen:
+    #    the median of all pairwise slopes) so a couple of junk reads can't leverage
+    #    it — an ordinary least-squares fit gets dragged toward an outlier and then
+    #    reports a small residual for it, which is exactly how a stray "40"/"124"
+    #    misread among real 280..520 ticks used to survive. Keep only labels within
+    #    tol of the robust line; tol scales to the axis tick spacing.
+    ally = [l[1] for l in labels]
+    allv = [l[0] for l in labels]
+    pair_slopes = [(allv[j] - allv[i]) / (ally[j] - ally[i])
+                   for i in range(len(labels)) for j in range(i + 1, len(labels))
+                   if ally[j] != ally[i]]
+    if len(labels) >= 3 and pair_slopes:
+        slope = float(np.median(pair_slopes))
+        intercept = float(np.median([v - slope * y for y, v in zip(ally, allv)]))
+        med_gap = float(np.median(np.abs(np.diff(sorted(allv)))))
+        tol = max(3.0, 0.3 * med_gap)
+        clean = [(v, y) for v, y in labels if abs(slope * y + intercept - v) <= tol]
+    else:
+        clean = list(labels)
+
     if len(clean) < 3:
         return fail('fewer than 3 clean axis labels after noise filtering')
+
+    # 2c. A trustworthy read must bracket the current price: the last candle is
+    #     on-screen, so its price falls between the top and bottom axis labels. If
+    #     it doesn't, the OCR'd axis is on the wrong scale (systematic misread) and
+    #     must not produce a channel — this is what stops a false channel off an
+    #     axis that OCR'd as 280..520 against a true price of 197 (BT.A).
+    lbl_vals = [c[0] for c in clean]
+    lo_lbl, hi_lbl = min(lbl_vals), max(lbl_vals)
+    if known_price is not None and not (lo_lbl * 0.9 <= known_price <= hi_lbl * 1.1):
+        return fail(f'OCR axis labels [{lo_lbl:g}-{hi_lbl:g}] do not bracket known price '
+                    f'{known_price:g} — axis read untrustworthy')
 
     # 3. Least-squares fit across ALL clean labels, not just two endpoints.
     vals = np.array([c[0] for c in clean])
@@ -251,11 +327,15 @@ def plausibility_filter(kind, lower, upper, known_price=None):
 
 
 def process_one(ticker, screenshot_path, known_price=None):
+    if is_macro_reference(ticker):
+        return {'ticker': ticker, 'screenshot': screenshot_path, 'kind': None, 'lower': None, 'upper': None,
+                 'x_frac': None,
+                 'reason': 'macro/reference instrument (index/yield/FX) — not a buy-list channel, skipped'}
     if not screenshot_path or not os.path.exists(screenshot_path):
         return {'ticker': ticker, 'screenshot': screenshot_path, 'kind': None, 'lower': None, 'upper': None,
                  'x_frac': None, 'reason': 'screenshot file not found'}
 
-    raw = read_channel(screenshot_path)
+    raw = read_channel(screenshot_path, known_price)
     kind, lower, upper, x_frac, reason = raw['kind'], raw['lower'], raw['upper'], raw['x_frac'], raw['reason']
 
     if reason is None and kind == 'single':
