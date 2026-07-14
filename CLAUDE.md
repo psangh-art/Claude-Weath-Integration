@@ -53,6 +53,28 @@ something worth remembering.
   handoff doc's scan order on this specific point, per explicit user instruction —
   if the handoff doc is revised, align it to this. Verified against SDLF/PRU/AEP
   images; BEZ's genuine breakout still correctly rejects.
+  - **`find_today_x` fix (2026-07-14): full-width scan + last-price-chip exclusion.**
+    `find_today_x` used to cap its candle scan at a hardcoded `0.85w` "to exclude
+    the price axis". But the right-offset varies per chart — some run candles to
+    ~0.95w, others leave a wide blank future band so the last candle is at ~0.65w —
+    so the cap silently read the channel at frac 0.849 regardless: understating
+    ASCENDING channels that reach further right (CCH lower rail 3679 vs true 3810,
+    +3.8%) and reading a projected-forward rail where there's blank space. The cap
+    also over-STATED descending channels (CCR read 94/135 five months back-dated vs
+    the true 66/108 at today, −30% — visually confirmed a steep descending channel).
+    Now `find_today_x` scans the FULL width and excludes the last-price LABEL CHIP
+    (teal up / red down, a fixed ~119px block that matches the candle mask and sits
+    flush to the far edge, frac ~0.99): if the rightmost candle-coloured run reaches
+    frac ≥ 0.975 it's the chip — walk left across that solid block to its left edge
+    (the plot/axis boundary) and take today as the rightmost real candle strictly
+    left of it. The boundary SAMPLING still stays in the clean ≤0.85w region and
+    EXTRAPOLATES the straight-line fit to today_x (sampling into the candle-occluded
+    near-today columns mispairs rail-vs-midline clusters and poisons the fit — tried
+    and reverted). Validated: patched fit matches direct pixel reads at today_x to
+    ±2 on CCH/CCR/ALW/FCIT/PSON/RKT; clean A/B (committed vs patched on the same
+    images) shows only magnitude shifts in the expected direction, zero detections
+    gained or lost. (AZN's yellow-drawn channel still yields a stray-blue false
+    single — pre-existing, unrelated to this fix, worth a separate look.)
 
 - **One image per chart, not one image per layout.** `pane.js` + `crop_panes.py` crop
   individual panes out of a full-layout screenshot; `build_layout_excel.py` produces one

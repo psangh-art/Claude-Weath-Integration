@@ -110,11 +110,40 @@ def find_today_x(arr, w):
     """x of the rightmost candle column == today's date on the chart. A column must
     have >= 5 candle-coloured pixels so the 1-2px-tall dotted 'last price' line that
     runs from the last candle to the right edge can't masquerade as a candle.
+
+    Scans the FULL width, NOT a hardcoded 0.85w cap. That cap silently assumed the
+    last candle sits at ~0.85w, but the right-offset varies per chart: some run
+    candles up to the axis (~0.95w), others leave a wide blank future band so the
+    last candle is at ~0.65w. The old cap read the channel at frac 0.849 regardless
+    — understating ascending channels that actually reach further right (CCH: lower
+    rail 3679 vs true 3810) and, where there's blank space, reading the projected-
+    forward rail instead of today's.
+
+    Two things on the right are candle-COLOURED but are NOT candles and must be
+    excluded: (a) the last-price LABEL CHIP (teal up / red down) that sits in the
+    price-axis panel flush to the far edge — it's a fixed ~119px block reaching
+    frac ~0.99 on every crop; (b) nothing else matches the tight candle mask. So:
+    if the rightmost candle-coloured run reaches the far edge (frac >= 0.975) it's
+    the chip — walk left across that solid block to its left edge (the plot/axis
+    boundary) and take today as the rightmost real candle strictly left of it.
     Returns None when no candle column is found (blank or non-candle chart)."""
-    right_bound = int(w * 0.85)  # price axis excluded
-    counts = candle_mask(arr[:, :right_bound]).sum(axis=0)
+    counts = candle_mask(arr).sum(axis=0)
     xs = np.nonzero(counts >= 5)[0]
-    return int(xs[-1]) if len(xs) else None
+    if not len(xs):
+        return None
+    plot_right = int(xs[-1]) + 1
+    if xs[-1] >= 0.975 * w:
+        # Rightmost run reaches the far edge -> it's the last-price chip. Walk left
+        # across the solid block (internal gaps <=3px) to its left edge; the plot
+        # ends there, separated from real candles by the axis-panel margin.
+        k = len(xs) - 1
+        while k > 0 and xs[k - 1] >= xs[k] - 3:
+            k -= 1
+        plot_right = int(xs[k])           # chip's left edge
+    plot_xs = xs[xs < plot_right]
+    if not len(plot_xs):
+        return None
+    return int(plot_xs[-1])               # rightmost real candle in the plot
 
 
 def read_channel(image_path, known_price=None):
@@ -209,6 +238,12 @@ def read_channel(image_path, known_price=None):
     #    channel-blue pixels: EXACTLY 2 clusters = both boundaries cleanly visible
     #    there, EXACTLY 1 = a single trendline (or one boundary). More than 2
     #    (extra overlay / the channel's dashed midline) and 0 are skipped.
+    #    Sampling deliberately stays in the CLEAN region (<=0.85w): nearer today the
+    #    candle mass occludes the rails and the surviving blue fragments mispair
+    #    (midline paired with a rail), which poisons the fit. The rails are straight
+    #    lines, so we fit here and EXTRAPOLATE to today's x (step 5) — the target x
+    #    is corrected below; the sample region is not.
+    today_x = find_today_x(arr, w)
     samples2 = []  # (x, upper_y, lower_y)
     samples1 = []  # (x, y)
     for i in range(17):
@@ -239,8 +274,7 @@ def read_channel(image_path, known_price=None):
     #    channels (user decision 2026-07-13: reads must be at today's date). The
     #    lines are usually occluded by candles AT today's x itself, so fit each
     #    boundary's straight line through its clean samples and evaluate the fit
-    #    at today's x.
-    today_x = find_today_x(arr, w)
+    #    at today's x. (today_x was computed above, before sampling.)
 
     # Extrapolating a fit is only trustworthy when the samples genuinely pin down
     # one straight line: at least 3 of them (2 points always fit perfectly, so a
