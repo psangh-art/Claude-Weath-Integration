@@ -160,6 +160,16 @@ asked for. The guard now takes `price` (from `row.get('price')` at both call sit
 returns the bare level when `price <= lower`. The CLAMP guard is unaffected, and rows
 where price sits above the support line still buffer exactly as before.
 
+**The below-alert block's SECTION LAYOUT is coupled to `verify_pipeline.py`'s row
+count.** The block is no longer one section: 'On Alert' sits above 'Below Alert Low'
+(2026-07-15), so a second section band and column-header row now fall inside the
+rows 5-38 data range. Verify counted "column A is not empty" over that range and so
+counted the band and header as data — 25 against the 23 actually written, failing a
+run whose block was correct. It now counts a ticker in column B plus a numeric price
+in column C. **Add another section to the block and this count needs revisiting** —
+it is the last gate before the Google Sheet import, so a false failure here is as
+costly as a missed one.
+
 **WEDGE — a seventh pattern (user request 2026-07-15).** Two yellow trend lines
 converging in the near future. It **does not change Alert Low / Alert High** — the
 user was explicit that the trend-line rules still stand, so a wedge is a
