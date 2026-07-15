@@ -99,9 +99,14 @@ def buffered_alert_low(lower, upper, on_alert=False, price=None):
     """
     if lower is None:
         return None
-    if on_alert or (price is not None and price <= lower):
-        return round(lower, 2)
-    alert_low = lower * ALERT_LOW_BUFFER
+    reached = on_alert or (price is not None and price <= lower)
+    alert_low = lower if reached else lower * ALERT_LOW_BUFFER
+    # The CLAMP applies on EVERY path, including the no-buffer one. It used to sit
+    # behind an early `return round(lower, 2)`, so guard 2 silently disabled guard 1
+    # and the un-buffered level could still cross Alert High: ICG reached a trend line
+    # at 1874.35 while the sheet held a stale Alert High of 1874.2 from an older read,
+    # and shipped inverted 1874.35/1874.2 — the exact state these guards exist to
+    # prevent, reached through the door the other guard left open.
     if upper is not None and alert_low >= upper:
         # Keep a usable band: sit just under Alert High rather than crossing it.
         alert_low = min(alert_low, upper * 0.999)

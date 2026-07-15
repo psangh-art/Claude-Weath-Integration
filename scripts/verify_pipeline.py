@@ -255,7 +255,16 @@ def section_master_sheet(master_result):
                 ok = False
 
         soi = wb['Stocks of Interest']
-        actual_rows = sum(1 for r in range(5, 39) if soi.cell(row=r, column=1).value is not None)
+        # Count real DATA rows, not 'anything in column A'. The block is no longer a
+        # single section: 'On Alert' sits above 'Below Alert Low' (2026-07-15), so a
+        # second section band and column-header row now fall INSIDE rows 5-38 and both
+        # carry column A text. Counting column A alone read 25 where the run wrote 23,
+        # failing the run on a block that was correct. A data row is one with a ticker
+        # in column B and a numeric price in column C — bands have no column B, and the
+        # header row's column C is the string 'Current Price'.
+        actual_rows = sum(1 for r in range(5, 39)
+                          if soi.cell(row=r, column=2).value is not None
+                          and isinstance(soi.cell(row=r, column=3).value, (int, float)))
         expected_rows = min(len(below_rows or []), 34)
         if actual_rows == expected_rows:
             lines.append(f"\n✅ **Below-alert block**: {actual_rows} rows at the top of "
