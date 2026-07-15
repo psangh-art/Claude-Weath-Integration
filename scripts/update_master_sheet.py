@@ -159,6 +159,28 @@ def stamp_last_checked(ws, row, col, today):
     cell.border = _CELL_BORDER
 
 
+def master_index_key(ticker):
+    """The index key for a ticker as written in the sheet.
+
+    This MUST agree with ticker_normalize.normalize()'s master_ticker, or the row can
+    never be matched. It used to be a blunt .replace('.', '-'), which is right for a
+    BT.A-style CLASS SUFFIX ('BT.A' -> 'BT-A') but wrong for the bare trailing dot
+    TradingView puts on some LSE symbols: normalize() STRIPS that ('AT.' -> 'AT') while
+    the index produced 'AT-', so the two never met.
+
+    It hid because 'AT.' (Ashtead Technology, Investments row 111) is the only ticker in
+    the sheet stored WITH the trailing dot — its siblings SN, AV, NG, UU and QQ are all
+    stored bare. The row silently fell out of matching every run: reported 'no existing
+    row in master sheet', its Alert Low left at a stale 429.87 while the chart read
+    400.27, and — the tell — no 'Chart Last Checked' stamp at all, unlike every other
+    processed row. Found by the test-analyst audit 2026-07-15. Of 355 indexed rows this
+    changes exactly one key, AT- -> AT."""
+    key = str(ticker).strip().upper()
+    if key.endswith('.') and len(key) > 1:
+        return key[:-1]
+    return key.replace('.', '-')
+
+
 def build_master_index(ws):
     """Map normalized master ticker -> row number, skipping section-header rows
     (rows with no Chart Yes/No value in column A aren't real ticker rows)."""
@@ -168,7 +190,7 @@ def build_master_index(ws):
         ticker = ws.cell(row=r, column=COL_TICKER).value
         if chart_val not in ('Yes', 'No') or not ticker:
             continue
-        index[str(ticker).strip().upper().replace('.', '-')] = r
+        index[master_index_key(ticker)] = r
     return index
 
 
