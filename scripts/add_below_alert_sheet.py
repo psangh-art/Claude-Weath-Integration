@@ -56,6 +56,16 @@ DATA_FILL = 'FFFDF0F0'     # pale-red data tint, matching the per-section pale t
                            # (green FFF0FFF4 / amber FFFFFDF0 / watchlist FFF7F9FC)
 GAP_BAD = 'FFCC0000'       # red-bold gap when a stock is >10% below its alert low
 
+# "On Alert" section (user decision 2026-07-15): price is sitting ON a drawn line
+# rather than having fallen through it — the moment the alert exists to catch, so it
+# sits ABOVE the below-alert section. Green matches the existing "🟢 AT LOWER
+# BOUNDARY — within 5% of alert low (Highest priority)" band in the section tables
+# below, which is the same idea; red stays reserved for "already fallen through".
+ON_ALERT_BAND_FILL = 'FF1A5733'   # the SAME green as the existing "AT LOWER BOUNDARY" band
+                                  # (verified against row 43 of the live sheet) — not the
+                                  # FF276221 green, which is a font colour, not a band fill
+ON_ALERT_DATA_FILL = 'FFF0FFF4'   # pale-green data tint, as used by the green section below
+
 _THIN = Side(style='thin')
 BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _TOP_LEFT = Alignment(horizontal='left', vertical='top', wrap_text=False)
@@ -91,52 +101,29 @@ def _band(ws, row, text, fill, size, bold, italic=False):
     ws.row_dimensions[row].height = 15
 
 
-def refresh_block(ws, rows):
-    if len(rows) > MAX_DATA_ROWS:
-        print(f'WARNING: {len(rows)} below-alert rows but only {MAX_DATA_ROWS} fit in the '
-              f'reserved block — writing the {MAX_DATA_ROWS} worst; '
-              f'{len(rows) - MAX_DATA_ROWS} omitted.', file=sys.stderr)
-        rows = rows[:MAX_DATA_ROWS]
-
-    # Title / note / section bands (rows 1-3), mirroring the section-table header
-    # stack below (navy title, FF2E5077 italic subtitle, coloured section band).
-    _band(ws, TITLE_ROW, 'Stocks Trading Below Alert Low', NAVY, size=13, bold=True)
-    _band(ws, NOTE_ROW, (
-        f'Auto-generated {datetime.now().date().isoformat()} from tradingview_layouts.xlsx live '
-        'price capture cross-checked against Alert Low. Rebuilt by the pipeline into rows '
-        f'1-{RESERVED_BLOCK} of this sheet each run — do not add manual content above row '
-        f'{RESERVED_BLOCK + 1}.'
-    ), SUBHEAD_FILL, size=8, bold=False, italic=True)
-    _band(ws, BAND_ROW, '🔴  BELOW ALERT LOW — price has fallen through the alert level  (Action required)',
-          BAND_FILL, size=10, bold=True)
-
-    # Column header row (FF2E5077 band, bold white, wrapped) — matches row 44 below.
+def _header_row(ws, row_n):
+    """Column header band (FF2E5077, bold white, wrapped) — matches row 44 below."""
     for c, h in enumerate(HEADER, 1):
-        cell = ws.cell(row=HEADER_ROW, column=c, value=h)
+        cell = ws.cell(row=row_n, column=c, value=h)
         cell.font = Font(name=FONT_NAME, size=8, bold=True, color=WHITE)
         cell.fill = PatternFill(fill_type='solid', fgColor=SUBHEAD_FILL)
         cell.border = BORDER
         cell.alignment = _TOP_LEFT_WRAP
-    ws.row_dimensions[HEADER_ROW].height = 15
+    ws.row_dimensions[row_n].height = 15
 
-    # Reset the whole data region first so a shorter run leaves no styled ghosts.
-    for r in range(DATA_START_ROW, DATA_START_ROW + MAX_DATA_ROWS):
-        for c in range(1, LAST_COL + 1):
-            cell = ws.cell(row=r, column=c)
-            cell.value = None
-            cell.font = Font()
-            cell.fill = PatternFill()
-            cell.border = Border()
-            cell.alignment = Alignment()
-            cell.number_format = 'General'
-        ws.row_dimensions[r].height = None
 
-    for i, r in enumerate(rows):
-        row_n = DATA_START_ROW + i
-        # base data-row styling on every cell (pale-red fill, thin border, Arial 8)
+def _section(ws, start_row, band_text, band_fill, data_fill, rows):
+    """Render one section — coloured band, column headers, data rows — starting at
+    start_row. Returns the next free row. Two sections share this block now (On
+    Alert above Below Alert Low), so the layout is built sequentially rather than at
+    the fixed rows the single-section version used."""
+    _band(ws, start_row, band_text, band_fill, size=10, bold=True)
+    _header_row(ws, start_row + 1)
+    row_n = start_row + 2
+    for r in rows:
         for c in range(1, LAST_COL + 1):
             cell = ws.cell(row=row_n, column=c)
-            cell.fill = PatternFill(fill_type='solid', fgColor=DATA_FILL)
+            cell.fill = PatternFill(fill_type='solid', fgColor=data_fill)
             cell.border = BORDER
             cell.font = Font(name=FONT_NAME, size=8)
             cell.alignment = _TOP_LEFT
@@ -153,36 +140,102 @@ def refresh_block(ws, rows):
         if r['gap_pct'] <= -10:
             gap_cell.font = Font(name=FONT_NAME, size=8, bold=True, color=GAP_BAD)
         ws.cell(row=row_n, column=6, value=r['alert_high'])
-        # Holdings/Target £ display as whole pounds (user rule, 2026-07-11).
-        ws.cell(row=row_n, column=7, value=r['holdings'])
-        ws.cell(row=row_n, column=8, value=r['target_value'])
-        ws.cell(row=row_n, column=9, value=r['checked_at'])
+        _data_row_tail(ws, row_n, r)
+        row_n += 1
+    return row_n
 
-        # Click-through to this stock's TradingView layout (blank if no chart).
-        chart_id = r.get('chart_id')
-        tv_cell = ws.cell(row=row_n, column=10)
-        if chart_id:
-            url = TV_LAYOUT_URL.format(chart_id=chart_id)
-            tv_cell.value = f'=HYPERLINK("{url}","{TV_LINK_LABEL}")'
-            tv_cell.font = Font(name=FONT_NAME, size=8, color=NAVY, underline='single')
-        tv_cell.alignment = _TOP_LEFT
 
-        for c, fmt in _NUM_FMT.items():
-            cell = ws.cell(row=row_n, column=c)
-            cell.number_format = fmt
-            cell.alignment = _TOP_RIGHT
+def refresh_block(ws, rows):
+    # Split into the two sections. "On Alert" (price sitting ON a drawn line) is the
+    # live trigger and sorts above the stocks that have already fallen through.
+    on_alert_rows = [r for r in rows if r.get('on_alert')]
+    below_rows = [r for r in rows if not r.get('on_alert')]
 
-    # Collapse the unused tail of the reserved block so the section tables below
-    # sit just under this table instead of after a wide blank gap. The rows stay
-    # present — the fixed reserved block is what lets the pipeline rewrite rows
-    # 1..RESERVED_BLOCK each run without disturbing the section tables — they're
-    # only HIDDEN; a run with more below-alert stocks unhides them as it fills.
-    # One blank separator row (the first unused row) is kept visible.
-    first_blank = DATA_START_ROW + len(rows)
+    # Two bands + two header rows cost 4 rows of the reserved block; only the
+    # sections actually rendered are charged for.
+    overhead = 2 + (2 if on_alert_rows else 0)
+    capacity = RESERVED_BLOCK - BAND_ROW + 1 - overhead - 1   # -1 keeps a blank separator
+    if len(rows) > capacity:
+        print(f'WARNING: {len(rows)} alert rows but only {capacity} fit in the '
+              f'reserved block — writing the worst; {len(rows) - capacity} omitted.',
+              file=sys.stderr)
+        # Never drop an On Alert row to make room for a below-alert one.
+        keep = max(0, capacity - len(on_alert_rows))
+        below_rows = below_rows[:keep]
+        on_alert_rows = on_alert_rows[:capacity]
+
+    # Title / note bands (rows 1-2), mirroring the section-table header stack below
+    # (navy title, FF2E5077 italic subtitle, then the coloured section bands).
+    _band(ws, TITLE_ROW, 'Stocks On Alert / Trading Below Alert Low', NAVY, size=13, bold=True)
+    _band(ws, NOTE_ROW, (
+        f'Auto-generated {datetime.now().date().isoformat()} from tradingview_layouts.xlsx live '
+        'price capture cross-checked against Alert Low. Rebuilt by the pipeline into rows '
+        f'1-{RESERVED_BLOCK} of this sheet each run — do not add manual content above row '
+        f'{RESERVED_BLOCK + 1}.'
+    ), SUBHEAD_FILL, size=8, bold=False, italic=True)
+
+    # Reset everything below the title/note so a shorter run — or a run with no On
+    # Alert section — leaves no styled ghosts or stale band behind. Unmerge first:
+    # the section bands are merged A..J, and a previous run's band may sit on any
+    # row now being reset (the sections no longer live at fixed rows), whose cells
+    # would otherwise be read-only MergedCells.
+    for m in list(ws.merged_cells.ranges):
+        if m.min_row >= BAND_ROW and m.max_row <= RESERVED_BLOCK:
+            ws.unmerge_cells(str(m))
+    for r in range(BAND_ROW, RESERVED_BLOCK + 1):
+        for c in range(1, LAST_COL + 1):
+            cell = ws.cell(row=r, column=c)
+            cell.value = None
+            cell.font = Font()
+            cell.fill = PatternFill()
+            cell.border = Border()
+            cell.alignment = Alignment()
+            cell.number_format = 'General'
+        ws.row_dimensions[r].height = None
+
+    cur = BAND_ROW
+    if on_alert_rows:
+        cur = _section(ws, cur,
+                       '🟢  ON ALERT — price has reached a drawn support line  (Highest priority)',
+                       ON_ALERT_BAND_FILL, ON_ALERT_DATA_FILL, on_alert_rows)
+    cur = _section(ws, cur,
+                   '🔴  BELOW ALERT LOW — price has fallen through the alert level  (Action required)',
+                   BAND_FILL, DATA_FILL, below_rows)
+    return _finish(ws, cur, len(on_alert_rows) + len(below_rows))
+
+
+def _data_row_tail(ws, row_n, r):
+    """Holdings/target/checked-at/TradingView-link cells + numeric formats."""
+    # Holdings/Target £ display as whole pounds (user rule, 2026-07-11).
+    ws.cell(row=row_n, column=7, value=r['holdings'])
+    ws.cell(row=row_n, column=8, value=r['target_value'])
+    ws.cell(row=row_n, column=9, value=r['checked_at'])
+
+    # Click-through to this stock's TradingView layout (blank if no chart).
+    chart_id = r.get('chart_id')
+    tv_cell = ws.cell(row=row_n, column=10)
+    if chart_id:
+        url = TV_LAYOUT_URL.format(chart_id=chart_id)
+        tv_cell.value = f'=HYPERLINK("{url}","{TV_LINK_LABEL}")'
+        tv_cell.font = Font(name=FONT_NAME, size=8, color=NAVY, underline='single')
+    tv_cell.alignment = _TOP_LEFT
+
+    for c, fmt in _NUM_FMT.items():
+        cell = ws.cell(row=row_n, column=c)
+        cell.number_format = fmt
+        cell.alignment = _TOP_RIGHT
+
+
+def _finish(ws, first_blank, count):
+    """Collapse the unused tail of the reserved block so the section tables below
+    sit just under this table instead of after a wide blank gap. The rows stay
+    present — the fixed reserved block is what lets the pipeline rewrite rows
+    1..RESERVED_BLOCK each run without disturbing the section tables — they're
+    only HIDDEN; a run with more alert stocks unhides them as it fills. One blank
+    separator row (the first unused row) is kept visible."""
     for r in range(1, RESERVED_BLOCK + 1):
         ws.row_dimensions[r].hidden = r > first_blank
-
-    return len(rows)
+    return count
 
 
 def main():

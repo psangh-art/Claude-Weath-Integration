@@ -116,6 +116,83 @@ something worth remembering.
   failures (CDP connection surviving navigation but the chart not actually having
   changed). Don't replace this with a single fixed `sleep()`.
 
+## Alert-rules model — signed off by the user (2026-07-15)
+
+The user reviewed `Alert_Rules_Model.pptx` (built by `scripts/build_rules_deck.py`
+from a `channel_detect --batch` run) slide by slide and **agreed the governing rule
+and all six named patterns**: IN-CHANNEL, BREAKOUT ABOVE, BREAKDOWN BELOW, TREND
+LINES ONLY, ON THE LINE, NO READ. Treat these as settled; re-open only on explicit
+instruction. Two amendments came out of that review:
+
+- **A wide band is not evidence of a misread.** `build_rules_deck.py` used to flag
+  any read whose band was >60% of the share price (or Alert High >1.6x price, etc.)
+  as "is this really one channel?" — the theory being that two unrelated drawings had
+  been paired. The user confirmed the markup on **every** chart it caught: PAF, IBST,
+  BKG (trend lines only), ENT, LSEG, BREE, TW. (parallel only) and AUTO ("correctly
+  marked up" — a blue channel with yellow lines over it, where Alert Low came from a
+  rail and Alert High from a yellow line). The heuristic was **retired**, not just
+  narrowed. Don't reintroduce a span/plausibility guard on the strength of a wide
+  band alone — the user's charts genuinely span that much and he wants them published.
+- **Below a parallel channel, the band still governs** — this AMENDS the BREAKDOWN
+  BELOW pattern. The side-of-price split leaves a broken-down chart with no support
+  at all (both rails above price), shipping a bare Alert High while a stale Alert Low
+  sits above it in the sheet — that's how RIO/CPG/STJ ended up inverted. The user
+  reads a parallel channel as the trading band itself: **price dropping out of the
+  bottom IS the buy signal**, not a reason to re-cast the bottom rail as resistance.
+  So `channel_detect.py`'s `below_parallel` branch keeps the rails in their drawn
+  roles: Alert Low = bottom rail, Alert High = top rail. Deliberately narrow, and the
+  narrowness is the user's own scoping — **parallel-ONLY** charts (yellow lines were
+  drawn nearer to price on purpose and still win the nearest-line rule: CTEC, ADM);
+  a **real channel** of two distinct rails, not a lone blue line (AV., MTRO, MKS);
+  and **a breakout ABOVE is untouched** — the top rail still flips to support, which
+  the user confirmed explicitly ("only for price below the channel"). This does mean
+  Alert Low lands above the current price on these rows, so they flag as below Alert
+  Low — that is the intent, not a bug.
+
+**The ×1.05 buffer is skipped once price has REACHED *or PASSED* the support line**
+(user decision 2026-07-15). `buffered_alert_low()` in `update_master_sheet.py` used to
+skip the buffer only on `on_alert` (price within 0.25% of the line). Once the band rule
+above started reading a full pair off a broken-down channel, price sat BELOW the rail
+rather than on it — so `on_alert` was false, the buffer applied, and RIO would have been
+written 7,407.07 against a rail at 7,054.35 and a live price of 6,927: a level 6.9%
+above a price already in hand, and not the "Alert Low = bottom of the parallel" the user
+asked for. The guard now takes `price` (from `row.get('price')` at both call sites) and
+returns the bare level when `price <= lower`. The CLAMP guard is unaffected, and rows
+where price sits above the support line still buffer exactly as before.
+
+**WEDGE — a seventh pattern (user request 2026-07-15).** Two yellow trend lines
+converging in the near future. It **does not change Alert Low / Alert High** — the
+user was explicit that the trend-line rules still stand, so a wedge is a
+classification of the chart's shape plus one signal: **price breaking ABOVE the wedge
+is a potential buy**. `detect_wedge()` in `channel_detect.py` needs the fitted SLOPES,
+so `_read_lines_at_today` now returns `(records, meta)` carrying each line's pixel-space
+fit; `read_yellow_trendlines_geom` exposes it and `process_one` derives the prices from
+that one call (a separate wedge read would have added a third `fit_price_axis` OCR pass
+per chart — that OCR is why a batch run takes ~4 minutes).
+
+Both gates are load-bearing, and the numbers came from measuring the real charts —
+**don't loosen either without re-measuring**:
+- `WEDGE_HORIZON_FRAC = 0.15` — the apex must be at most 0.15 pane-widths past today
+  (~3 months; the user picked this from 0.15/0.25/0.40 options). "Two lines that meet
+  somewhere to the right" is not a pattern: *any* two non-parallel lines do, and the
+  ungated test fired on **31 of 353 charts**. At 0.15w it fires on 6 (AML, BAG, CNA,
+  DGE, EZJ, HOC); 0.40w doubles that to 14.
+- `WEDGE_MIN_GAP_FRAC = 0.03` — the lines must still be 3% of price apart at today.
+  This only rejects one thick line double-detected as several (PALLADIUM's three
+  "lines" within 2% of each other, apex 0.001w ahead; also PLATINUM/LAND/ADM). Varying
+  it 3→8% changes nothing else, so the horizon is the real lever.
+
+The pattern is named ahead of the blue classification, because the wedge is made by the
+yellow lines and the user reads it as the chart's shape — CNA and DGE sit inside a blue
+channel *and* carry a wedge. Alert levels are untouched either way; CNA is the case to
+check a change against, since its wedge lines (141.88/168.49) are NOT its alert lines
+(177.73/227.42).
+
+Known deck defect, not yet fixed: **CTEC is a bad example on the BREAKDOWN BELOW
+slide** — it's a mixed chart whose alert levels both came from yellow lines
+(166.73/236.22), so the rail-flip the slide describes never drove it. Pick a
+parallel-only example if that slide survives the amendment above.
+
 ## Resolved (2026-07-07)
 
 - **Legibility confirmed.** Cropped chart images were extracted from a real built

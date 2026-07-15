@@ -46,6 +46,67 @@ CHART_NO_FILL = 'FFF2F2F2'
 
 REFRESH_NOISE_THRESHOLD = 0.03  # don't rewrite if new Alert Low is within 3% of existing
 
+ALERT_LOW_BUFFER = 1.05  # Alert Low sits 5% above the support line, as an early warning
+
+
+def is_noise_refresh(ws, row, existing_source, alert_low, on_alert):
+    """True when a re-read is close enough to what's already there to leave alone.
+
+    The threshold exists to stop harmless churn, but it used to gate the whole row
+    update — so a row already holding a BROKEN pair (Alert Low >= Alert High, as 8
+    rows did after the unclamped buffer shipped) could never be repaired: the new
+    Alert Low landed within 3% of the bad one, the row was skipped, and the stale
+    inversion survived every subsequent run. A row is only 'noise' if what's already
+    in the sheet is coherent; an inverted pair, or a level price has now reached, is
+    always rewritten."""
+    if on_alert:
+        return False
+    if existing_source != 'Auto' or not isinstance(alert_low, (int, float)):
+        return False
+    existing_low = ws.cell(row=row, column=COL_ALERT_LOW).value
+    if not isinstance(existing_low, (int, float)) or not existing_low:
+        return False
+    existing_high = ws.cell(row=row, column=COL_ALERT_HIGH).value
+    if isinstance(existing_high, (int, float)) and existing_high and existing_low >= existing_high:
+        return False        # currently inverted — repair it rather than call it noise
+    return abs(alert_low - existing_low) / existing_low <= REFRESH_NOISE_THRESHOLD
+
+
+def buffered_alert_low(lower, upper, on_alert=False, price=None):
+    """Alert Low from a support level: 5% above it, so the alert fires BEFORE price
+    reaches the line — never at or above Alert High.
+
+    Two guards, both from real bugs (user decisions 2026-07-15):
+
+    * CLAMP. The buffer used to be applied unconditionally while Alert High passed
+      through untouched, so whenever the nearest support sat less than 5% below the
+      nearest resistance the buffer walked Alert Low straight past it — 8 rows
+      (GOLD, SLVR, LAND, CPG, RIO, STJ, HIK, DCC) went live with Alert Low ABOVE
+      Alert High. That is the same degenerate state channel_detect's side-split was
+      written to prevent, reintroduced downstream. The nearest-line rule makes tight
+      pairs common, so the buffer must yield to Alert High rather than cross it.
+    * NO BUFFER ONCE PRICE HAS REACHED **OR PASSED** THE LINE. The buffer is an early
+      warning; if price is already sitting on the line (on_alert) there is nothing
+      left to warn about, and inflating the level by 5% would put Alert Low above the
+      current price.
+      Extended from 'reached' to 'passed' on 2026-07-15, when the band rule started
+      reading a full pair off a broken-down parallel channel (see channel_detect's
+      below_parallel): there, price is BELOW the support rail rather than sitting on
+      it, so on_alert is false and the buffer applied — RIO would have been written
+      7,407.07 against a rail at 7,054.35 and a price of 6,927, a level 6.9% above a
+      price already in hand. The user's rule is that Alert Low IS the bottom of the
+      parallel; past the line, the buffer has nothing left to buy time for.
+    """
+    if lower is None:
+        return None
+    if on_alert or (price is not None and price <= lower):
+        return round(lower, 2)
+    alert_low = lower * ALERT_LOW_BUFFER
+    if upper is not None and alert_low >= upper:
+        # Keep a usable band: sit just under Alert High rather than crossing it.
+        alert_low = min(alert_low, upper * 0.999)
+    return round(alert_low, 2)
+
 
 def load_json(path):
     with open(path, 'r', encoding='utf-8') as f:
@@ -164,9 +225,13 @@ def process(master_ws, charts, channel_by_ticker):
             unmatched.append({'ticker': master_ticker, 'company': company, 'reason': 'no existing row in master sheet'})
             continue
 
+        # Carry on_alert on the match: the detection is keyed by the CHART ticker
+        # (e.g. 'SILVER') while matches are keyed by the MASTER ticker ('SLVR'), so
+        # re-looking the detection up downstream by master ticker silently misses.
         matches.append({'ticker': master_ticker, 'company': company, 'row': master_row,
                         'price': row.get('price'), 'checked_at': row.get('priceCheckedAt'),
-                        'chart_id': row.get('chartId')})
+                        'chart_id': row.get('chartId'),
+                        'on_alert': bool((detection or {}).get('on_alert'))})
 
         # Commodities can't be priced by GOOGLEFINANCE at all any more (verified
         # 2026-07-11: TVC: and CURRENCY:XAU/XAG/XPT/XPD all return #N/A), so their
@@ -195,18 +260,18 @@ def process(master_ws, charts, channel_by_ticker):
 
         kind = detection.get('kind', 'parallel')
         lower, upper = detection['lower'], detection['upper']
+        on_alert = bool(detection.get('on_alert'))
 
         if kind == 'parallel':
-            alert_low = round(lower * 1.05, 2)
+            alert_low = buffered_alert_low(lower, upper, on_alert, row.get('price'))
             alert_high = upper
 
-            existing_low = master_ws.cell(row=master_row, column=COL_ALERT_LOW).value
-            if existing_source == 'Auto' and isinstance(existing_low, (int, float)) and existing_low:
-                pct_change = abs(alert_low - existing_low) / existing_low
-                if pct_change <= REFRESH_NOISE_THRESHOLD:
-                    skipped_noise.append({'ticker': master_ticker, 'company': company, 'existing_low': existing_low, 'new_low': alert_low})
-                    stamp_last_checked(master_ws, master_row, col_last_checked, today)
-                    continue
+            if is_noise_refresh(master_ws, master_row, existing_source, alert_low, on_alert):
+                skipped_noise.append({'ticker': master_ticker, 'company': company,
+                                      'existing_low': master_ws.cell(row=master_row, column=COL_ALERT_LOW).value,
+                                      'new_low': alert_low})
+                stamp_last_checked(master_ws, master_row, col_last_checked, today)
+                continue
 
             master_ws.cell(row=master_row, column=COL_ALERT_LOW, value=alert_low)
             master_ws.cell(row=master_row, column=COL_ALERT_LOW_SOURCE, value='Auto')
@@ -221,15 +286,21 @@ def process(master_ws, charts, channel_by_ticker):
             # No parallel channel — a single trendline sat below the current price,
             # so it's used as Alert Low only. Alert High is left completely
             # untouched (not cleared, not guessed).
-            alert_low = round(lower * 1.05, 2)
+            # Clamp against whatever Alert High is ALREADY in the sheet: this run
+            # only re-read the support side, but the buffer can still push Alert Low
+            # past a previously-written Alert High (HIK, DCC, SSE all inverted this
+            # way — a fresh low meeting a stale high).
+            existing_high = master_ws.cell(row=master_row, column=COL_ALERT_HIGH).value
+            alert_low = buffered_alert_low(
+                lower, existing_high if isinstance(existing_high, (int, float)) and existing_high else None,
+                on_alert, row.get('price'))
 
-            existing_low = master_ws.cell(row=master_row, column=COL_ALERT_LOW).value
-            if existing_source == 'Auto' and isinstance(existing_low, (int, float)) and existing_low:
-                pct_change = abs(alert_low - existing_low) / existing_low
-                if pct_change <= REFRESH_NOISE_THRESHOLD:
-                    skipped_noise.append({'ticker': master_ticker, 'company': company, 'existing_low': existing_low, 'new_low': alert_low})
-                    stamp_last_checked(master_ws, master_row, col_last_checked, today)
-                    continue
+            if is_noise_refresh(master_ws, master_row, existing_source, alert_low, on_alert):
+                skipped_noise.append({'ticker': master_ticker, 'company': company,
+                                      'existing_low': master_ws.cell(row=master_row, column=COL_ALERT_LOW).value,
+                                      'new_low': alert_low})
+                stamp_last_checked(master_ws, master_row, col_last_checked, today)
+                continue
 
             master_ws.cell(row=master_row, column=COL_ALERT_LOW, value=alert_low)
             master_ws.cell(row=master_row, column=COL_ALERT_LOW_SOURCE, value='Auto')
@@ -261,10 +332,14 @@ def process(master_ws, charts, channel_by_ticker):
 
 
 def build_below_alert_rows(master_ws, matches):
-    """Every matched ticker whose captured live price sits below its (possibly
-    just-updated) Alert Low, worst gap first — the input for the below-alert
-    table at the top of 'Stocks of Interest'. Reads the master sheet AFTER
-    process() so freshly applied Alert Lows are what get compared."""
+    """Every matched ticker whose captured live price sits at or below its (possibly
+    just-updated) Alert Low, worst gap first — the input for the alert table at the
+    top of 'Stocks of Interest'. Reads the master sheet AFTER process() so freshly
+    applied Alert Lows are what get compared.
+
+    Rows carry on_alert (price sitting ON a drawn line, per channel_detect's
+    ON_ALERT_TOL) so refresh_block can split them into their own section — those
+    have reached the level rather than fallen through it."""
     rows = []
     for m in matches:
         price = m['price']
@@ -291,6 +366,7 @@ def build_below_alert_rows(master_ws, matches):
             'target_value': target_value if isinstance(target_value, (int, float)) else None,
             'checked_at': m['checked_at'],
             'chart_id': m.get('chart_id'),
+            'on_alert': bool(m.get('on_alert')),
         })
     rows.sort(key=lambda r: r['gap_pct'])
     return rows
@@ -488,7 +564,9 @@ def main():
     below_rows = build_below_alert_rows(ws, matches)
     from add_below_alert_sheet import refresh_block, SHEET_NAME as SOI_SHEET
     refresh_block(wb[SOI_SHEET], below_rows)
-    print(f"Below-alert table: {len(below_rows)} ticker(s) under Alert Low -> top of '{SOI_SHEET}'")
+    n_on_alert = sum(1 for r in below_rows if r.get('on_alert'))
+    print(f"Alert table: {len(below_rows)} ticker(s) at/under Alert Low "
+          f"({n_on_alert} on alert) -> top of '{SOI_SHEET}'")
 
     wb.save(master_out)
     update_feedback_md(feedback_path, applied, rejected, skipped_manual, skipped_noise, unmatched)

@@ -65,6 +65,24 @@ _CURRENCIES = {'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'CAD', 'NZD',
 _EXPLICIT_MACRO = {'NASDAQ', 'DJI', 'DXY', 'VIX'}
 
 
+# A drawn line within this fraction of the live price is treated as REACHED rather
+# than assigned a side (see process_one). 0.25% is about the resolution limit of
+# these screenshots: on a ~1300px-tall pane one pixel is ~0.1% of price, so a line
+# 2-3px from the last-price line cannot be honestly called "above" or "below" it.
+# User decision 2026-07-15.
+ON_ALERT_TOL = 0.0025
+# See detect_wedge. Horizon is the load-bearing gate; the gap floor only drops lines
+# double-detected on top of each other.
+WEDGE_HORIZON_FRAC = 0.15   # apex at most 0.15 pane-widths past today (~3 months)
+WEDGE_MIN_GAP_FRAC = 0.03   # lines still >=3% of price apart at today
+
+# Minimum span (fraction of pane width) for a CHANNEL-BLUE line to count as a rail.
+# Well above the yellow lines' 0.12: rails are drawn across the chart, while the
+# SELL/BUY buttons' 1px blue border is ~100px wide and clears 0.12 on a narrow pane.
+# See read_blue_rails. Real rails measured 0.40-0.90; button borders 0.12.
+BLUE_MIN_SPAN_FRAC = 0.25
+
+
 def is_macro_reference(ticker):
     """True for index / bond-yield / FX-pair symbols that should be excluded from
     channel detection. Deliberately narrow — equity indices actually tracked for a
@@ -446,6 +464,59 @@ def _extract_straight_lines(mask, w, h, max_lines=6, resid_px=3.0,
     return lines
 
 
+def channel_blue_mask(arr):
+    """Boolean mask of channel-blue pixels — the array-wide form of is_channel_blue,
+    for the straight-line extractor."""
+    r = arr[..., 0].astype(np.int32)
+    g = arr[..., 1].astype(np.int32)
+    b = arr[..., 2].astype(np.int32)
+    return (r >= 15) & (r <= 60) & (g >= 60) & (g <= 110) & (b >= 190) & (b <= 255)
+
+
+def read_blue_rails(image_path, known_price=None):
+    """Prices (at today's date) of the SOLID channel-blue rails, each extracted and
+    fitted independently — the same RANSAC treatment as the yellow trend lines.
+
+    Supersedes read_channel()'s column-pairing for ALERT SELECTION (user rule
+    2026-07-15). Pairing clustered the blue pixels in each sampled column and
+    required exactly 1 or 2 clusters, which assumed both rails are in-frame at the
+    same x and nothing else blue shares the column. Neither holds: on a steep
+    channel one rail leaves the frame long before today (SILVER's lower rail exits
+    at x=586 of 1452), and TradingView's dashed midline / projection lines and the
+    blue SMA share columns with the rails. A single mispaired sample then poisons
+    the straight-line fit — on SILVER that produced a bogus 52.54/65.56 "channel"
+    fitted through the dashed line, so the REAL upper rail (~58.1, and the nearest
+    support below price) never became a candidate at all and a distant yellow line
+    at 56.97 won by default.
+
+    Extracting each line independently fixes both: the rails are found by their own
+    collinearity, the dashed midline is rejected by the coverage check (a dashed
+    stroke covers ~half its span), the wavy blue SMA is rejected the same way, and a
+    rail that has left the frame simply fails the reach-today test instead of
+    corrupting the other rail's fit. Rails are validated exactly like yellow lines.
+    Returns a list of prices (see _read_lines_at_today for the geometry behind them);
+    direction is decided by the caller from which side of the price each falls on.
+
+    Unlike a yellow trend line, a rail is NOT required to be drawn as far as today:
+    a TradingView channel is a projected construct, and its rails are meaningful
+    extrapolated forward (that is what the old paired read did, and requiring reach
+    here dropped 56 otherwise-good charts). The in-frame test still applies, so a
+    rail that has genuinely left the pane by today — SILVER's lower rail, off the
+    bottom — is still discarded rather than reported at an off-chart price.
+
+    A rail must also span at least BLUE_MIN_SPAN_FRAC of the pane. The SELL/BUY
+    price buttons top-left are drawn with a 1px blue BORDER, and RANSAC happily fits
+    that border's horizontal edge as a "line": ~100px long, which on a narrow pane
+    (WIZZ's is 820px wide) clears the 12% default the yellow lines use. Thickness
+    cannot separate them — the border is 1px where a real rail is ~4px — but span
+    can: measured across 60 charts, real rails span 40-90% of the pane and the only
+    lines below 25% were exactly the four button borders (WIZZ, TFIF, VOF, JDW).
+    WIZZ's button was being published as Alert High 2,984 against a price of 1,106."""
+    return [r['price'] for r in _read_lines_at_today(
+        image_path, channel_blue_mask, known_price,
+        require_reach=False, min_span_frac=BLUE_MIN_SPAN_FRAC)[0]]
+
+
 def read_yellow_trendlines(image_path, known_price=None):
     """Prices (at today's date) of the user's hand-drawn yellow trend lines. Returns
     a list of floats — empty when the axis can't be read or no straight yellow line
@@ -454,21 +525,47 @@ def read_yellow_trendlines(image_path, known_price=None):
     extrapolation), land inside the pane, and sit within a plausible ratio of the
     current price. Direction (support vs resistance) is decided by the caller from
     which side of the price it falls on."""
+    return [r['price'] for r in read_yellow_trendlines_geom(image_path, known_price)[0]]
+
+
+def read_yellow_trendlines_geom(image_path, known_price=None):
+    """As read_yellow_trendlines, but keeps each line's fitted geometry — returns
+    (records, meta). Wedge detection needs the SLOPES to find where two lines meet,
+    which the price-only read throws away. process_one uses this and derives the
+    prices from it, so the wedge costs no extra OCR pass (fit_price_axis is the
+    expensive part and already runs twice per chart, once per colour)."""
+    return _read_lines_at_today(image_path, trend_yellow_mask, known_price)
+
+
+def _read_lines_at_today(image_path, mask_fn, known_price=None, require_reach=True,
+                         min_span_frac=0.12):
+    """Shared by the yellow-trendline and blue-rail reads so both price the same
+    axis identically: extract straight lines from mask_fn's colour, then value each
+    at today's x under the same validity gates. require_reach=False lets a line be
+    extrapolated to today from wherever it was drawn, and min_span_frac sets how much
+    of the pane a line must cross to count (both differ for rails — see
+    read_blue_rails).
+
+    Returns (records, meta): a record per accepted line, carrying both its price at
+    today and the pixel-space fit it came from, and meta with today_x / pane width so
+    a caller can reason about the lines geometrically. Callers wanting only prices
+    take r['price']; meta is {} when the axis or today's x could not be read."""
     img = Image.open(image_path).convert('RGB')
     arr = np.array(img)
     h, w, _ = arr.shape
     a, b, axis_reason = fit_price_axis(img, arr, w, h, known_price)
     if axis_reason is not None:
-        return []
+        return [], {}
     today_x = find_today_x(arr, w)
     if today_x is None:
-        return []
+        return [], {}
     out = []
-    for slope, intercept, xmin, xmax in _extract_straight_lines(trend_yellow_mask(arr), w, h):
+    for slope, intercept, xmin, xmax in _extract_straight_lines(mask_fn(arr), w, h,
+                                                                min_span_frac=min_span_frac):
         # Only trust the value at today's x if the drawn line actually reaches there
         # (allow a modest 0.15w extrapolation past its drawn extent — trend lines are
         # often drawn a little short of, or into, the future edge).
-        if today_x < xmin - 0.15 * w or today_x > xmax + 0.15 * w:
+        if require_reach and (today_x < xmin - 0.15 * w or today_x > xmax + 0.15 * w):
             continue
         y_today = slope * today_x + intercept
         if not (-0.05 * h <= y_today <= 1.05 * h):
@@ -478,8 +575,53 @@ def read_yellow_trendlines(image_path, known_price=None):
             continue
         if known_price is not None and not (0.3 <= price / known_price <= 3.0):
             continue
-        out.append(round(price, 2))
-    return out
+        out.append({'price': round(price, 2), 'slope': slope, 'intercept': intercept,
+                    'xmin': xmin, 'xmax': xmax})
+    return out, {'today_x': today_x, 'w': w}
+
+
+def detect_wedge(records, meta, known_price):
+    """A WEDGE: two yellow trend lines converging in the near future (user rule
+    2026-07-15). Returns a dict describing it, or None.
+
+    A wedge does NOT change Alert Low / Alert High — the trend-line rules still stand
+    and the nearest line each side of price wins as always. It is a classification of
+    the chart's shape, plus the break signal the user reads off it: price breaking
+    ABOVE a wedge is a potential buy.
+
+    Both gates matter, because 'two lines that meet somewhere to the right' is not a
+    pattern — any two non-parallel lines do that, and the bare test fired on 31 of the
+    353 charts:
+      * HORIZON. The apex must be at most WEDGE_HORIZON_FRAC of the pane width ahead
+        of today — 'near future', measured on the charts at roughly three months. The
+        horizon is the whole rule: relaxing it to 0.40w doubles the hits to 14.
+      * GAP FLOOR. The lines must still be WEDGE_MIN_GAP_FRAC apart at today. Without
+        it, one thick line double-detected reads as a wedge that has already closed —
+        PALLADIUM's three 'lines' within 2% of each other, apex 0.001w away, plus
+        PLATINUM/LAND/ADM.
+    Where several pairs qualify the most imminent apex wins."""
+    lines = [r for r in records if r.get('price')]
+    if len(lines) < 2 or not meta or known_price is None:
+        return None
+    today_x, w = meta['today_x'], meta['w']
+    best = None
+    for i in range(len(lines)):
+        for j in range(i + 1, len(lines)):
+            l1, l2 = lines[i], lines[j]
+            if abs(l1['slope'] - l2['slope']) < 1e-9:
+                continue                      # parallel: they never meet
+            apex_x = (l2['intercept'] - l1['intercept']) / (l1['slope'] - l2['slope'])
+            ahead = (apex_x - today_x) / w
+            if not (0 < ahead <= WEDGE_HORIZON_FRAC):
+                continue                      # already crossed, or too far out to be 'near'
+            gap = abs(l1['price'] - l2['price'])
+            if gap / known_price < WEDGE_MIN_GAP_FRAC:
+                continue                      # same line found twice, not a wedge
+            if best is None or ahead < best['apex_ahead_frac']:
+                lo, hi = sorted([l1['price'], l2['price']])
+                best = {'apex_ahead_frac': round(ahead, 4), 'lower_line': lo, 'upper_line': hi,
+                        'broken_above': known_price > hi}
+    return best
 
 
 def process_one(ticker, screenshot_path, known_price=None):
@@ -504,40 +646,104 @@ def process_one(ticker, screenshot_path, known_price=None):
     candidates = []                # every boundary / trend line price found
     blue_reason = raw['reason']
 
-    if raw['kind'] == 'parallel':
-        # Blue channel keeps its full plausibility gate (width 8-150%, price
-        # bracketed) before its rails count — a noise channel contributes nothing.
-        pf = plausibility_filter('parallel', raw['lower'], raw['upper'], known_price)
-        if pf is None:
-            candidates += [raw['lower'], raw['upper']]
-        else:
-            blue_reason = pf
-    elif raw['kind'] == 'single' and known_price is not None:
-        sp = raw['single_price']
-        side = 'single_low' if sp < known_price else 'single_high'
-        pf = plausibility_filter(side, sp if side == 'single_low' else None,
-                                 sp if side == 'single_high' else None, known_price)
-        if pf is None:
-            candidates.append(sp)
-        else:
-            blue_reason = pf
-
-    yellow = read_yellow_trendlines(screenshot_path, known_price) if known_price is not None else []
+    # Blue rails are read line-by-line (read_blue_rails) rather than taken from
+    # read_channel's column-pairing, which silently dropped in-frame rails whenever
+    # the other rail had left the frame or a dashed/SMA line shared the column —
+    # see read_blue_rails' docstring for the SILVER case this fixes. read_channel is
+    # still consulted for x_frac and for its rejection reason when nothing is found.
+    blue = read_blue_rails(screenshot_path, known_price) if known_price is not None else []
+    # Read the yellow lines WITH their geometry and derive the prices from it, rather
+    # than calling read_yellow_trendlines and then re-reading for the wedge: the axis
+    # OCR inside each read is what makes a batch run take minutes.
+    if known_price is not None:
+        yellow_geom, yellow_meta = read_yellow_trendlines_geom(screenshot_path, known_price)
+    else:
+        yellow_geom, yellow_meta = [], {}
+    yellow = [r['price'] for r in yellow_geom]
+    wedge = detect_wedge(yellow_geom, yellow_meta, known_price)
+    candidates += blue
     candidates += yellow
 
     # Split EVERY candidate by which side of today's price it sits on (not by its
     # blue lower/upper role — when price has broken just outside the channel, a rail
     # can be on the far side of price, and forcing it to its old role produced a
     # degenerate alert_high < alert_low). Nearest on each side wins.
-    below = [c for c in candidates if known_price is not None and c < known_price]
-    above = [c for c in candidates if known_price is not None and c > known_price]
-    alert_low = max(below) if below else None      # nearest support below price
+    #
+    # A line closer than ON_ALERT_TOL to price is NOT assigned a side at all (user
+    # rule 2026-07-15). At that distance the screenshot genuinely cannot resolve
+    # which side it falls on — SILVER's top rail reads 58.09 against a 58.0602 close,
+    # a 2.6px gap, so a strict comparison made the rail "resistance" when the user
+    # reads it as support that price has broken above. Rather than guess the side
+    # from noise, the line is reported as the level price has REACHED: it becomes
+    # alert_low (the buy trigger) and the row is flagged on_alert for the Stocks of
+    # Interest block. This is not an axis error — the axis was verified against the
+    # dotted last-price line to within 0.01% on this chart; price is simply sitting
+    # on the line.
+    at = []
+    below = []
+    above = []
+    for c in candidates:
+        if known_price is None:
+            continue
+        if abs(c - known_price) / known_price <= ON_ALERT_TOL:
+            at.append(c)
+        elif c < known_price:
+            below.append(c)
+        else:
+            above.append(c)
+    on_alert = bool(at)
+    # The reached line is the operative support; fall back to the nearest line
+    # genuinely below price when nothing is sitting on it.
+    alert_low = max(at + below) if (at or below) else None
     alert_high = min(above) if above else None     # nearest resistance above price
+
+    # BELOW A PARALLEL CHANNEL, THE BAND STILL GOVERNS (user rule 2026-07-15).
+    # The side-of-price split leaves a broken-down chart with no support at all — both
+    # rails sit above price, so alert_low comes back None and the row ships a bare
+    # resistance while a stale alert_low stays in the sheet above it. The user reads a
+    # parallel channel as the trading band itself: price dropping out of the bottom is
+    # the buy signal, not a reason to re-cast the bottom rail as resistance. So the
+    # rails keep the roles they were drawn with.
+    #
+    # Deliberately narrow:
+    #   - parallel ONLY. Where yellow lines are drawn too they were put nearer to price
+    #     on purpose, and still win on the nearest-line rule (CTEC, ADM).
+    #   - a real channel (two distinct rails), not a lone blue line (AV., MTRO, MKS).
+    #   - a breakout ABOVE is untouched: the top rail still flips to support.
+    below_parallel = (not on_alert and not yellow and known_price is not None
+                      and len(set(blue)) >= 2 and all(c > known_price for c in blue))
+    if below_parallel:
+        alert_low, alert_high = min(blue), max(blue)
 
     def src(val):
         if val is None:
             return None
-        return 'yellow' if val in yellow else 'blue'
+        return 'blue' if val in blue else 'yellow'
+
+    # Plain-English shape of the chart, for the user to check a run against the
+    # actual TradingView drawings. Describes where price sits relative to the blue
+    # channel — which is what decides whether a rail acts as support or resistance.
+    if on_alert:
+        pattern = 'price ON a drawn line (%s) — reached, alert triggered' % (
+            'blue rail' if at[0] in blue else 'trend line')
+    elif wedge:
+        # Named ahead of the blue classification: a wedge is the shape the user reads
+        # off the chart, and it is the yellow lines that make it (CNA and DGE sit in a
+        # blue channel AND carry a wedge). The alert levels are unaffected either way.
+        pattern = ('wedge (trend lines converging) — price broke ABOVE, potential buy'
+                   if wedge['broken_above'] else
+                   'wedge (trend lines converging) — price still inside')
+    elif not blue:
+        pattern = 'trend lines only (no blue channel read)' if yellow else 'no lines read'
+    elif known_price is None:
+        pattern = 'blue channel (no price to compare)'
+    elif all(c < known_price for c in blue):
+        pattern = 'price ABOVE channel (broken out) — top rail is support'
+    elif all(c > known_price for c in blue):
+        pattern = ('price BELOW channel (broken down) — band still governs' if below_parallel
+                   else 'price BELOW channel (broken down) — bottom rail is resistance')
+    else:
+        pattern = 'price INSIDE channel'
 
     if alert_low is not None and alert_high is not None:
         kind, lower, upper, reason = 'parallel', alert_low, alert_high, None
@@ -550,7 +756,9 @@ def process_one(ticker, screenshot_path, known_price=None):
         reason = blue_reason or 'no channel or trend line found near price'
 
     return {'ticker': ticker, 'screenshot': screenshot_path, 'kind': kind, 'lower': lower, 'upper': upper,
-             'x_frac': x_frac, 'reason': reason,
+             'x_frac': x_frac, 'reason': reason, 'pattern': pattern,
+             'blue_lines': blue, 'yellow_lines': yellow, 'wedge': wedge,
+             'on_alert': on_alert, 'on_alert_line': (max(at) if at else None),
              'alert_low_src': src(alert_low), 'alert_high_src': src(alert_high)}
 
 
