@@ -160,6 +160,45 @@ asked for. The guard now takes `price` (from `row.get('price')` at both call sit
 returns the bare level when `price <= lower`. The CLAMP guard is unaffected, and rows
 where price sits above the support line still buffer exactly as before.
 
+## 'Stocks of Interest' section tables are pipeline-maintained (2026-07-15)
+
+The section tables BELOW the auto-built below-alert block (rows 41-81: at lower
+boundary / near / watchlist / breakouts) used to be hand-maintained, and drifted:
+audited 2026-07-15, **17 of 25 rows sat in the wrong section** and 21 of 25 carried an
+Alert Low that no longer matched the pipeline, all stamped 'Last Updated 2026-07-06'.
+The drift ran the DANGEROUS way — BEZ (+15.5%) and AUTO (+11.4%) were still listed as
+'AT LOWER BOUNDARY — highest priority' while nine stocks genuinely at their buy point
+(DGE, AZN, GSK, GOLD, HSBA, CRDA, PLAT, PRU, ALW) sat in lower-priority sections, and
+GSK was listed twice. `scripts/refresh_soi_sections.py` now rebuilds them, wired into
+`run_full_pipeline.js` as a sub-step of step 3 AFTER `update_master_sheet.py` (it reads
+the Alert Low/High that step writes). Idempotent — a second run is a byte-for-byte
+no-op. Ownership, which must be preserved by any change:
+
+- **Pipeline-owned** (rewritten each run): C Pattern, E Alert Low, G Alert High,
+  P Last Updated, section placement, and within-section order (nearest its alert low
+  first).
+- **Regenerated each run**: D/F/H/I/J/Q are row-relative formulas and MUST be rewritten
+  rather than copied — a row that moves section otherwise keeps pointing at its old
+  row's cells. Same class of bug as the sheet-rename VLOOKUP breakage above.
+- **Hand-written, carried per ticker and never invented**: A Stock, K Chart Note,
+  L Analyst Rating, M Holdings, N Target Value, O Notes.
+- **MEMBERSHIP IS NOT AUTOMATIC.** These tables are a curated watchlist: the script
+  re-sections and refreshes the stocks already listed and never adds or drops one. Add
+  a stock by hand and the next run places and maintains it. (The block above it IS a
+  full auto-generated list — different thing, same sheet.)
+
+Two traps found while building it, both worth keeping in mind:
+- **Unmerge before clearing.** The section bands are merged ranges and a `MergedCell`'s
+  `.value` is read-only — clearing first raises AttributeError.
+- **'No lines drawn' ≠ 'not read this run'.** `channel_detect` sets
+  `pattern='no lines read'` for BOTH an undrawn chart and a failed axis read, so only
+  `reason` separates them (every axis failure names the axis; an undrawn chart says
+  'no channel or trend line found near price'). A row whose axis read failed still HAS
+  the user's drawings and keeps its Alert Low from an earlier run — labelling it 'No
+  lines drawn' would tell him his trendlines had vanished, and would hide that the
+  level is inherited. 7 of 353 charts read cleanly at 09:22 but not at 16:00 (AUTO,
+  NWG, TW., SMT, BA, ENT, III), six of them withheld by the price-bracket guard.
+
 **The below-alert block's SECTION LAYOUT is coupled to `verify_pipeline.py`'s row
 count.** The block is no longer one section: 'On Alert' sits above 'Below Alert Low'
 (2026-07-15), so a second section band and column-header row now fall inside the

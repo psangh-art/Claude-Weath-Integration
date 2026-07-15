@@ -150,6 +150,23 @@ function main() {
     return;
   }
 
+  // Sub-step of step 3 (not a numbered "=== Step N/M ===" marker — the Production
+  // Centre parses those): re-section and refresh the 'Stocks of Interest' section
+  // tables. They were hand-maintained and drifted badly — audited 2026-07-15, 17 of
+  // 25 rows sat in the wrong section against levels last touched on 07-06, with BEZ
+  // and AUTO still listed 'at lower boundary' while nine stocks actually at their buy
+  // point sat below. Runs AFTER update_master_sheet.py, since it reads the Alert Low /
+  // Alert High that step has just written.
+  console.log('\nRe-sectioning the Stocks of Interest tables...');
+  const soiResult = spawnSync('python', [
+    path.join(__dirname, 'refresh_soi_sections.py'), MASTER_SHEET_PATH, '--apply',
+  ], { stdio: 'inherit' });
+  if (soiResult.status !== 0) {
+    console.error('Stocks of Interest re-sectioning failed (the Investments tab itself is already updated and intact).');
+    process.exitCode = 1;
+    return;
+  }
+
   // Sub-step of step 3 (deliberately NOT a numbered "=== Step N/M ===" marker —
   // the Production Centre parses those): mirror spending_summary.xlsx's tabs
   // into the master workbook so the Finance Google Sheet import carries them.
