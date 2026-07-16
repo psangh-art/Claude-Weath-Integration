@@ -24,6 +24,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from ticker_normalize import normalize, master_tickers_match
+from refresh_soi_sections import pattern_label
 
 SHEET_NAME = 'Investments'
 COL_CHART = 1
@@ -258,7 +259,8 @@ def process(master_ws, charts, channel_by_ticker):
         matches.append({'ticker': master_ticker, 'company': company, 'row': master_row,
                         'price': row.get('price'), 'checked_at': row.get('priceCheckedAt'),
                         'chart_id': row.get('chartId'),
-                        'on_alert': bool((detection or {}).get('on_alert'))})
+                        'on_alert': bool((detection or {}).get('on_alert')),
+                        'detection': detection})
 
         # Commodities can't be priced by GOOGLEFINANCE at all any more (verified
         # 2026-07-11: TVC: and CURRENCY:XAU/XAG/XPT/XPD all return #N/A), so their
@@ -394,6 +396,11 @@ def build_below_alert_rows(master_ws, matches):
             'checked_at': m['checked_at'],
             'chart_id': m.get('chart_id'),
             'on_alert': bool(m.get('on_alert')),
+            # Pattern label for the block's new Pattern column — the SAME labelling
+            # (and inherited-vs-fresh distinction) the section tables use, so a row
+            # whose axis read failed this run reads 'Not read this run — level
+            # inherited' rather than the misleading 'No lines drawn'.
+            'pattern': pattern_label(m.get('detection')),
         })
     rows.sort(key=lambda r: r['gap_pct'])
     return rows

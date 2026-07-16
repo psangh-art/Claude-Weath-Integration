@@ -17,7 +17,9 @@ add manual content above row 41 in that sheet.
 
 Usage: python add_below_alert_sheet.py <master.xlsx> <below_alert_rows.json>
   rows: [{"ticker","share_name","price","alert_low","alert_high","gap_pct",
-          "holdings","target_value","checked_at"}, ...], worst gap first.
+          "holdings","target_value","checked_at","chart_id","on_alert","pattern"},
+         ...], worst gap first. ("pattern" is the channel_detect label shown in the
+  block's Pattern column; absent rows just render blank there.)
 """
 import sys
 import json
@@ -34,11 +36,15 @@ BAND_ROW = 3             # coloured section band, like the section headers below
 HEADER_ROW = 4
 DATA_START_ROW = 5
 MAX_DATA_ROWS = 34       # rows 5..38; 39-40 stay blank as a separator
-LAST_COL = 10            # this table occupies columns A..J
+LAST_COL = 17            # this table occupies columns A..Q, matching the section
+                         # tables below it (2026-07-16 — user asked for column parity
+                         # with 'Near Lower Boundary': Pattern, Proximity, Upside %,
+                         # P/E, Div Yield, Chart Note, Analyst Rating, Notes, ...)
 
 # Per-row click-through to the stock's TradingView layout, matching the
 # Investments sheet's "TradingView" column (=HYPERLINK(chart/<chartId>/)).
 from config import CFG as _CFG
+from ticker_normalize import normalize
 TV_LAYOUT_URL = _CFG['tvLayoutUrlTemplate']
 TV_LINK_LABEL = '📊 Layout'
 
@@ -72,12 +78,19 @@ _TOP_LEFT = Alignment(horizontal='left', vertical='top', wrap_text=False)
 _TOP_LEFT_WRAP = Alignment(horizontal='left', vertical='top', wrap_text=True)
 _TOP_RIGHT = Alignment(horizontal='right', vertical='top', wrap_text=False)
 
-# Columns reordered to match the section tables below: Stock name first (wide col
-# A), Ticker second (narrow col B). Numeric columns are right-aligned with the
-# same formats the tables below use (#,##0.00 for prices, #,##0 for whole-pound £).
-HEADER = ['Stock', 'Ticker', 'Current Price', 'Alert Low', 'Gap %', 'Alert High',
-          'Holdings (£)', 'Target Value (£)', 'Price Checked At', 'TradingView']
-_NUM_FMT = {3: '#,##0.00', 4: '#,##0.00', 5: '0.0"%"', 6: '#,##0.00', 7: '#,##0', 8: '#,##0'}
+# Column schema is IDENTICAL to the section tables below (refresh_soi_sections.py's
+# HEADER), so the whole 'Stocks of Interest' sheet reads as one document (user
+# request 2026-07-16 — the block used to carry only 10 columns and was "missing
+# chart note, div yield etc"). Pattern/Proximity/Upside/P/E/Div Yield are derived
+# per run; Chart Note / Analyst Rating / Notes (cols K/L/O) are hand-curated only
+# in the section tables and are left BLANK here (user decision 2026-07-16) — the
+# block is a full auto-generated list, so inventing per-stock notes for it isn't
+# wanted.
+HEADER = ['Stock', 'Ticker', 'Pattern', 'Proximity', 'Alert Low', 'Current', 'Alert High',
+          'Upside %', 'P/E', 'Div Yield', 'Chart Note', 'Analyst Rating', 'Holdings (£)',
+          'Target Value (£)', 'Notes', 'Last Updated', 'TradingView']
+# Price columns keep thousands separators; £ holdings/target show whole pounds.
+_NUM_FMT = {5: '#,##0.00', 6: '#,##0.00', 7: '#,##0.00', 13: '#,##0', 14: '#,##0'}
 
 
 def _band(ws, row, text, fill, size, bold, italic=False):
@@ -134,12 +147,21 @@ def _section(ws, start_row, band_text, band_fill, data_fill, rows):
         ticker_cell = ws.cell(row=row_n, column=2, value=r['ticker'])
         ticker_cell.font = Font(name=FONT_NAME, size=8, bold=True, color=NAVY)
 
-        ws.cell(row=row_n, column=3, value=round(r['price'], 2))
-        ws.cell(row=row_n, column=4, value=r['alert_low'])
-        gap_cell = ws.cell(row=row_n, column=5, value=round(r['gap_pct'], 1))
+        # C Pattern (channel_detect label, carried on the row); D Proximity is a
+        # row-relative formula off Current (F) and Alert Low (E), exactly as the
+        # section tables build it. A stock >10% below its alert low still gets the
+        # red-bold emphasis the Gap % column used to carry — now on Proximity.
+        ws.cell(row=row_n, column=3, value=r.get('pattern') or '')
+        prox_cell = ws.cell(row=row_n, column=4,
+                            value=f'=IFERROR(TEXT((F{row_n}-E{row_n})/E{row_n},"0.0%")&" above low","")')
         if r['gap_pct'] <= -10:
-            gap_cell.font = Font(name=FONT_NAME, size=8, bold=True, color=GAP_BAD)
-        ws.cell(row=row_n, column=6, value=r['alert_high'])
+            prox_cell.font = Font(name=FONT_NAME, size=8, bold=True, color=GAP_BAD)
+        ws.cell(row=row_n, column=5, value=r['alert_low'])
+        ws.cell(row=row_n, column=6, value=round(r['price'], 2))   # Current — a literal
+                                                                   # value (not a VLOOKUP)
+                                                                   # so verify_pipeline can
+                                                                   # count it as numeric
+        ws.cell(row=row_n, column=7, value=r['alert_high'])
         _data_row_tail(ws, row_n, r)
         row_n += 1
     return row_n
@@ -205,15 +227,30 @@ def refresh_block(ws, rows):
 
 
 def _data_row_tail(ws, row_n, r):
-    """Holdings/target/checked-at/TradingView-link cells + numeric formats."""
-    # Holdings/Target £ display as whole pounds (user rule, 2026-07-11).
-    ws.cell(row=row_n, column=7, value=r['holdings'])
-    ws.cell(row=row_n, column=8, value=r['target_value'])
-    ws.cell(row=row_n, column=9, value=r['checked_at'])
+    """The derived + hand-curated + link columns (H..Q), matching the section tables.
 
-    # Click-through to this stock's TradingView layout (blank if no chart).
+    H Upside % and J Div Yield are row-relative formulas; I P/E is a GOOGLEFINANCE
+    formula off the stock's Google ticker; K/L/O (Chart Note / Analyst Rating /
+    Notes) are hand-curated in the section tables only and stay blank here; M/N are
+    the pipeline's Holdings/Target values; P is the rebuild date; Q the TV link."""
+    ws.cell(row=row_n, column=8, value=f'=IFERROR((G{row_n}-E{row_n})/E{row_n},"")')
+
+    gt = (normalize(r['ticker']) or {}).get('google_finance_ticker')
+    if gt:
+        ws.cell(row=row_n, column=9, value=f'=IFERROR(googlefinance("{gt}","pe"),"")')
+    ws.cell(row=row_n, column=10,
+            value=f"=IFERROR(VLOOKUP(B{row_n},'Base Data'!$A:$Q,9,FALSE()),\"\")")
+
+    # K (11) Chart Note, L (12) Analyst Rating, O (15) Notes — left blank by design.
+    # Holdings/Target £ display as whole pounds (user rule, 2026-07-11).
+    ws.cell(row=row_n, column=13, value=r['holdings'])
+    ws.cell(row=row_n, column=14, value=r['target_value'])
+    ws.cell(row=row_n, column=16, value=datetime.now().date())
+    ws.cell(row=row_n, column=16).number_format = 'yyyy-mm-dd'
+
+    # Q (17) click-through to this stock's TradingView layout (blank if no chart).
     chart_id = r.get('chart_id')
-    tv_cell = ws.cell(row=row_n, column=10)
+    tv_cell = ws.cell(row=row_n, column=17)
     if chart_id:
         url = TV_LAYOUT_URL.format(chart_id=chart_id)
         tv_cell.value = f'=HYPERLINK("{url}","{TV_LINK_LABEL}")'
@@ -221,9 +258,7 @@ def _data_row_tail(ws, row_n, r):
     tv_cell.alignment = _TOP_LEFT
 
     for c, fmt in _NUM_FMT.items():
-        cell = ws.cell(row=row_n, column=c)
-        cell.number_format = fmt
-        cell.alignment = _TOP_RIGHT
+        ws.cell(row=row_n, column=c).number_format = fmt
 
 
 def _finish(ws, first_blank, count):

@@ -243,9 +243,20 @@ def fit_price_axis(img, arr, w, h, known_price=None):
     #     it doesn't, the OCR'd axis is on the wrong scale (systematic misread) and
     #     must not produce a channel — this is what stops a false channel off an
     #     axis that OCR'd as 280..520 against a true price of 197 (BT.A).
-    lbl_vals = [c[0] for c in clean]
-    lo_lbl, hi_lbl = min(lbl_vals), max(lbl_vals)
-    if known_price is not None and not (lo_lbl * 0.9 <= known_price <= hi_lbl * 1.1):
+    lbl_vals = sorted(c[0] for c in clean)
+    lo_lbl, hi_lbl = lbl_vals[0], lbl_vals[-1]
+    # The lowest or highest axis label is often occluded by the last-price chip, the
+    # crosshair, or a drawn marker and so never OCRs (WPP's "200" label sits behind
+    # the price chip + dashed line + arrow; the fit off 400..1200 is still perfect).
+    # The axis is linear, so extrapolating the fit up to ONE tick-spacing past the
+    # read labels is safe — the missed label is exactly one tick out. Anything
+    # further means the current price is genuinely off the visible frame (NXT 14765
+    # against a 3000..10000 axis, KGF 284 against 500..700): a stale/wrong-range
+    # chart with no drawn line near today's price, which must still be rejected.
+    tick = float(np.median(np.diff(lbl_vals))) if len(lbl_vals) >= 2 else 0.0
+    margin_lo = max(0.1 * lo_lbl, tick)
+    margin_hi = max(0.1 * hi_lbl, tick)
+    if known_price is not None and not (lo_lbl - margin_lo <= known_price <= hi_lbl + margin_hi):
         return None, None, (f'OCR axis labels [{lo_lbl:g}-{hi_lbl:g}] do not bracket known price '
                             f'{known_price:g} — axis read untrustworthy')
 

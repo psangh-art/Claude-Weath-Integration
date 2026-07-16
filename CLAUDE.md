@@ -75,6 +75,25 @@ something worth remembering.
     images) shows only magnitude shifts in the expected direction, zero detections
     gained or lost. (AZN's yellow-drawn channel still yields a stray-blue false
     single — pre-existing, unrelated to this fix, worth a separate look.)
+  - **Price-bracket guard now extrapolates one tick past the read labels
+    (2026-07-16).** `fit_price_axis`'s bracket check used to reject any read where the
+    known price fell outside `[lo_lbl×0.9, hi_lbl×1.1]` of the OCR'd axis labels. The
+    lowest/highest label is often OCCLUDED by the last-price chip, the crosshair or a
+    drawn marker and never OCRs — WPP's "200" label sits behind the price chip +
+    dashed line + arrow, so the axis OCR'd as [400-1200], 278.5 fell below 360, and
+    the whole chart was rejected, leaving WPP stuck at a stale Alert Low of 1121.92
+    (from when it traded ~£11) and wrongly parked in BELOW ALERT LOW. The axis is
+    linear, so the fit off 400..1200 is perfect and the missed label is exactly one
+    tick out: the guard now allows the price up to ONE median tick-spacing beyond the
+    read labels (`margin = max(0.1×label, tick)`). Measured on the 22 charts the old
+    guard rejected: only **3 change** — WPP now reads its yellow rails (202.65/437.34,
+    matches the chart), SMWH reads a single high, OCDO's axis is trusted (still no line
+    near price). The other **19 stay rejected** and correctly so — their prices are
+    genuinely off the visible frame (NXT 14765 vs a 3000-10000 axis, KGF 284 vs
+    500-700, IMB 2731 vs 1200-2200): stale/wrong-zoom charts with no drawn line near
+    today's price, which still need a redraw in TradingView, not a guard change. Do
+    NOT widen the one-tick margin further without re-measuring — 1.5+ ticks starts
+    admitting the off-frame reads.
   - **Yellow hand-drawn TREND LINES now feed alerts (user rule 2026-07-14).** Some
     charts have no blue TradingView channel — the user marks support/resistance with
     straight YELLOW trend lines instead (AZN is all-yellow: alert-low line ~10,960,
@@ -205,9 +224,32 @@ count.** The block is no longer one section: 'On Alert' sits above 'Below Alert 
 rows 5-38 data range. Verify counted "column A is not empty" over that range and so
 counted the band and header as data — 25 against the 23 actually written, failing a
 run whose block was correct. It now counts a ticker in column B plus a numeric price
-in column C. **Add another section to the block and this count needs revisiting** —
-it is the last gate before the Google Sheet import, so a false failure here is as
-costly as a missed one.
+in **column F** (was column C until 2026-07-16 — see the schema-widening note below;
+column C now holds the Pattern text, so the price moved to F). **Add another section
+to the block, or move the price column again, and this count needs revisiting** — it
+is the last gate before the Google Sheet import, so a false failure here is as costly
+as a missed one.
+
+**The below-alert block now shares the section tables' 17-column schema (user
+request 2026-07-16).** The auto-built block (`add_below_alert_sheet.py`) used to
+carry only 10 columns (Stock, Ticker, Current, Alert Low, Gap %, Alert High,
+Holdings, Target, Checked At, TradingView); the user wanted "Trading below alert /
+Below alert low" to read the same as the 'Near Lower Boundary' section table below
+it — "it's missing chart note, div yield etc". `HEADER` and the row builder now
+mirror `refresh_soi_sections.py`'s columns exactly: Stock, Ticker, **Pattern,
+Proximity, Alert Low, Current, Alert High, Upside %, P/E, Div Yield, Chart Note,
+Analyst Rating**, Holdings, Target, **Notes, Last Updated**, TradingView. Consequences
+baked in on purpose: (1) **Current sits in column F as a literal value, NOT a
+VLOOKUP formula** like the section tables use — the pipeline already has the captured
+price and verify's block-count gate must see a real number there (a formula string
+reads as non-numeric under openpyxl and would fail the gate). (2) **Chart Note (K),
+Analyst Rating (L) and Notes (O) are left BLANK** — they're hand-curated per ticker
+in the section tables only, and the block is a full auto-generated list, so inventing
+them here isn't wanted (user decision 2026-07-16). (3) Pattern comes from
+channel_detect via a new `'detection'` field carried on each match in
+`update_master_sheet.py`, labelled with `refresh_soi_sections.pattern_label` — so a
+row whose axis read failed this run shows 'Not read this run — level inherited', not
+the misleading 'No lines drawn'. `LAST_COL` is 17; the bands/headers merge A..Q.
 
 **WEDGE — a seventh pattern (user request 2026-07-15).** Two yellow trend lines
 converging in the near future. It **does not change Alert Low / Alert High** — the
