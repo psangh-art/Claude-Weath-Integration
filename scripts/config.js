@@ -33,3 +33,19 @@ export function pythonExe() {
 export function financeSheetUrl() {
   return `https://docs.google.com/spreadsheets/d/${CFG.financeSheetId}/edit`;
 }
+
+// Folder the pipeline app mirrors built products into so OneDrive syncs them —
+// Office web apps (PowerPoint/Excel Online) can only open files that live
+// inside an actual OneDrive-synced folder, not ~/Downloads.
+export function onedriveProductsDir() {
+  const raw = CFG.onedriveProductsDir || '';
+  return raw.startsWith('~') ? path.join(os.homedir(), raw.slice(1)) : raw;
+}
+
+// One-time-pasted OneDrive share/web URL for a product, keyed by
+// config.json's productWebLinks (reviewDeck/architecturePptx/spendingSummary).
+// Empty string (the default) means "not pasted yet".
+export function productWebLink(key) {
+  const v = CFG.productWebLinks && CFG.productWebLinks[key];
+  return v ? v : null;
+}

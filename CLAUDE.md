@@ -350,14 +350,22 @@ route it any UI/presentation change; it's scoped away from pipeline logic.
 
 Server routes beyond `/` + SSE `/events` + `POST /run`: `/files` (preflight status
 on load), `/products` (built-product availability + links), `/deck` (in-Chrome
-gallery of the review deck), `/deck.pptx` (download / open in PowerPoint),
-`/download/spending`, and `/asset?p=` (image proxy for the gallery, **whitelisted to
-the repo + Downloads only** — never serve an arbitrary path). `build_review_deck.py`
+gallery of the review deck), and `/asset?p=` (image proxy for the gallery,
+**whitelisted to the repo + Downloads only** — never serve an arbitrary path).
+`/deck.pptx`, `/architecture.pptx` and `/download/spending` still work as direct
+URLs but the UI no longer offers downloads (user request 2026-07-13): the Output
+Bay links open products in their web apps instead — Finance Google Sheet, review
+deck (in-app gallery view + "Edit in PowerPoint Online"), `spending_summary.xlsx`
+("Open in Excel Online"), architecture deck ("Open in PowerPoint Online").
+Because Office Online can only open files that live in OneDrive (Downloads is
+NOT synced), `syncOneDriveProducts()` copies the three product files to
+`C:\Users\Paul\OneDrive\Investment Production\` (config `onedriveProductsDir`)
+at startup and after every run — `copyFileSync` overwrite keeps OneDrive item
+IDs (and share links) stable. Direct one-click open needs each file's OneDrive
+link pasted ONCE into config.json → `productWebLinks`; until then the buttons
+fall back to an honest "Find in OneDrive" search link. `build_review_deck.py`
 emits the gallery (`pipeline_app/review_deck.html`, gitignored) + a summary JSON
-that feeds the output bay. Products linked: Finance Google Sheet, the review deck
-(view + download), `spending_summary.xlsx`, and the architecture deck
-(`Financial_Data_Pipeline_Architecture.pptx`, `/architecture.pptx`, added
-2026-07-13). Per-stage durations of each run are kept in
+that feeds the output bay. Per-stage durations of each run are kept in
 `data/stage_timings.json` (last 5 per stage, gitignored); the SSE `hello` /
 `run-started` events carry the medians as `timings` so the front end can show a
 %-complete bar weighted by how long each stage took in previous runs.

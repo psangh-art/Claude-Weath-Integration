@@ -17,7 +17,7 @@ import os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
-import { downloadsDir, downloadsFile, pythonExe, financeSheetUrl, CFG } from './config.js';
+import { downloadsDir, downloadsFile, pythonExe, financeSheetUrl, onedriveProductsDir, productWebLink, CFG } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DOWNLOADS = downloadsDir();
@@ -33,6 +33,9 @@ const ARCH_PPTX = downloadsFile('architecturePptx');
 const TIMINGS_PATH = path.join(REPO_ROOT, 'data', 'stage_timings.json');
 // The Finance Google Sheet the pipeline syncs into (see CLAUDE.md).
 const FINANCE_SHEET_URL = financeSheetUrl();
+// Folder inside the OneDrive-synced tree that mirrors built products so
+// PowerPoint/Excel Online can open them — ~/Downloads itself isn't synced.
+const ONEDRIVE_PRODUCTS_DIR = onedriveProductsDir();
 
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -64,6 +67,37 @@ function isAllowedAsset(abs) {
   const roots = [path.resolve(REPO_ROOT), path.resolve(DOWNLOADS)];
   return roots.some((root) => resolved === root || resolved.startsWith(root + path.sep))
     && /\.(png|jpe?g)$/i.test(resolved);
+}
+
+// Mirrors whichever of the three built products currently exist in Downloads
+// into the OneDrive-synced products folder, overwriting in place (not
+// delete+recreate) so OneDrive keeps the same item ID — that's what lets a
+// one-time-pasted share link in config.json's productWebLinks stay valid
+// across every future run. Downloads itself isn't OneDrive-synced, so this is
+// the only way Office web apps can open these files. Called at server
+// startup and after every run (success or failure — copy whatever exists).
+function syncOneDriveProducts() {
+  try {
+    fs.mkdirSync(ONEDRIVE_PRODUCTS_DIR, { recursive: true });
+  } catch (err) {
+    console.error(`Could not create OneDrive products folder: ${err.message}`);
+    return;
+  }
+  for (const src of [DECK_PPTX, ARCH_PPTX, SPENDING_XLSX]) {
+    if (!fs.existsSync(src)) continue;
+    try {
+      fs.copyFileSync(src, path.join(ONEDRIVE_PRODUCTS_DIR, path.basename(src)));
+    } catch (err) {
+      console.error(`Could not sync ${path.basename(src)} to OneDrive: ${err.message}`);
+    }
+  }
+}
+
+// Fallback when no productWebLinks entry has been pasted yet: OneDrive's own
+// web search for the exact synced filename — one click away from opening it
+// in PowerPoint/Excel Online, versus the direct link's zero clicks.
+function productSearchUrl(filename) {
+  return `https://onedrive.live.com/?qt=search&q=${encodeURIComponent(filename)}`;
 }
 
 // First configured interpreter that exists — the AppData one has pandas/openpyxl,
@@ -265,6 +299,7 @@ async function executeRun() {
   const report = runPreflight();
   if (!report) {
     for (const s of STAGES) if (s.id > 1) stageEvent(s.id, 'skipped', 'Skipped — pre-flight check failed.');
+    syncOneDriveProducts();
     broadcast({ type: 'run-complete', ok: false });
     running = false;
     return;
@@ -283,6 +318,7 @@ async function executeRun() {
   const tvOk = await runTradingViewPipeline();
   if (tvOk && spendingOk) consumeInputFiles();
   recordRunTimings();
+  syncOneDriveProducts();
   broadcast({ type: 'run-complete', ok: tvOk && spendingOk });
   running = false;
 }
@@ -341,16 +377,34 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Output bay: which products exist and where to open them.
+  // Output bay: which products exist and where to open them. Office web apps
+  // (PowerPoint/Excel Online) can only open a file that lives in a
+  // OneDrive-synced folder (~/Downloads isn't), so each pptx/xlsx product
+  // offers a one-time-pasted direct webUrl (config.json productWebLinks) or,
+  // failing that, a searchUrl into OneDrive web search for the synced copy.
   if (req.method === 'GET' && req.url === '/products') {
     let deckSummary = null;
     try { deckSummary = JSON.parse(fs.readFileSync(DECK_SUMMARY, 'utf-8')); } catch { /* not built yet */ }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       googleSheet: { url: FINANCE_SHEET_URL },
-      deck: { exists: fs.existsSync(GALLERY_HTML), viewUrl: '/deck', pptxUrl: '/deck.pptx', summary: deckSummary },
-      spending: { exists: fs.existsSync(SPENDING_XLSX), url: '/download/spending' },
-      architecture: { exists: fs.existsSync(ARCH_PPTX), pptxUrl: '/architecture.pptx' },
+      deck: {
+        exists: fs.existsSync(GALLERY_HTML),
+        viewUrl: '/deck',
+        summary: deckSummary,
+        webUrl: productWebLink('reviewDeck'),
+        searchUrl: productSearchUrl(path.basename(DECK_PPTX)),
+      },
+      spending: {
+        exists: fs.existsSync(SPENDING_XLSX),
+        webUrl: productWebLink('spendingSummary'),
+        searchUrl: productSearchUrl(path.basename(SPENDING_XLSX)),
+      },
+      architecture: {
+        exists: fs.existsSync(ARCH_PPTX),
+        webUrl: productWebLink('architecturePptx'),
+        searchUrl: productSearchUrl(path.basename(ARCH_PPTX)),
+      },
     }));
     return;
   }
@@ -371,6 +425,8 @@ const server = http.createServer((req, res) => {
   res.writeHead(404);
   res.end('Not found');
 });
+
+syncOneDriveProducts();
 
 server.listen(PORT, () => {
   console.log(`Pipeline app running at http://localhost:${PORT}`);
