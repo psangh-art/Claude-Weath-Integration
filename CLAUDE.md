@@ -179,6 +179,42 @@ asked for. The guard now takes `price` (from `row.get('price')` at both call sit
 returns the bare level when `price <= lower`. The CLAMP guard is unaffected, and rows
 where price sits above the support line still buffer exactly as before.
 
+### SUPERSEDED 2026-07-16 — ×1.05 buffer RETIRED + parallel channel = the band
+
+The user reviewed the live below-alert list and corrected **GLEN, NG and ADM**, which
+together redefined two things above. Both are now settled; the paragraphs above are
+kept only as history.
+
+- **The ×1.05 buffer is GONE. Alert Low IS the drawn support line.** GLEN's rail read
+  518.37 but shipped 544.29 (= ×1.05); the user wants ~515, i.e. the rail. Same for
+  NG (1278→1183) and ADM (3687→3510). `buffered_alert_low()` in
+  `update_master_sheet.py` now returns `lower` unchanged (the CLAMP-under-Alert-High
+  guard stays; `ALERT_LOW_BUFFER`/`on_alert`/`price` are dead for buffering). This
+  drops **every** Alert Low ~5% to its line — a re-run re-applied 93 of them and the
+  below-alert list fell 23→6, because most rows were only "below" the *buffered* level.
+  Do not reintroduce a buffer without an explicit new user decision.
+- **A blue PARALLEL CHANNEL is the trading band and OVERRIDES the nearest-line rule**
+  (supersedes the 2026-07-14 "nearest line each side" governing rule *for parallel
+  channels*). In `channel_detect.py`'s `process_one`, when two distinct blue rails are
+  present and price has **not** broken out above the top rail:
+  - **Alert High = TOP rail, always** — even when price has broken DOWN through the
+    channel. The old `below_parallel` branch cast the *bottom* rail as resistance and
+    shipped that as the high (ADM read 3729.57; the user wants the top rail 4258.30).
+  - **Alert Low = BOTTOM rail while price is INSIDE** the channel. A yellow trend line
+    sitting between the bottom rail and price no longer raises it (NG: the 1217 yellow
+    is ignored, the 1183 rail wins). This reverses the old "yellow drawn nearer to
+    price still wins" note for CTEC/ADM above.
+  - **If price has broken BELOW the bottom rail, Alert Low = the nearest yellow trend
+    line beneath price** (the next support down, ADM → 3510.45), or the broken bottom
+    rail if none is drawn.
+  - **Two things are deliberately left alone:** a **breakout ABOVE** the top rail
+    (top rail flips to support — nearest-line default), and **`on_alert`** rows where
+    price is sitting ON a drawn line within `ON_ALERT_TOL` (DGE 1537, CRDA 2879, HSBA
+    1476 keep the reached line — the band rule is guarded by `not on_alert` so it can't
+    drag Alert Low down to the far channel bottom). The band rule changed 24 charts on
+    the 2026-07-16 batch (11 raised Alert High to the top rail, 10 lowered Alert Low to
+    the bottom rail/trend beneath, 3 both); the user reviewed the full diff and approved.
+
 ## 'Stocks of Interest' section tables are pipeline-maintained (2026-07-15)
 
 The section tables BELOW the auto-built below-alert block (rows 41-81: at lower

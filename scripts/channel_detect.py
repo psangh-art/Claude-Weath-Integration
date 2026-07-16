@@ -703,28 +703,42 @@ def process_one(ticker, screenshot_path, known_price=None):
         else:
             above.append(c)
     on_alert = bool(at)
-    # The reached line is the operative support; fall back to the nearest line
-    # genuinely below price when nothing is sitting on it.
+    # Default (yellow-only, breakout-above, no blue channel): nearest drawn line on
+    # each side of price — Alert Low = nearest support below, Alert High = nearest above.
     alert_low = max(at + below) if (at or below) else None
     alert_high = min(above) if above else None     # nearest resistance above price
 
-    # BELOW A PARALLEL CHANNEL, THE BAND STILL GOVERNS (user rule 2026-07-15).
-    # The side-of-price split leaves a broken-down chart with no support at all — both
-    # rails sit above price, so alert_low comes back None and the row ships a bare
-    # resistance while a stale alert_low stays in the sheet above it. The user reads a
-    # parallel channel as the trading band itself: price dropping out of the bottom is
-    # the buy signal, not a reason to re-cast the bottom rail as resistance. So the
-    # rails keep the roles they were drawn with.
-    #
-    # Deliberately narrow:
-    #   - parallel ONLY. Where yellow lines are drawn too they were put nearer to price
-    #     on purpose, and still win on the nearest-line rule (CTEC, ADM).
-    #   - a real channel (two distinct rails), not a lone blue line (AV., MTRO, MKS).
-    #   - a breakout ABOVE is untouched: the top rail still flips to support.
-    below_parallel = (not on_alert and not yellow and known_price is not None
-                      and len(set(blue)) >= 2 and all(c > known_price for c in blue))
-    if below_parallel:
-        alert_low, alert_high = min(blue), max(blue)
+    # A BLUE PARALLEL CHANNEL IS THE TRADING BAND (user rule 2026-07-16, superseding
+    # the 2026-07-15 nearest-line rule for parallel channels). Reviewing the live
+    # sheet the user corrected GLEN/NG/ADM: when two distinct blue rails are drawn and
+    # price has not broken out ABOVE the top rail, the channel itself sets both alerts
+    # and OVERRIDES the nearest-line pick —
+    #   Alert High = TOP rail, always. Even when price has broken DOWN through the
+    #     channel: the old branch re-cast the bottom rail as resistance and shipped
+    #     THAT as the high (ADM read 3729.57, the user wants the top rail 4258.3).
+    #   Alert Low  = BOTTOM rail while price is INSIDE the channel. A yellow trend line
+    #     sitting between the bottom rail and price no longer raises it (NG: the 1217
+    #     yellow is ignored; the 1183 rail wins). If price has broken BELOW the bottom
+    #     rail, Alert Low drops to the nearest yellow trend line BENEATH price — the
+    #     next support down (ADM -> 3510) — or the broken bottom rail if none is drawn.
+    # A breakout ABOVE the top rail is deliberately left to the nearest-line default
+    # above (the top rail flips to support), which the user confirmed 2026-07-15.
+    # `not on_alert`: if price is sitting ON a drawn line (within ON_ALERT_TOL) that
+    # reached line is the operative support and stays the alert (DGE/CRDA sit on a
+    # yellow line at 1537/2879 — the band rule must not drag Alert Low down to the
+    # far channel bottom at 1001/2211 and lose the level price actually reached).
+    blue_set = sorted(set(blue))
+    band_rule = False
+    if not on_alert and known_price is not None and len(blue_set) >= 2:
+        bottom_rail, top_rail = blue_set[0], blue_set[-1]
+        if known_price <= top_rail * (1 + ON_ALERT_TOL):   # inside, or broken down
+            band_rule = True
+            alert_high = top_rail
+            if known_price >= bottom_rail:
+                alert_low = bottom_rail                       # inside: bottom rail
+            else:                                             # broken below the rail
+                beneath = [y for y in yellow if y < known_price]
+                alert_low = max(beneath) if beneath else bottom_rail
 
     def src(val):
         if val is None:
@@ -751,8 +765,8 @@ def process_one(ticker, screenshot_path, known_price=None):
     elif all(c < known_price for c in blue):
         pattern = 'price ABOVE channel (broken out) — top rail is support'
     elif all(c > known_price for c in blue):
-        pattern = ('price BELOW channel (broken down) — band still governs' if below_parallel
-                   else 'price BELOW channel (broken down) — bottom rail is resistance')
+        pattern = ('price BELOW channel (broken down) — band governs '
+                   '(low = trend line beneath / bottom rail, high = top rail)')
     else:
         pattern = 'price INSIDE channel'
 

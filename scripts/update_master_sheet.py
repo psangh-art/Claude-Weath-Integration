@@ -74,40 +74,21 @@ def is_noise_refresh(ws, row, existing_source, alert_low, on_alert):
 
 
 def buffered_alert_low(lower, upper, on_alert=False, price=None):
-    """Alert Low from a support level: 5% above it, so the alert fires BEFORE price
-    reaches the line — never at or above Alert High.
+    """Alert Low IS the drawn support line — no buffer (user decision 2026-07-16).
 
-    Two guards, both from real bugs (user decisions 2026-07-15):
+    The ×1.05 early-warning buffer was RETIRED. Reviewing the live sheet the user
+    corrected GLEN/NG/ADM to sit AT the drawn line, not 5% above it (GLEN 544->518,
+    NG 1278->1183, ADM 3687->3510) and asked for the same everywhere: Alert Low is
+    the line itself. `on_alert`/`price` are no longer used (kept in the signature so
+    the call sites are untouched).
 
-    * CLAMP. The buffer used to be applied unconditionally while Alert High passed
-      through untouched, so whenever the nearest support sat less than 5% below the
-      nearest resistance the buffer walked Alert Low straight past it — 8 rows
-      (GOLD, SLVR, LAND, CPG, RIO, STJ, HIK, DCC) went live with Alert Low ABOVE
-      Alert High. That is the same degenerate state channel_detect's side-split was
-      written to prevent, reintroduced downstream. The nearest-line rule makes tight
-      pairs common, so the buffer must yield to Alert High rather than cross it.
-    * NO BUFFER ONCE PRICE HAS REACHED **OR PASSED** THE LINE. The buffer is an early
-      warning; if price is already sitting on the line (on_alert) there is nothing
-      left to warn about, and inflating the level by 5% would put Alert Low above the
-      current price.
-      Extended from 'reached' to 'passed' on 2026-07-15, when the band rule started
-      reading a full pair off a broken-down parallel channel (see channel_detect's
-      below_parallel): there, price is BELOW the support rail rather than sitting on
-      it, so on_alert is false and the buffer applied — RIO would have been written
-      7,407.07 against a rail at 7,054.35 and a price of 6,927, a level 6.9% above a
-      price already in hand. The user's rule is that Alert Low IS the bottom of the
-      parallel; past the line, the buffer has nothing left to buy time for.
+    The CLAMP guard stays: Alert Low must never reach or cross Alert High. A fresh
+    low meeting a stale high once shipped inverted pairs (ICG 1874.35 vs a stale
+    1874.2), so if the level would touch/cross Alert High it sits just under it.
     """
     if lower is None:
         return None
-    reached = on_alert or (price is not None and price <= lower)
-    alert_low = lower if reached else lower * ALERT_LOW_BUFFER
-    # The CLAMP applies on EVERY path, including the no-buffer one. It used to sit
-    # behind an early `return round(lower, 2)`, so guard 2 silently disabled guard 1
-    # and the un-buffered level could still cross Alert High: ICG reached a trend line
-    # at 1874.35 while the sheet held a stale Alert High of 1874.2 from an older read,
-    # and shipped inverted 1874.35/1874.2 — the exact state these guards exist to
-    # prevent, reached through the door the other guard left open.
+    alert_low = lower
     if upper is not None and alert_low >= upper:
         # Keep a usable band: sit just under Alert High rather than crossing it.
         alert_low = min(alert_low, upper * 0.999)
