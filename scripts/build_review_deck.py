@@ -48,8 +48,9 @@ SUMMARY_PATH = os.path.join(PIPELINE_APP_DIR, 'review_deck_summary.json')
 TV_LAYOUT_URL = CFG['tvLayoutUrlTemplate']
 
 # Master 'Investments' columns (same map as update_master_sheet.py)
-COL_SHARE_NAME, COL_TICKER, COL_HOLDINGS, COL_TARGET = 2, 3, 4, 6
-COL_ALERT_LOW, COL_ALERT_LOW_SOURCE, COL_ALERT_HIGH = 12, 13, 15
+# +1 vs the pre-2026-07-16 layout: a 'Marked Up' column was inserted at Investments!B.
+COL_SHARE_NAME, COL_TICKER, COL_HOLDINGS, COL_TARGET = 3, 4, 5, 7
+COL_ALERT_LOW, COL_ALERT_LOW_SOURCE, COL_ALERT_HIGH = 13, 14, 16
 
 NAVY = RGBColor(0x1F, 0x38, 0x64)
 RED = RGBColor(0xCC, 0x00, 0x00)

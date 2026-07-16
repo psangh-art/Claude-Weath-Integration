@@ -56,7 +56,8 @@ REGION_START, REGION_END = 43, 79
 SUMMARY_ROW = 81
 LAST_COL = 17
 
-INV_TICKER_COL, INV_LOW_COL, INV_HIGH_COL = 3, 12, 15
+# +1 vs the pre-2026-07-16 layout: a 'Marked Up' column was inserted at Investments!B.
+INV_TICKER_COL, INV_LOW_COL, INV_HIGH_COL = 4, 13, 16
 
 FONT_NAME = 'Arial'
 WHITE = 'FFFFFFFF'
@@ -278,7 +279,7 @@ def write_plan(wb, rows, today):
                 1: m['name'], 2: m['ticker'], 3: m['pattern'],
                 4: f'=IFERROR(TEXT((F{r}-E{r})/E{r},"0.0%")&" above low","")',
                 5: m['low'],
-                6: f"=IFERROR(VLOOKUP(B{r},'Investments'!$C:$I,7,FALSE()),\"\")",
+                6: f"=IFERROR(VLOOKUP(B{r},'Investments'!$D:$J,7,FALSE()),\"\")",
                 7: m['high'],
                 8: f'=IFERROR((G{r}-E{r})/E{r},"")',
                 9: (f'=IFERROR(googlefinance("{gt}","pe"),"")' if gt else None),

@@ -215,6 +215,36 @@ kept only as history.
     the 2026-07-16 batch (11 raised Alert High to the top rail, 10 lowered Alert Low to
     the bottom rail/trend beneath, 3 both); the user reviewed the full diff and approved.
 
+## Investments 'Marked Up' column at B (2026-07-16)
+
+The user asked for a column after Investments!A ('Chart' = does a chart exist)
+confirming whether HE has **marked up** the chart (drawn channel/trend lines) —
+`Yes`/`No`, auto-derived, at **column B**. `update_master_sheet.marked_up_flag()` is
+the single source of the rule (a detected pattern OR an axis-read failure ⇒ drawings
+present ⇒ Yes; 'no channel or trend line found near price', a macro/reference symbol,
+or no capture ⇒ No) and `update_master_sheet` writes it every run.
+
+**Inserting that column shifted EVERY Investments data column one to the right**, so
+this is the sheet-rename-VLOOKUP trap (see 2026-07-10 note) at column scale. Two
+things had to move together and MUST stay in sync on any future structural change:
+
+- **~5,600 in-sheet formulas + the cross-sheet VLOOKUPs** in History and 'Stocks of
+  Interest' that point at Investments. openpyxl does NOT adjust formula references on
+  insert, and no LibreOffice/Excel-COM engine is available here, so
+  `insert_marked_up_col_2026-07-16.py` (a one-off, already run) shifts them with the
+  formula Tokenizer — touching only real cell refs that resolve to Investments, never
+  string literals (`googlefinance("INDEXFTSE:UKX")`, HYPERLINK urls), `'Base Data'!`
+  refs, or a sheet's own refs. It also moved the merged title A1:W1→A1:X1, the
+  conditional-format range A4:T278→A4:U278, 20 column widths, and freeze D3→E3.
+- **The hardcoded column constants in the CODE.** All are now +1 vs the old layout:
+  `update_master_sheet.py` (`COL_MARKED_UP=2`, SHARE_NAME 3, TICKER 4, HOLDINGS 5,
+  TARGET 7, CURRENT_PRICE 10, ALERT_LOW 13, ALERT_LOW_SOURCE 14, ALERT_HIGH 16,
+  CLAUDE_NOTES 32), `refresh_soi_sections.py` (`INV_TICKER/LOW/HIGH = 4/13/16` and its
+  `VLOOKUP('Investments'!$D:$J,7`), `build_review_deck.py`, and `verify_pipeline.py`
+  (ticker col 4, price col 10). **Add or move an Investments column again and every
+  one of these needs the same coordinated bump** — a wrong constant writes Alert Low
+  into the wrong column of a live trading sheet.
+
 ## 'Stocks of Interest' section tables are pipeline-maintained (2026-07-15)
 
 The section tables BELOW the auto-built below-alert block (rows 41-81: at lower

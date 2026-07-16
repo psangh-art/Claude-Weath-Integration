@@ -27,16 +27,38 @@ from ticker_normalize import normalize, master_tickers_match
 from refresh_soi_sections import pattern_label
 
 SHEET_NAME = 'Investments'
+# A new 'Marked Up' column was inserted at B (2026-07-16), shifting every data
+# column one to the right — see insert_marked_up_col_2026-07-16.py. All constants
+# below moved +1 except COL_CHART (col A, unchanged).
 COL_CHART = 1
-COL_SHARE_NAME = 2
-COL_TICKER = 3
-COL_HOLDINGS = 4
-COL_TARGET_VALUE = 6
-COL_CURRENT_PRICE = 9
-COL_ALERT_LOW = 12
-COL_ALERT_LOW_SOURCE = 13
-COL_ALERT_HIGH = 15
-COL_CLAUDE_NOTES = 31
+COL_MARKED_UP = 2          # 'Yes'/'No' — has the user drawn channel/trend lines on the chart
+COL_SHARE_NAME = 3
+COL_TICKER = 4
+COL_HOLDINGS = 5
+COL_TARGET_VALUE = 7
+COL_CURRENT_PRICE = 10
+COL_ALERT_LOW = 13
+COL_ALERT_LOW_SOURCE = 14
+COL_ALERT_HIGH = 16
+COL_CLAUDE_NOTES = 32
+
+
+def marked_up_flag(detection):
+    """'Yes' if the user has drawn channel/trend lines on this chart, else 'No'
+    (Investments column B, user request 2026-07-16). A detected pattern OR an axis
+    read that failed both mean drawings ARE present — a failed axis read doesn't
+    remove the user's lines. 'no channel or trend line found near price', a
+    macro/reference instrument, or no capture at all are the only No cases."""
+    if not detection:
+        return 'No'
+    if detection.get('kind'):
+        return 'Yes'
+    reason = (detection.get('reason') or '').lower()
+    if 'macro/reference' in reason:
+        return 'No'
+    if 'axis' in reason:            # drawings present; the axis just couldn't be OCR'd
+        return 'Yes'
+    return 'No'
 HEADER_ROW = 2
 LAST_CHECKED_HEADER = 'Chart Last Checked'
 
@@ -242,6 +264,8 @@ def process(master_ws, charts, channel_by_ticker):
                         'chart_id': row.get('chartId'),
                         'on_alert': bool((detection or {}).get('on_alert')),
                         'detection': detection})
+        # Column B: has the user marked up this chart? Maintained every run.
+        master_ws.cell(row=master_row, column=COL_MARKED_UP, value=marked_up_flag(detection))
 
         # Commodities can't be priced by GOOGLEFINANCE at all any more (verified
         # 2026-07-11: TVC: and CURRENCY:XAU/XAG/XPT/XPD all return #N/A), so their

@@ -241,16 +241,16 @@ def section_master_sheet(master_result):
         inv = wb['Investments']
         ticker_rows = {}
         for r in range(1, inv.max_row + 1):
-            t = inv.cell(row=r, column=3).value  # col C = Ticker
+            t = inv.cell(row=r, column=4).value  # col D = Ticker (was C pre-2026-07-16)
             if isinstance(t, str):
                 ticker_rows[t.strip().upper()] = r
         for cp in commodity_prices or []:
             r = ticker_rows.get(cp['ticker'].upper())
-            actual = inv.cell(row=r, column=9).value if r else None  # col I = Current Price
+            actual = inv.cell(row=r, column=10).value if r else None  # col J = Current Price (was I)
             if r and isinstance(actual, (int, float)) and abs(actual - cp['price']) < 0.01:
                 lines.append(f"- ✅ {cp['ticker']}: {actual} (value, not formula; checked {cp['checked_at']})\n")
             else:
-                lines.append(f"- ❌ {cp['ticker']}: expected {cp['price']} in Investments col I, "
+                lines.append(f"- ❌ {cp['ticker']}: expected {cp['price']} in Investments col J, "
                               f"found {actual!r}\n")
                 ok = False
 
