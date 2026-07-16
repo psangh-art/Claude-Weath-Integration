@@ -420,48 +420,37 @@ function fileChip(role,entry,state,staleDays){
 }
 
 /* ── output bay ────────────────────────────────────────── */
-// Office web apps (PowerPoint/Excel Online) can only open a file that lives
-// inside a OneDrive-synced folder — Downloads isn't synced, so every pptx/xlsx
-// product is mirrored server-side into one that is (see pipeline_app_server.js
-// syncOneDriveProducts). Once the user pastes that file's OneDrive share URL
-// into config.json → productWebLinks, `webUrl` opens it directly; until then
-// `searchUrl` falls back to OneDrive web search for the synced filename — one
-// extra click, honestly labelled "Find in OneDrive" rather than pretending
-// it's a direct open.
-const ONEDRIVE_HINT="Paste the file's OneDrive link into scripts/config.json → productWebLinks for one-click open";
-function editAction(webUrl,searchUrl,onlineLabel,fallbackLabel){
-  if(webUrl)return{label:onlineLabel,href:webUrl,external:true};
-  if(searchUrl)return{label:fallbackLabel,href:searchUrl,external:true,hint:ONEDRIVE_HINT};
-  return null;
+// Each pptx/xlsx product opens in its Office web app, which can only open a
+// file inside a OneDrive-synced folder — Downloads isn't, so the products are
+// mirrored server-side into one that is (pipeline_app_server.js
+// syncOneDriveProducts). The file's OneDrive share URL is pasted once into
+// config.json → productWebLinks; `webUrl` then opens it directly. No search
+// fallback — the user wants a straight view of the end result, not a lookup.
+function webAction(webUrl,label){
+  return webUrl?{label,href:webUrl,external:true}:null;
 }
 async function loadProducts(){
   try{
     const r=await fetch('/products');const p=await r.json();const el=document.getElementById('products');el.innerHTML='';
-    // Finance Google Sheet — always available
-    el.appendChild(product({icon:5,title:'Finance workbook',ready:true,desc:'Live Google Sheet the pipeline syncs into.',
+    // Finance Google Sheet — always available. Also carries the spending
+    // summary tabs now (integrate_spending_tabs mirrors them in), so there's no
+    // separate spending workbook tile.
+    el.appendChild(product({icon:5,title:'Finance workbook',ready:true,desc:'Live Google Sheet the pipeline syncs into — includes the Fidelity spending tabs.',
       acts:[{label:'Open in Google Sheets ↗',href:p.googleSheet.url,primary:true,external:true}]}));
-    // Review deck
+    // Review deck — in-app gallery view is enough (user 2026-07-16, no PPT-Online edit)
     const d=p.deck||{},sum=d.summary;
-    const deckEdit=editAction(d.webUrl,d.searchUrl,'Edit in PowerPoint Online ↗','Find in OneDrive ↗');
     const deckActs=[];
     if(d.exists)deckActs.push({label:'View ↗',href:d.viewUrl,primary:true,external:true});
-    if(d.exists&&deckEdit)deckActs.push(deckEdit);
     el.appendChild(product({icon:6,title:'Investment review deck',ready:!!d.exists,
       desc:d.exists?'One slide per investment — flags missing charts &amp; alerts.':'Runs as pipeline step 4. Not built yet.',
       stats:sum?[['charts',sum.charts,false],['missing',sum.missing_charts,sum.missing_charts>0],['no alerts',sum.no_alerts,sum.no_alerts>0],['held·no chart',sum.held_no_chart,sum.held_no_chart>0]]:null,
       acts:deckActs}));
-    // Spending summary
-    const sp=p.spending||{};
-    const spEdit=editAction(sp.webUrl,sp.searchUrl,'Open in Excel Online ↗','Find in OneDrive ↗');
-    el.appendChild(product({icon:2,title:'Fidelity spending summary',ready:!!sp.exists,
-      desc:sp.exists?'Positions &amp; spending workbook from the Fidelity stage.':'Built by the Fidelity stage. Not present yet.',
-      acts:(sp.exists&&spEdit)?[{...spEdit,primary:true}]:[]}));
-    // Architecture deck
+    // Architecture deck — view opens the presentation in PowerPoint Online
     const arch=p.architecture||{};
-    const archEdit=editAction(arch.webUrl,arch.searchUrl,'Open in PowerPoint Online ↗','Find in OneDrive ↗');
+    const archView=webAction(arch.webUrl,'View in PowerPoint Online ↗');
     el.appendChild(product({icon:9,title:'Architecture deck',ready:!!arch.exists,
       desc:arch.exists?'Financial_Data_Pipeline_Architecture.pptx — how data flows end to end.':'Financial_Data_Pipeline_Architecture.pptx — not generated yet.',
-      acts:(arch.exists&&archEdit)?[{...archEdit,primary:true}]:[]}));
+      acts:(arch.exists&&archView)?[{...archView,primary:true}]:[]}));
   }catch(e){/* leave as-is */}
 }
 function product({icon,title,ready,desc,stats,acts}){

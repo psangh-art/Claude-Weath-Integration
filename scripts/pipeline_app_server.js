@@ -93,13 +93,6 @@ function syncOneDriveProducts() {
   }
 }
 
-// Fallback when no productWebLinks entry has been pasted yet: OneDrive's own
-// web search for the exact synced filename — one click away from opening it
-// in PowerPoint/Excel Online, versus the direct link's zero clicks.
-function productSearchUrl(filename) {
-  return `https://onedrive.live.com/?qt=search&q=${encodeURIComponent(filename)}`;
-}
-
 // First configured interpreter that exists — the AppData one has pandas/openpyxl,
 // which spending_summary.py needs. Candidates live in config.json.
 const PYTHON = pythonExe();
@@ -379,9 +372,12 @@ const server = http.createServer((req, res) => {
 
   // Output bay: which products exist and where to open them. Office web apps
   // (PowerPoint/Excel Online) can only open a file that lives in a
-  // OneDrive-synced folder (~/Downloads isn't), so each pptx/xlsx product
-  // offers a one-time-pasted direct webUrl (config.json productWebLinks) or,
-  // failing that, a searchUrl into OneDrive web search for the synced copy.
+  // OneDrive-synced folder (~/Downloads isn't), so each pptx product is
+  // mirrored into one that is and opened via a one-time-pasted direct webUrl
+  // (config.json productWebLinks). The old OneDrive-search fallback was dropped
+  // (user request 2026-07-16) — a straight view of the end result, not a lookup.
+  // The spending summary is no longer a separate product: its tabs are mirrored
+  // into the Finance workbook (integrate_spending_tabs), so it's covered there.
   if (req.method === 'GET' && req.url === '/products') {
     let deckSummary = null;
     try { deckSummary = JSON.parse(fs.readFileSync(DECK_SUMMARY, 'utf-8')); } catch { /* not built yet */ }
@@ -393,17 +389,10 @@ const server = http.createServer((req, res) => {
         viewUrl: '/deck',
         summary: deckSummary,
         webUrl: productWebLink('reviewDeck'),
-        searchUrl: productSearchUrl(path.basename(DECK_PPTX)),
-      },
-      spending: {
-        exists: fs.existsSync(SPENDING_XLSX),
-        webUrl: productWebLink('spendingSummary'),
-        searchUrl: productSearchUrl(path.basename(SPENDING_XLSX)),
       },
       architecture: {
         exists: fs.existsSync(ARCH_PPTX),
         webUrl: productWebLink('architecturePptx'),
-        searchUrl: productSearchUrl(path.basename(ARCH_PPTX)),
       },
     }));
     return;

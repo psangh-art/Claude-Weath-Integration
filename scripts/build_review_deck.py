@@ -26,7 +26,7 @@ from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from ticker_normalize import normalize, master_tickers_match
 
@@ -159,6 +159,71 @@ def add_picture_fitted(slide, path, x, y, max_w, max_h):
     slide.shapes.add_picture(path, x, y + Emu(int((max_h - h) / 2)), width=Emu(w), height=Emu(h))
 
 
+# ── Alert-level overlay ────────────────────────────────────────────────────
+# The user checks Alert Low/High by eye across the deck, so draw the detected
+# levels straight onto each chart image: a horizontal line at the price's pixel
+# row (from channel_detect's axis fit price = a*y + b) with a labelled tag. Low
+# is green, High is orange — both distinct from the yellow trend lines / blue
+# channel already on the chart. Annotated copies go to a throwaway dir; the pptx
+# embeds the bytes at add_picture time so the files only need to exist briefly.
+_ANNOTATED_DIR = os.path.join(SCRIPT_DIR, 'pipeline_app', '_annotated_charts')
+_LEVEL_COLOURS = {'low': (0x00, 0xE6, 0x76), 'high': (0xFF, 0x91, 0x00)}
+
+
+def _level_font(size):
+    for name in ('arialbd.ttf', 'arial.ttf', 'DejaVuSans-Bold.ttf'):
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def annotate_chart_levels(src_path, channel):
+    """Return a path to a copy of src_path with the detected Alert Low/High drawn
+    on, or src_path unchanged when there's no axis fit / no level to draw."""
+    if not channel:
+        return src_path
+    a, b = channel.get('axis_a'), channel.get('axis_b')
+    if not a:  # axis couldn't be read this run — nothing to place a level against
+        return src_path
+    levels = []
+    if isinstance(channel.get('lower'), (int, float)):
+        levels.append(('low', 'Alert Low', float(channel['lower'])))
+    if isinstance(channel.get('upper'), (int, float)):
+        levels.append(('high', 'Alert High', float(channel['upper'])))
+    if not levels:
+        return src_path
+    try:
+        im = Image.open(src_path).convert('RGB')
+    except Exception:
+        return src_path
+    w, h = im.size
+    draw = ImageDraw.Draw(im)
+    font = _level_font(max(22, int(h * 0.038)))
+    lw = max(2, int(h * 0.004))
+    for key, label, price in levels:
+        y = int(round((price - b) / a))
+        if not (0 <= y < h):     # level sits off the visible frame — skip its line
+            continue
+        colour = _LEVEL_COLOURS[key]
+        draw.line([(0, y), (w, y)], fill=colour, width=lw)
+        tag = f'{label}  {price:.2f}'
+        l, t, r, bo = draw.textbbox((0, 0), tag, font=font)
+        tw, th = r - l, bo - t
+        pad = int(th * 0.35)
+        ty = min(max(0, y - th - pad * 2 - lw), h - th - pad * 2)
+        draw.rectangle([0, ty, tw + pad * 2, ty + th + pad * 2], fill=colour)
+        draw.text((pad, ty + pad - t), tag, fill=(0, 0, 0), font=font)
+    os.makedirs(_ANNOTATED_DIR, exist_ok=True)
+    out = os.path.join(_ANNOTATED_DIR, os.path.basename(src_path))
+    try:
+        im.save(out)
+    except Exception:
+        return src_path
+    return out
+
+
 VERDICT_COLOURS = {'Buy candidate': GREEN, 'Hold': NAVY, 'Watch': AMBER, 'Avoid': RED}
 
 
@@ -177,7 +242,9 @@ def chart_slide(prs, chart, layout_name, master_key, master, channel, tv_alerts,
     img_x, img_y = Inches(0.35), Inches(0.85)
     img_w, img_h = Inches(8.0), Inches(6.3)
     if img and os.path.exists(img):
-        add_picture_fitted(slide, img, img_x, img_y, img_w, img_h)
+        # Draw the detected Alert Low/High straight onto the chart so the user can
+        # confirm the levels at a glance (green = low, orange = high).
+        add_picture_fitted(slide, annotate_chart_levels(img, channel), img_x, img_y, img_w, img_h)
     else:
         box = add_text(slide, img_x, Inches(3.2), img_w, Inches(1.2),
                        [('⚠ MISSING CHART', 36, True, RGBColor(0xFF, 0xFF, 0xFF)),
@@ -287,7 +354,11 @@ def write_gallery(path, charts, alerts, channels, master_index, stats):
         if master is None:
             flags.append('<span class="flag warn">Not in master</span>')
 
-        media = (f'<img loading="lazy" src="{_asset_url(img)}" alt="{_e(ticker)} chart">'
+        # Same Alert Low/High overlay as the .pptx, so the in-app gallery view is
+        # verifiable at a glance too. The annotated copy lives in the repo, which
+        # the /asset proxy is whitelisted to serve.
+        disp_img = annotate_chart_levels(img, channel) if img and os.path.exists(img) else img
+        media = (f'<img loading="lazy" src="{_asset_url(disp_img)}" alt="{_e(ticker)} chart">'
                  if img and os.path.exists(img)
                  else '<div class="noimg">chart not captured</div>')
         rows = [('Live price', fmt_num(chart.get('price')))]

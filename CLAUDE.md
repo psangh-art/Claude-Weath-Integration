@@ -94,6 +94,35 @@ something worth remembering.
     today's price, which still need a redraw in TradingView, not a guard change. Do
     NOT widen the one-tick margin further without re-measuring — 1.5+ ticks starts
     admitting the off-frame reads.
+  - **Axis OCR now falls back to sparse-text mode (psm 11) when the default reads too
+    few labels (2026-07-16).** `fit_price_axis` OCR'd the axis crop with Tesseract's
+    DEFAULT page segmentation (psm 3), which treats the tall gutter as one block and on
+    some charts finds only ONE tick label — HTWS/Helios Towers read just "120" of eight
+    clearly-visible labels (240/220/.../100), failed the `>= 3 clean labels` gate, and
+    was silently dropped, leaving a STALE Alert High of 251.2 with no low. psm 11
+    ("sparse text") is built for scattered labels like a price axis and recovers them
+    (HTWS: 6 of 8). The fix tries the default FIRST — so every chart that already reads
+    stays byte-identical — and only re-runs with psm 11 when the default yields < 3
+    clean labels, taking the sparse read only if it has MORE clean labels. Measured
+    against the committed code over the 353-chart batch: **17 charts changed, ALL
+    None -> now-read recoveries, ZERO reads lost, ZERO reads altered** (HTWS, HSBA,
+    SHEL, SVT, ANTO, BT.A, VOD, SBRY, ULVR, SMT, BATS, WIZZ, WEIR, OSB, UTG, NATGAS,
+    COPPER1!). The axis price-bracket guard (2c) still applies to every recovered read,
+    so a recovered-but-off-frame axis is still rejected — the fallback only makes a
+    genuinely-readable axis readable, it does not relax the trust check.
+  - **Yellow trend-line minimum span lowered 0.12 -> 0.10 (`YELLOW_MIN_SPAN_FRAC`,
+    2026-07-16).** A genuine drawn resistance line can be SHORT when it only marks a
+    recent leg: HTWS/Helios Towers' descending WEDGE line spans 0.117w (646 collinear
+    px, 97% coverage) and was dropped at 0.12, leaving HTWS with only its Alert Low and
+    no wedge classification. Lowered so it's admitted; a line this collinear is never
+    noise. Isolated against the batch (psm-11 held constant, span 0.12 vs 0.10):
+    **exactly 2 charts change** — HTWS (single_low -> parallel + WEDGE, gaining the
+    descending rail 198.7) and COPPER1! (single_low -> parallel, gaining a real short
+    yellow resistance line at 1407.52, verified on the chart). Do NOT drop below 0.10
+    without re-measuring — the RANSAC subsample (cap 4000) already under-represents a
+    minority line, so shorter floors start admitting fragments. (Note: raising the
+    subsample cap alone does NOT recover these lines — the span floor is the only gate
+    that was rejecting them; verified at caps 8000/20000.)
   - **Yellow hand-drawn TREND LINES now feed alerts (user rule 2026-07-14).** Some
     charts have no blue TradingView channel — the user marks support/resistance with
     straight YELLOW trend lines instead (AZN is all-yellow: alert-low line ~10,960,
@@ -431,6 +460,15 @@ end to end, beyond just the chart/indicator/alert export:
   ingested for that type; (3) numbered duplicate workbook saves (`<stem>_<N>.<ext>`)
   once a newer canonical `<stem>.<ext>` exists. Any file already prefixed `Delete `
   is skipped on the next run, so re-running is always safe/idempotent.
+  - **Transient-failure hardening (2026-07-16).** This step once failed a whole
+    Production Centre run with "error code 1 on Downloads cleanup" and then wouldn't
+    reproduce — because both its filesystem calls could raise and abort the (purely
+    cosmetic) step: `os.path.getmtime` on a file that vanished between `os.listdir`
+    and stat (a browser `.crdownload` / OneDrive sync temp), and `os.rename` on a
+    file locked by Excel or mid-OneDrive-sync. Both are now wrapped in `try/except
+    OSError` — a vanished file is skipped, a locked rename prints `SKIPPED — could
+    not rename …` and continues. The step must never fail the run over a transient
+    file; keep it that way.
 
 **`Claude_Code_Handoff_Instructions.md`** (kept in the user's Downloads, not this repo)
 is the full behavioural spec this all implements — schema, colour rules, ticker
@@ -462,16 +500,23 @@ gallery of the review deck), and `/asset?p=` (image proxy for the gallery,
 **whitelisted to the repo + Downloads only** — never serve an arbitrary path).
 `/deck.pptx`, `/architecture.pptx` and `/download/spending` still work as direct
 URLs but the UI no longer offers downloads (user request 2026-07-13): the Output
-Bay links open products in their web apps instead — Finance Google Sheet, review
-deck (in-app gallery view + "Edit in PowerPoint Online"), `spending_summary.xlsx`
-("Open in Excel Online"), architecture deck ("Open in PowerPoint Online").
-Because Office Online can only open files that live in OneDrive (Downloads is
-NOT synced), `syncOneDriveProducts()` copies the three product files to
-`C:\Users\Paul\OneDrive\Investment Production\` (config `onedriveProductsDir`)
-at startup and after every run — `copyFileSync` overwrite keeps OneDrive item
-IDs (and share links) stable. Direct one-click open needs each file's OneDrive
-link pasted ONCE into config.json → `productWebLinks`; until then the buttons
-fall back to an honest "Find in OneDrive" search link. `build_review_deck.py`
+Bay links open products in their web apps instead. **Output Bay tiles (user
+request 2026-07-16): Finance Google Sheet, review deck (in-app gallery "View"
+only — user confirmed the in-app view is enough, no PowerPoint-Online edit link),
+architecture deck ("View in PowerPoint Online").** The standalone `spending_summary.xlsx` tile was REMOVED — its tabs are
+now mirrored into `Stocks_Buy_Strategy.xlsx` / the Finance Google Sheet by
+`integrate_spending_tabs.py`, so the Finance workbook tile covers it (the spending
+BUILD stage stays — it's the source those tabs are copied from; only the
+duplicate product tile went). Because Office Online can only open files that live
+in OneDrive (Downloads is NOT synced), `syncOneDriveProducts()` copies the product
+files to `C:\Users\Paul\OneDrive\Investment Production\` (config
+`onedriveProductsDir`) at startup and after every run — `copyFileSync` overwrite
+keeps OneDrive item IDs (and share links) stable. Each pptx tile's "View/Edit in
+PowerPoint Online" needs that file's OneDrive share link pasted ONCE into
+config.json → `productWebLinks`; **the old "Find in OneDrive" search-link fallback
+was removed (user request 2026-07-16) — the user wants a straight view of the end
+result, not a lookup**, so a tile with no pasted link shows "Not available yet"
+until the link is added. `build_review_deck.py`
 emits the gallery (`pipeline_app/review_deck.html`, gitignored) + a summary JSON
 that feeds the output bay. Per-stage durations of each run are kept in
 `data/stage_timings.json` (last 5 per stage, gitignored); the SSE `hello` /
@@ -616,6 +661,23 @@ layout, one slide per chart with the cropped image + live price + master-sheet
 holdings/alerts + OCR channel read + TradingView alerts, and an appendix of
 master rows with no chart. Requires `python-pptx` (installed for the
 `AppData\Local\Python` interpreter).
+
+**Alert Low/High drawn ONTO each chart image (user request 2026-07-16).** So the
+user can eyeball the detected levels across many charts fast, `annotate_chart_levels()`
+draws a horizontal line at each level's pixel row — **Alert Low in green, Alert High
+in orange** — with a labelled tag, straight onto the chart before it goes into BOTH
+the .pptx and the in-app gallery (`write_gallery`). The pixel row comes from
+channel_detect's axis fit (`price = a*y + b`), which `process_one` now returns as
+`axis_a`/`axis_b` (+ `pane_h`/`pane_w`) in its result — surfaced from
+`_read_lines_at_today`'s meta so it costs no extra OCR pass. A level that maps off
+the visible frame is skipped; a chart with no axis read (nothing to place a level
+against) is shown un-annotated. Annotated copies go to
+`scripts/pipeline_app/_annotated_charts/` (gitignored) — the .pptx embeds the bytes
+at `add_picture` time and the gallery serves them through the `/asset` proxy (that
+dir is inside the repo, which the proxy whitelists), so the files are throwaway.
+Green/orange were chosen to stay distinct from the chart's own yellow trend lines
+and blue channel. This is a VERIFICATION aid — it draws whatever channel_detect
+read this run (`lower`/`upper`), so a wrong level shows up wrong, which is the point.
 
 ## Input-file consumption + preserved tabs (2026-07-12)
 

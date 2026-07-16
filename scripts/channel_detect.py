@@ -76,8 +76,16 @@ ON_ALERT_TOL = 0.0025
 WEDGE_HORIZON_FRAC = 0.15   # apex at most 0.15 pane-widths past today (~3 months)
 WEDGE_MIN_GAP_FRAC = 0.03   # lines still >=3% of price apart at today
 
+# Minimum span (fraction of pane width) a YELLOW hand-drawn trend line must cross.
+# Guards against short specks. Lowered 0.12 -> 0.10 (2026-07-16): a genuine drawn
+# resistance line can be short when it only marks a recent leg — HTWS/Helios Towers'
+# descending wedge line spans 0.117w (646 collinear px, 97% coverage) and was being
+# dropped at 0.12, leaving HTWS with only its Alert Low and no wedge. Measured across
+# the batch before changing (see CLAUDE.md); a line this collinear is never noise.
+YELLOW_MIN_SPAN_FRAC = 0.10
+
 # Minimum span (fraction of pane width) for a CHANNEL-BLUE line to count as a rail.
-# Well above the yellow lines' 0.12: rails are drawn across the chart, while the
+# Well above the yellow lines': rails are drawn across the chart, while the
 # SELL/BUY buttons' 1px blue border is ~100px wide and clears 0.12 on a narrow pane.
 # See read_blue_rails. Real rails measured 0.40-0.90; button borders 0.12.
 BLUE_MIN_SPAN_FRAC = 0.25
@@ -188,52 +196,76 @@ def fit_price_axis(img, arr, w, h, known_price=None):
     #    out here: cropping the bottom strip also dropped legitimate low price ticks
     #    on some charts and shifted the axis fit).
     axis_crop = img.crop((int(w * 0.85), 0, w, h))
-    data = pytesseract.image_to_data(axis_crop, output_type=pytesseract.Output.DICT)
-    labels = []
-    for i in range(len(data['text'])):
-        txt = data['text'][i].strip().replace(',', '')
-        try:
-            val = float(txt)
-        except ValueError:
-            continue
-        if not np.isfinite(val):   # "nan"/"inf" tokens parse as float but aren't prices
-            continue
-        # Drop calendar-year tokens (2015-2035 integers) that survive the crop,
-        # unless a real price genuinely sits in that band (within 20% of known).
-        if val == int(val) and 2015 <= val <= 2035 and (
-                known_price is None or abs(val - known_price) / known_price > 0.20):
-            continue
-        # Drop gross outliers far from the current price — these are mis-OCR'd
-        # on-chart annotation text (alert-label boxes, ids) rather than axis ticks.
-        if known_price is not None and not (known_price / 5.0 <= val <= known_price * 5.0):
-            continue
-        y_center = data['top'][i] + data['height'][i] / 2
-        labels.append((val, y_center))
-    labels.sort(key=lambda x: x[1])  # sort top-to-bottom
+
+    def _ocr_labels(config):
+        """OCR the axis crop with a given tesseract config and return the numeric
+        price-label candidates as (value, y_center), top-to-bottom."""
+        data = pytesseract.image_to_data(axis_crop, output_type=pytesseract.Output.DICT,
+                                          config=config)
+        out = []
+        for i in range(len(data['text'])):
+            txt = data['text'][i].strip().replace(',', '')
+            try:
+                val = float(txt)
+            except ValueError:
+                continue
+            if not np.isfinite(val):   # "nan"/"inf" tokens parse as float but aren't prices
+                continue
+            # Drop calendar-year tokens (2015-2035 integers) that survive the crop,
+            # unless a real price genuinely sits in that band (within 20% of known).
+            if val == int(val) and 2015 <= val <= 2035 and (
+                    known_price is None or abs(val - known_price) / known_price > 0.20):
+                continue
+            # Drop gross outliers far from the current price — these are mis-OCR'd
+            # on-chart annotation text (alert-label boxes, ids) rather than axis ticks.
+            if known_price is not None and not (known_price / 5.0 <= val <= known_price * 5.0):
+                continue
+            y_center = data['top'][i] + data['height'][i] / 2
+            out.append((val, y_center))
+        out.sort(key=lambda x: x[1])  # sort top-to-bottom
+        return out
+
+    def _clean_labels(labels):
+        # 2. The price axis is perfectly linear in y, so every genuine label lies on a
+        #    single price=a*y+b line, evenly spaced. Fit that line ROBUSTLY (Theil-Sen:
+        #    the median of all pairwise slopes) so a couple of junk reads can't leverage
+        #    it — an ordinary least-squares fit gets dragged toward an outlier and then
+        #    reports a small residual for it, which is exactly how a stray "40"/"124"
+        #    misread among real 280..520 ticks used to survive. Keep only labels within
+        #    tol of the robust line; tol scales to the axis tick spacing.
+        if not labels:
+            return []
+        ally = [l[1] for l in labels]
+        allv = [l[0] for l in labels]
+        pair_slopes = [(allv[j] - allv[i]) / (ally[j] - ally[i])
+                       for i in range(len(labels)) for j in range(i + 1, len(labels))
+                       if ally[j] != ally[i]]
+        if len(labels) >= 3 and pair_slopes:
+            slope = float(np.median(pair_slopes))
+            intercept = float(np.median([v - slope * y for y, v in zip(ally, allv)]))
+            med_gap = float(np.median(np.abs(np.diff(sorted(allv)))))
+            tol = max(3.0, 0.3 * med_gap)
+            return [(v, y) for v, y in labels if abs(slope * y + intercept - v) <= tol]
+        return list(labels)
+
+    # Tesseract's DEFAULT page segmentation (psm 3) treats the tall axis gutter as a
+    # single block and on some charts finds only ONE tick label (HTWS/Helios Towers
+    # read just "120" of eight clearly-visible labels), which fails the >=3 gate below
+    # and silently drops a perfectly good chart. psm 11 ("sparse text") is built for
+    # scattered labels like a price axis and recovers them. Try the default FIRST so
+    # every chart that already reads stays byte-identical, and fall back to sparse-text
+    # OCR ONLY when the default is insufficient (< 3 clean labels) — never for charts
+    # that already pass, so this can't shift an existing fit.
+    labels = _ocr_labels('')
+    clean = _clean_labels(labels)
+    if len(clean) < 3:
+        alt_labels = _ocr_labels('--psm 11')
+        alt_clean = _clean_labels(alt_labels)
+        if len(alt_clean) > len(clean):
+            labels, clean = alt_labels, alt_clean
 
     if not labels:
         return None, None, 'no OCR-readable axis labels'
-
-    # 2. The price axis is perfectly linear in y, so every genuine label lies on a
-    #    single price=a*y+b line, evenly spaced. Fit that line ROBUSTLY (Theil-Sen:
-    #    the median of all pairwise slopes) so a couple of junk reads can't leverage
-    #    it — an ordinary least-squares fit gets dragged toward an outlier and then
-    #    reports a small residual for it, which is exactly how a stray "40"/"124"
-    #    misread among real 280..520 ticks used to survive. Keep only labels within
-    #    tol of the robust line; tol scales to the axis tick spacing.
-    ally = [l[1] for l in labels]
-    allv = [l[0] for l in labels]
-    pair_slopes = [(allv[j] - allv[i]) / (ally[j] - ally[i])
-                   for i in range(len(labels)) for j in range(i + 1, len(labels))
-                   if ally[j] != ally[i]]
-    if len(labels) >= 3 and pair_slopes:
-        slope = float(np.median(pair_slopes))
-        intercept = float(np.median([v - slope * y for y, v in zip(ally, allv)]))
-        med_gap = float(np.median(np.abs(np.diff(sorted(allv)))))
-        tol = max(3.0, 0.3 * med_gap)
-        clean = [(v, y) for v, y in labels if abs(slope * y + intercept - v) <= tol]
-    else:
-        clean = list(labels)
 
     if len(clean) < 3:
         return None, None, 'fewer than 3 clean axis labels after noise filtering'
@@ -545,7 +577,8 @@ def read_yellow_trendlines_geom(image_path, known_price=None):
     which the price-only read throws away. process_one uses this and derives the
     prices from it, so the wedge costs no extra OCR pass (fit_price_axis is the
     expensive part and already runs twice per chart, once per colour)."""
-    return _read_lines_at_today(image_path, trend_yellow_mask, known_price)
+    return _read_lines_at_today(image_path, trend_yellow_mask, known_price,
+                                min_span_frac=YELLOW_MIN_SPAN_FRAC)
 
 
 def _read_lines_at_today(image_path, mask_fn, known_price=None, require_reach=True,
@@ -588,7 +621,10 @@ def _read_lines_at_today(image_path, mask_fn, known_price=None, require_reach=Tr
             continue
         out.append({'price': round(price, 2), 'slope': slope, 'intercept': intercept,
                     'xmin': xmin, 'xmax': xmax})
-    return out, {'today_x': today_x, 'w': w}
+    # Carry the axis fit (price = a*y + b) and geometry so callers can map a price
+    # back to a pixel row — the review deck uses this to draw the Alert Low/High
+    # levels straight onto the chart image for the user to eyeball.
+    return out, {'today_x': today_x, 'w': w, 'h': h, 'a': a, 'b': b}
 
 
 def detect_wedge(records, meta, known_price):
@@ -784,7 +820,12 @@ def process_one(ticker, screenshot_path, known_price=None):
              'x_frac': x_frac, 'reason': reason, 'pattern': pattern,
              'blue_lines': blue, 'yellow_lines': yellow, 'wedge': wedge,
              'on_alert': on_alert, 'on_alert_line': (max(at) if at else None),
-             'alert_low_src': src(alert_low), 'alert_high_src': src(alert_high)}
+             'alert_low_src': src(alert_low), 'alert_high_src': src(alert_high),
+             # Axis fit (price = a*y + b) + pane geometry, so the review deck can draw
+             # the Alert Low/High levels onto the chart image. None when the axis
+             # couldn't be read (nothing to draw anyway).
+             'axis_a': yellow_meta.get('a'), 'axis_b': yellow_meta.get('b'),
+             'pane_h': yellow_meta.get('h'), 'pane_w': yellow_meta.get('w')}
 
 
 def main():

@@ -110,9 +110,18 @@ def main():
     entries = []
     for name in os.listdir(DOWNLOADS):
         path = os.path.join(DOWNLOADS, name)
-        if not os.path.isfile(path) or name.startswith("Delete "):
+        if name.startswith("Delete "):
             continue
-        entries.append((name, path, os.path.getmtime(path)))
+        try:
+            if not os.path.isfile(path):
+                continue
+            mtime = os.path.getmtime(path)
+        except OSError:
+            # File vanished between listing and stat (a browser .crdownload or an
+            # OneDrive sync temp being moved). Skip it — this cosmetic step must
+            # never abort the run over a transient file. See CLAUDE.md.
+            continue
+        entries.append((name, path, mtime))
 
     candidates = (
         find_backup_candidates(entries)
@@ -141,7 +150,14 @@ def main():
             if os.path.exists(new_path):
                 print(f"    SKIPPED — target already exists: {new_name}")
                 continue
-            os.rename(path, new_path)
+            try:
+                os.rename(path, new_path)
+            except OSError as e:
+                # File locked (open in Excel / mid OneDrive sync) or otherwise
+                # un-renamable. Warn and carry on — flagging a redundant file is
+                # cosmetic and must never fail the run. See CLAUDE.md.
+                print(f"    SKIPPED — could not rename ({e.__class__.__name__}: {e})")
+                continue
 
     if not apply:
         print("\nDry run only — re-run with --apply to actually rename these files.")
