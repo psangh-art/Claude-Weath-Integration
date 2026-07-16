@@ -48,12 +48,14 @@ from ticker_normalize import normalize
 SHEET = 'Stocks of Interest'
 INV = 'Investments'
 
-# The region this script owns. Row 41/42 (title + strategy) and row 81 (summary) are
-# rewritten in place; 43-79 is the rebuildable band. Row 84 onward (the FTSE promotion
+# The region this script owns. Row 41/42 (title + strategy) and row 87 (summary) are
+# rewritten in place; 43-85 is the rebuildable band. Row 90 onward (the FTSE promotion
 # tables) must NEVER be touched — hence a hard cap rather than inserting rows.
+# Band enlarged 43-79 -> 43-85 and the reference block shifted 84->90 on 2026-07-16
+# (shift_soi_reference_down_2026-07-16.py) when the curated watchlist outgrew 37 rows.
 TITLE_ROW, STRATEGY_ROW = 41, 42
-REGION_START, REGION_END = 43, 79
-SUMMARY_ROW = 81
+REGION_START, REGION_END = 43, 85
+SUMMARY_ROW = 87
 LAST_COL = 17
 
 # +1 vs the pre-2026-07-16 layout: a 'Marked Up' column was inserted at Investments!B.
@@ -347,7 +349,8 @@ def main():
         emit('  no live price or alert low (left in reference section): ' + ', '.join(unplaced))
     if need > avail:
         print(f'\nABORT: needs {need} rows but only {avail} are reserved before the FTSE '
-              f'promotion tables at row 84. Remove a stock, or move those tables down.',
+              f'promotion tables at row 90. Remove a stock, or move those tables down '
+              f'(shift_soi_reference_down_*.py + bump REGION_END/SUMMARY_ROW).',
               file=sys.stderr)
         return 2
     if not apply:
@@ -368,7 +371,7 @@ def main():
                    'Sections and levels rebuilt each pipeline run — add or remove a stock by '
                    'hand and it will be placed and maintained from the next run.'))
     wb.save(path)
-    print(f'\nWritten -> {path} (region ends row {last}; FTSE tables at 84 untouched)')
+    print(f'\nWritten -> {path} (region ends row {last}; FTSE tables at 90 untouched)')
     return 0
 
 

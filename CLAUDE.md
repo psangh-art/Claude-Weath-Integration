@@ -274,6 +274,20 @@ things had to move together and MUST stay in sync on any future structural chang
   one of these needs the same coordinated bump** — a wrong constant writes Alert Low
   into the wrong column of a live trading sheet.
 
+**A NEW COLUMN MUST FOLLOW THE EXISTING FORMAT of the column beside it — never leave
+cells on openpyxl's Calibri/Arial-10, no-fill, centred defaults (user rule
+2026-07-16).** 'Marked Up' shipped with its VALUES set but NO styling, so its data
+cells were visibly out of step with the green/grey Yes/No 'Chart' flag right next to
+it (Arial 10 vs 9, no fill vs the green `FFC6EFCE`/grey `FFF2F2F2` pair, centred vs
+left/top). Fixed by `set_marked_up_flag()` in `update_master_sheet.py` — which styles
+column B atomically (value + Arial-9 font + green/grey fill + thin border + left/top)
+to MATCH column A 'Chart', the same way `set_chart_flag()` does — plus a one-off,
+`fix_marked_up_format_2026-07-16.py` (already run, backs the workbook up first), that
+applied that style to all 355 existing rows and fixed the B2 header alignment. **Any
+future added/inserted column: mirror the adjacent column's font, fill, border and
+alignment in the writing code AND back-fill existing rows — matching the neighbour is
+the rule, openpyxl defaults are never acceptable in this workbook.**
+
 ## 'Stocks of Interest' section tables are pipeline-maintained (2026-07-15)
 
 The section tables BELOW the auto-built below-alert block (rows 41-81: at lower

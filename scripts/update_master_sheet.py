@@ -208,6 +208,24 @@ def set_chart_flag(ws, row, is_yes):
     cell.fill = fill
 
 
+def set_marked_up_flag(ws, row, is_yes):
+    """Column B 'Marked Up' — styled to MATCH its twin status flag column A 'Chart':
+    Arial 9, bold green for Yes / plain grey for No, thin borders, left/top. Value +
+    font + fill + border set together (atomic), same as set_chart_flag. A column added
+    to this sheet must follow the existing adjacent column's format — never leave cells
+    on openpyxl's Calibri-11 no-fill defaults (that's exactly how this column shipped
+    wrong first time: Arial 10, no fill, centred, out of step with Chart beside it)."""
+    cell = ws.cell(row=row, column=COL_MARKED_UP)
+    cell.value = 'Yes' if is_yes else 'No'
+    cell.font = Font(name='Arial', size=9, bold=is_yes,
+                     color=CHART_YES_FONT if is_yes else CHART_NO_FONT)
+    cell.fill = PatternFill(fill_type='solid',
+                            fgColor=CHART_YES_FILL if is_yes else CHART_NO_FILL)
+    cell.alignment = Alignment(horizontal='left', vertical='top')
+    thin = Side(style='thin')
+    cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+
 def append_note(ws, row, note):
     cell = ws.cell(row=row, column=COL_CLAUDE_NOTES)
     existing = cell.value
@@ -264,8 +282,9 @@ def process(master_ws, charts, channel_by_ticker):
                         'chart_id': row.get('chartId'),
                         'on_alert': bool((detection or {}).get('on_alert')),
                         'detection': detection})
-        # Column B: has the user marked up this chart? Maintained every run.
-        master_ws.cell(row=master_row, column=COL_MARKED_UP, value=marked_up_flag(detection))
+        # Column B: has the user marked up this chart? Maintained every run, styled
+        # to match column A 'Chart' beside it (see set_marked_up_flag).
+        set_marked_up_flag(master_ws, master_row, marked_up_flag(detection) == 'Yes')
 
         # Commodities can't be priced by GOOGLEFINANCE at all any more (verified
         # 2026-07-11: TVC: and CURRENCY:XAU/XAG/XPT/XPD all return #N/A), so their
