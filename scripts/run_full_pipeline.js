@@ -92,6 +92,14 @@ function runCleanup() {
   if (cleanupResult.status !== 0) {
     console.error('Downloads cleanup could not run (see python output above) — nothing else in this run is affected.');
   }
+
+  // Ensure only ONE version of each output file remains (user request 2026-07-17):
+  // recycle the "X (N).ext" duplicate copies of every canonical output. Distinct
+  // from cleanup_downloads above (rename-only) — this one removes (to Recycle Bin).
+  const purgeResult = spawnSync('python', [path.join(__dirname, 'purge_output_duplicates.py')], { stdio: 'inherit' });
+  if (purgeResult.status !== 0) {
+    console.error('Output-duplicate purge could not run (see python output above) — nothing else in this run is affected.');
+  }
 }
 
 function main() {
