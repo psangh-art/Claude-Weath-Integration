@@ -312,6 +312,17 @@ tbody tr:hover{background:var(--panel-2)}
 .chip-btn.primary{background:linear-gradient(150deg,var(--accent),var(--accent-2));border-color:transparent;color:#04231d}
 .chip-btn.primary:hover{filter:brightness(1.06)}
 .design-hint{font-size:11.5px;color:var(--muted);margin-bottom:10px;flex-shrink:0;line-height:1.45}
+/* Intelligence index widgets */
+.intel-val{font-size:26px;font-weight:800;letter-spacing:-.01em;line-height:1.05;margin-top:2px}
+.intel-row{display:flex;align-items:center;gap:10px;margin:7px 0 4px}
+.intel-abs{font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums}
+.intel-meta{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.045em;margin-top:6px}
+.intel-load,.intel-err{font-size:12px;color:var(--muted);padding:14px 2px}
+.intel-err{color:var(--warn,#c98a00)}
+.spark{width:100%;height:44px;display:block;margin-top:2px}
+.spark-empty{height:44px}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;padding:5px;line-height:0}
+.icon-btn svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .design-list{display:flex;flex-direction:column;gap:6px;overflow-y:auto;flex:1;min-height:0}
 .design-group-title{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:800;
   color:var(--muted);margin:10px 0 2px;padding-bottom:4px;border-bottom:1px solid var(--line-soft)}
@@ -547,6 +558,8 @@ const ICONS={
   sliders:'<svg viewBox="0 0 24 24"><line x1="4" y1="6" x2="20" y2="6"/><circle cx="9.5" cy="6" r="2"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15.5" cy="12" r="2"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="8" cy="18" r="2"/></svg>',
   sheet:'<svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2"/><line x1="3.5" y1="10" x2="20.5" y2="10"/><line x1="3.5" y1="15" x2="20.5" y2="15"/><line x1="10" y1="4" x2="10" y2="20"/></svg>',
   flow:'<svg viewBox="0 0 24 24"><circle cx="5" cy="6" r="2.3"/><circle cx="19" cy="6" r="2.3"/><circle cx="12" cy="18" r="2.3"/><path d="M7.2 7.1L11 16M16.8 7.1L13 16M7.3 6h9.4"/></svg>',
+  pulse:'<svg viewBox="0 0 24 24"><path d="M3 12.5h4l2.5-6 4 12 2.5-7 1.5 2h3.5"/></svg>',
+  refresh:'<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v4h-4"/></svg>',
 };
 
 /* ---------------------------- app state ---------------------------- */
@@ -567,6 +580,7 @@ const NAV_ITEMS=[
   {id:'portfolio', label:'Portfolio', icon:ICONS.briefcase, enabled:true},
   {id:'historic', label:'Historic', icon:ICONS.clock, enabled:true},
   {id:'watchlist', label:'Watchlist', icon:ICONS.star, enabled:true},
+  {id:'intelligence', label:'Intelligence', icon:ICONS.pulse, enabled:true},
   {id:'design', label:'Design', icon:ICONS.sliders, enabled:true},
   {id:'reports', label:'Reports', icon:ICONS.doc, enabled:false},
 ];
@@ -585,7 +599,7 @@ const EXTERNAL_LINKS=[
 const SIZE_LABELS={S:'Small', M:'Medium', L:'Large'};
 
 /* ---------------------------- widget definitions ---------------------------- */
-const WIDGET_DEFS={overview:[], portfolio:[], historic:[], watchlist:[], design:[]};
+const WIDGET_DEFS={overview:[], portfolio:[], historic:[], watchlist:[], intelligence:[], design:[]};
 
 WIDGET_DEFS.overview.push({
   id:'m-portfolio-value', title:'Total Portfolio Value', size:'S', span:2,
@@ -1224,6 +1238,65 @@ WIDGET_DEFS.watchlist.push({
   }
 });
 
+/* ---------------------- Intelligence (live index widgets) ---------------------- */
+// Live market indices fetched SERVER-side from Stooq (/api/intelligence — the
+// browser can't call stooq.com cross-origin). Cached in this module; each widget's
+// ↻ button forces a fresh pull for just these widgets (?refresh=1).
+const INTEL={loaded:false, loading:false, error:null, at:null, indices:{}};
+async function loadIntelligence(force){
+  if(INTEL.loading) return;
+  INTEL.loading=true;
+  if(UI.screen==='intelligence') renderGrid();
+  try{
+    const r=await fetch('/api/intelligence'+(force?'?refresh=1':''));
+    const j=await r.json();
+    INTEL.indices=j.indices||{}; INTEL.at=j.at; INTEL.error=j.error||null; INTEL.loaded=true;
+  }catch(e){ INTEL.error='Could not reach the market-data service'; }
+  INTEL.loading=false;
+  if(UI.screen==='intelligence') renderGrid();
+}
+function intelNum(n){ return (n==null||isNaN(n))?'—':Number(n).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function sparkline(series,down){
+  if(!series||series.length<2) return '<div class="spark-empty"></div>';
+  const w=200,h=44,pad=3;
+  const min=Math.min(...series), max=Math.max(...series), rng=(max-min)||1;
+  const pts=series.map((v,i)=>{
+    const x=pad+(i/(series.length-1))*(w-2*pad);
+    const y=pad+(1-(v-min)/rng)*(h-2*pad);
+    return x.toFixed(1)+','+y.toFixed(1);
+  });
+  const col=down?'var(--danger)':'var(--success)';
+  const area='M'+pts.join(' L')+' L'+(w-pad).toFixed(1)+','+(h-pad)+' L'+pad+','+(h-pad)+' Z';
+  return '<svg class="spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+
+    '<path d="'+area+'" fill="'+col+'" opacity="0.12"/>'+
+    '<polyline points="'+pts.join(' ')+'" fill="none" stroke="'+col+'" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>'+
+    '</svg>';
+}
+function mountIndexWidget(body,action,key){
+  action.innerHTML='<button class="chip-btn icon-btn" title="Refresh market data">'+ICONS.refresh+'</button>';
+  action.querySelector('button').addEventListener('click',()=>loadIntelligence(true));
+  if(!INTEL.loaded && !INTEL.loading){ setTimeout(()=>loadIntelligence(false),0); }
+  const d=INTEL.indices[key];
+  if(INTEL.loading && !d){ body.innerHTML='<div class="intel-load">Loading…</div>'; return; }
+  if(!d){ body.innerHTML='<div class="intel-err">'+escapeHtml(INTEL.error||'No data yet')+'</div>'; return; }
+  if(d.error){ body.innerHTML='<div class="intel-err" title="'+escapeHtml(d.symbol||'')+'">'+escapeHtml(d.error)+'</div>'; return; }
+  const down=(d.change_pct||0)<0;
+  const absCol=down?'var(--danger)':((d.change_pct||0)>0?'var(--success)':'var(--muted)');
+  body.innerHTML=
+    '<div class="intel-val">'+intelNum(d.value)+'</div>'+
+    '<div class="intel-row">'+deltaChip(d.change_pct,{kind:'pct',decimals:2})+
+      '<span class="intel-abs" style="color:'+absCol+'">'+(d.change>0?'+':'')+intelNum(d.change)+'</span></div>'+
+    sparkline(d.series,down)+
+    '<div class="intel-meta">'+escapeHtml((d.currency?d.currency+' · ':'')+'as of '+(d.as_of||'—'))+'</div>';
+}
+[['ftse','FTSE 100'],['dax','DAX'],['stoxx50','Euro STOXX 50'],['spx','S&P 500'],['nasdaq','Nasdaq'],['dow','Dow Jones']]
+  .forEach(([key,label])=>{
+    WIDGET_DEFS.intelligence.push({
+      id:'intel-'+key, title:label, size:'S', span:4,
+      mount(body,action){ mountIndexWidget(body,action,key); }
+    });
+  });
+
 /* ---------------------- Design (Widgets — order control for every screen) ---------------------- */
 WIDGET_DEFS.design.push({
   id:'overview-order', title:'Widgets', size:'L', span:12,
@@ -1295,6 +1368,7 @@ const DEFAULT_ORDER={
   portfolio: WIDGET_DEFS.portfolio.map(w=>w.id),
   historic: WIDGET_DEFS.historic.map(w=>w.id),
   watchlist: WIDGET_DEFS.watchlist.map(w=>w.id),
+  intelligence: WIDGET_DEFS.intelligence.map(w=>w.id),
   design: WIDGET_DEFS.design.map(w=>w.id),
 };
 
@@ -1379,7 +1453,7 @@ function syncThemeButton(){
 })();
 
 /* ---------------------------- render: topbar ---------------------------- */
-const SCREEN_TITLES={overview:'Overview', portfolio:'Portfolio', historic:'Historic', watchlist:'Watchlist', design:'Design'};
+const SCREEN_TITLES={overview:'Overview', portfolio:'Portfolio', historic:'Historic', watchlist:'Watchlist', intelligence:'Intelligence', design:'Design'};
 function renderTopbar(){
   document.getElementById('screenTitle').textContent=SCREEN_TITLES[UI.screen]||UI.screen;
   const editBtn=document.getElementById('editBtn');
@@ -1402,7 +1476,7 @@ function renderGrid(){
   const grid=document.getElementById('grid');
   grid.classList.toggle('editing',UI.editMode);
   grid.innerHTML='';
-  if(!DATA.overview||!DATA.portfolio||!DATA.historic||!DATA.watchlist||!DATA.targets||!DATA.news||!DATA.activity){
+  if(UI.screen!=='intelligence' && (!DATA.overview||!DATA.portfolio||!DATA.historic||!DATA.watchlist||!DATA.targets||!DATA.news||!DATA.activity)){
     grid.innerHTML='<div class="empty-note">Loading dashboard data…</div>';
     return;
   }

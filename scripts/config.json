@@ -14,6 +14,14 @@
   "appPort": 4590,
   "financeSheetId": "1UjAz_QUuh86_e6yq8QJf2veI8IpkRCyVfWaK6maqiyc",
   "tvLayoutUrlTemplate": "https://www.tradingview.com/chart/{chart_id}/",
+  "intelligenceIndices": [
+    { "key": "ftse",    "label": "FTSE 100",      "symbol": "^FTSE",     "currency": "GBP" },
+    { "key": "dax",     "label": "DAX",           "symbol": "^GDAXI",    "currency": "EUR" },
+    { "key": "stoxx50", "label": "Euro STOXX 50", "symbol": "^STOXX50E", "currency": "EUR" },
+    { "key": "spx",     "label": "S&P 500",       "symbol": "^GSPC",     "currency": "USD" },
+    { "key": "nasdaq",  "label": "Nasdaq",        "symbol": "^IXIC",     "currency": "USD" },
+    { "key": "dow",     "label": "Dow Jones",     "symbol": "^DJI",      "currency": "USD" }
+  ],
   "onedriveProductsDir": "C:\\Users\\Paul\\OneDrive\\Investment Production",
   "productWebLinks": {
     "reviewDeck": "",

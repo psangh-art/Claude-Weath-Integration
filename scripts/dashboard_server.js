@@ -10,7 +10,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import os from 'os';
-import { productWebLink } from './config.js';
+import { productWebLink, CFG } from './config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,6 +47,73 @@ function regenerate(reason) {
   });
 }
 
+// ---- Intelligence: live index quotes (Yahoo Finance chart API) ------------
+// The 'refresh just these widgets' data source. Fetched server-side (the browser
+// can't call the Yahoo API cross-origin), cached briefly, forced fresh with
+// ?refresh=1. Symbols are config-driven (config.json -> intelligenceIndices) so a
+// symbol that doesn't resolve can be corrected without touching code. Yahoo's
+// chart endpoint returns clean JSON (day change from meta + a close series for the
+// sparkline) and, unlike Stooq's CSV, isn't behind a bot/JS challenge.
+const INTEL_INDICES = Array.isArray(CFG.intelligenceIndices) ? CFG.intelligenceIndices : [];
+const INTEL_TTL_MS = 5 * 60 * 1000;      // serve cache for 5 min unless forced
+let intelCache = { at: 0, payload: null };
+
+async function fetchJson(url, ms) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function fetchIndex(idx) {
+  const url = 'https://query1.finance.yahoo.com/v8/finance/chart/'
+            + encodeURIComponent(idx.symbol) + '?range=1mo&interval=1d';
+  const base = { key: idx.key, label: idx.label, symbol: idx.symbol, currency: idx.currency || null };
+  try {
+    const j = await fetchJson(url, 8000);
+    const result = j && j.chart && j.chart.result && j.chart.result[0];
+    if (!result) return { ...base, error: 'no data (check symbol)' };
+    const meta = result.meta || {};
+    const closes = (((result.indicators || {}).quote || [])[0] || {}).close || [];
+    const series = closes.filter(x => typeof x === 'number').slice(-30);
+    const last = typeof meta.regularMarketPrice === 'number' ? meta.regularMarketPrice
+               : (series.length ? series[series.length - 1] : null);
+    const prev = typeof meta.chartPreviousClose === 'number' ? meta.chartPreviousClose
+               : (typeof meta.previousClose === 'number' ? meta.previousClose : null);
+    if (last == null) return { ...base, error: 'no data (check symbol)' };
+    const change = (prev != null) ? last - prev : null;
+    const change_pct = (prev) ? (change / prev) * 100 : null;
+    const ts = (result.timestamp && result.timestamp.length)
+             ? new Date(result.timestamp[result.timestamp.length - 1] * 1000).toISOString().slice(0, 10)
+             : null;
+    return {
+      ...base,
+      value: Math.round(last * 100) / 100,
+      change: change == null ? null : Math.round(change * 100) / 100,
+      change_pct: change_pct == null ? null : Math.round(change_pct * 100) / 100,
+      as_of: ts,
+      series: series.length >= 2 ? series : [],
+    };
+  } catch (e) {
+    return { ...base, error: String(e.message || e) };
+  }
+}
+
+async function getIntelligence(force) {
+  const now = Date.now();
+  if (!force && intelCache.payload && (now - intelCache.at) < INTEL_TTL_MS) return intelCache.payload;
+  const results = await Promise.all(INTEL_INDICES.map(fetchIndex));
+  const indices = {};
+  for (const r of results) indices[r.key] = r;
+  intelCache = { at: now, payload: { at: new Date().toISOString(), indices } };
+  return intelCache.payload;
+}
+
 function serveFile(res, file) {
   fs.readFile(file, (e, buf) => {
     if (e) { res.writeHead(404); res.end('Not found'); return; }
@@ -67,6 +134,19 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (pathname === '/refresh') { regenerate('manual'); res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); return; }
+
+  // Live index quotes for the Intelligence screen. ?refresh=1 bypasses the cache.
+  if (pathname === '/api/intelligence') {
+    const force = url.searchParams.get('refresh') === '1';
+    getIntelligence(force).then(payload => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify(payload));
+    }).catch(e => {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: String(e.message || e), indices: {} }));
+    });
+    return;
+  }
 
   // Serve the built decks (from Downloads) so the nav links work standalone.
   // Each deck ALSO has a productWebLinks key (scripts/config.json) — the same
