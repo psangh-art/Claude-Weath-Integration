@@ -771,9 +771,12 @@ read this run (`lower`/`upper`), so a wrong level shows up wrong, which is the p
   **`investment-analyst`** (stock analysis, buy prices, daily brief drafts,
   2026-07-12), and **`data-developer`** (data ingestion + transforms — CSV
   loaders, fidelity_file_classifier, ticker_normalize, pivots, master-sheet
-  derivations, 2026-07-13). The architecture deck's agents slide is refreshed
-  on request by re-running `add_agents_slide_2026-07-12.py` (re-runnable —
-  replaces the slide).
+  derivations, 2026-07-13), and **`validation`** (audits the review deck's
+  detected patterns/alert levels against the signed-off pattern rules,
+  fixes every instance of a shared root cause with an A/B measurement, and
+  flags genuinely new patterns for the user, 2026-07-17). The architecture
+  deck's agents slide is refreshed on request by re-running
+  `add_agents_slide_2026-07-12.py` (re-runnable — replaces the slide).
 
 ## Open items / things to verify on the next export run
 
