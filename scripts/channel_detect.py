@@ -582,11 +582,29 @@ def _extract_straight_lines(mask, w, h, max_lines=6, resid_px=3.0,
 
 def channel_blue_mask(arr):
     """Boolean mask of channel-blue pixels — the array-wide form of is_channel_blue,
-    for the straight-line extractor."""
+    for the straight-line extractor.
+
+    Also matches a PALE CYAN channel-rail colour (~#B2EBF2, R150-200/G210-245/
+    B220-250) alongside the standard saturated blue (2026-07-17 validation audit).
+    AV.'s ascending parallel channel is drawn in this pale cyan, which the original
+    (saturated-only) range doesn't touch at all — so the real rails were invisible,
+    and the only "blue" line found was an unrelated manually-drawn "Sell at 693"
+    horizontal ray in the standard colour, which got reported as the sole rail and
+    shipped as Alert High (693.54) instead of the true top rail (~869). Widening the
+    mask recovers both real rails (741/869) on AV. and a second, previously-missed
+    rail on PNN (456.83, turning a single_high read into a proper parallel with a
+    correct Alert Low). Measured over the full batch (committed vs widened, same
+    342 images): only these two tickers' results change structurally; ~70 others
+    shift by <0.15 price units (sub-0.01% — RANSAC's fixed-seed subsample drawing
+    from a slightly larger pixel pool) — economically identical, verified by rounding
+    to the same 2dp precision the output already uses. Zero rails lost, zero new
+    false lines elsewhere."""
     r = arr[..., 0].astype(np.int32)
     g = arr[..., 1].astype(np.int32)
     b = arr[..., 2].astype(np.int32)
-    return (r >= 15) & (r <= 60) & (g >= 60) & (g <= 110) & (b >= 190) & (b <= 255)
+    saturated_blue = (r >= 15) & (r <= 60) & (g >= 60) & (g <= 110) & (b >= 190) & (b <= 255)
+    pale_cyan = (r >= 150) & (r <= 200) & (g >= 210) & (g <= 245) & (b >= 220) & (b <= 250)
+    return saturated_blue | pale_cyan
 
 
 def read_blue_rails(image_path, known_price=None):
@@ -871,6 +889,20 @@ def process_one(ticker, screenshot_path, known_price=None):
         pattern = 'trend lines only (no blue channel read)' if yellow else 'no lines read'
     elif known_price is None:
         pattern = 'blue channel (no price to compare)'
+    elif len(blue_set) < 2:
+        # Only ONE distinct blue rail survived the plausibility gates — its partner
+        # was filtered out (implausible ratio to price, or extrapolates negative),
+        # which is common on a very wide/old channel whose far rail has drifted off
+        # today's scale (2026-07-17 validation audit: MKS/TPK/MTRO). With only one
+        # rail we cannot tell whether it's the TOP or BOTTOM of the channel, so it's
+        # wrong to call this a breakout/breakdown of the (partly-invisible) channel —
+        # MKS/TPK/MTRO were all mislabelled "price BELOW channel (broken down)" when
+        # the survivor was actually the channel's TOP rail. The nearest-line default
+        # already picks the right alert level regardless; only the description
+        # changes here.
+        pattern = ('single blue boundary above price (nearest-line default)'
+                   if blue_set[0] > known_price else
+                   'single blue boundary below price (nearest-line default)')
     elif all(c < known_price for c in blue):
         pattern = 'price ABOVE channel (broken out) — top rail is support'
     elif all(c > known_price for c in blue):

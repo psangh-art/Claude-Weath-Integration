@@ -94,6 +94,12 @@ PATTERN_LABELS = [
     ('price INSIDE channel', None, 'Parallel channel'),
     ('price ABOVE channel', None, 'Breakout above channel'),
     ('price BELOW channel', None, 'Below channel — band governs'),
+    # A lone surviving blue rail (its partner filtered out as implausible — see
+    # channel_detect's 2026-07-17 validation-audit fix) doesn't tell us whether it's
+    # the top or bottom of the channel, so it's no longer labelled a breakout/
+    # breakdown (MKS/TPK/MTRO were wrongly shown "Below channel" this way). The
+    # alert levels are unaffected — only this label changes.
+    ('single blue boundary', None, 'Single blue boundary'),
     ('trend lines only', None, 'Trend lines'),
     ('no lines read', None, 'No lines drawn'),
     ('blue channel (no price', None, 'Parallel channel'),

@@ -833,16 +833,27 @@ moved noise→applied — ADM (High 4258→3933), BARC (491→578), TSCO (598→
 (346→363), QQ, SHEL, ULVR — zero regressions, zero other applied rows changed.** The
 live sheet's stale Highs correct themselves on the next pipeline run.
 
-Still OPEN from that audit (not code-fixed — need a decision/redraw, NOT a blind patch):
-- **AV. (Aviva)** ships Alert High 693.54 = a drawn "Sell at 693" #2962FF horizontal
-  annotation mistaken for a rail, because the REAL channel is pale-cyan (RGB≈178,235,242)
-  that `channel_blue_mask` (r∈[15,60]) can't see. True top rail ≈869. Same bug CLASS as
-  the old AZN stray-blue note. A fix means widening the mask to the channel-tool cyan or
-  down-weighting lone flat "rails" as annotations — both need a full 342-chart A/B before
-  landing (regression risk); do NOT blind-patch.
-- **MKS / TPK / MTRO** ship CORRECT numbers but a wrong pattern LABEL ('price BELOW
-  channel') when only one rail survives the plausibility gates — cosmetic, needs a
-  classifier tweak with sign-off on wording.
+FIXED from that audit (all A/B-verified, applied to the live sheet + committed):
+- **AV. (Aviva) — pale-cyan channel now detected.** `channel_blue_mask` was widened to
+  also match the pale-cyan channel-rail colour (~#B2EBF2, R150-200/G210-245/B220-250)
+  alongside the saturated blue. AV.'s ascending channel is drawn in that pale cyan, which
+  the saturated-only mask couldn't see — so the only "blue" it found was a manually-drawn
+  "Sell at 693" #2962FF horizontal ray, shipped as Alert High 693.54. Now reads the real
+  rails: Alert High **869.16** (top rail), and PNN gains a real second rail too
+  (single_high → parallel, Alert Low 456.83). Full-batch A/B (committed vs widened, same
+  342 images, independently re-run 2026-07-17): **only AV. + PNN change structurally, 0
+  rails lost, ~7 tickers shift <1 price unit (sub-0.02%, RANSAC reseed noise), 0 new false
+  lines.** Do NOT tighten the pale-cyan band without re-measuring. (This also resolves the
+  AZN-class "stray-blue" concern for good.)
+- **Single-blue-boundary label (MKS/TPK/MTRO/HSBA/BBY/III…).** When only ONE blue rail
+  survives the plausibility gates (its partner filtered as implausible on a wide/old
+  channel), `process_one` no longer calls it a breakout/breakdown — it can't tell top from
+  bottom — and labels it 'single blue boundary above/below price (nearest-line default)'.
+  Alert LEVELS are unchanged (computed earlier); only the pattern text. `refresh_soi_sections
+  .PATTERN_LABELS` gained the matching 'Single blue boundary' entry so the SOI Pattern
+  column doesn't go blank.
+
+Still OPEN from that audit (data/workflow, NOT a code fix — need a redraw, not a patch):
 - **IAG** carries a ~9x-stale Alert Low (49.19 vs price ~444) — the captured layout has
   no markup so the read is honestly rejected and the OLD level is inherited (working as
   designed). Needs the user to re-mark IAG's Monthly view (the yellow COVID-low trendline)
