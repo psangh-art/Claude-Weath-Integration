@@ -125,6 +125,23 @@ def fmt_num(v):
     return '—'
 
 
+def fmt_ts(v):
+    """Human-readable capture timestamp: an ISO string like
+    '2026-07-17T16:29:48.104Z' -> '17 Jul 2026, 16:29'. Leaves anything it
+    can't parse untouched, and returns '—' for empties."""
+    if not v:
+        return '—'
+    if not isinstance(v, str):
+        return str(v)
+    s = v.strip().replace('Z', '+00:00')
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        # Fall back to just the date+minute portion of a raw ISO string.
+        return v.replace('T', ' ')[:16]
+    return dt.strftime('%d %b %Y, %H:%M')
+
+
 def add_text(slide, x, y, w, h, lines, align=PP_ALIGN.LEFT):
     """lines: list of (text, size_pt, bold, colour) tuples, one paragraph each."""
     box = slide.shapes.add_textbox(x, y, w, h)
@@ -269,7 +286,7 @@ def chart_slide(prs, chart, layout_name, master_key, master, channel, tv_alerts,
         y = add_flag_banner(slide, y, '⚠ NO ALERTS (TradingView or master)')
 
     lines = [(f"Live price: {fmt_num(chart.get('price'))}", 15, True, NAVY),
-             (f"  captured {chart.get('priceCheckedAt') or '—'}", 10, False, GREY)]
+             (f"  captured {fmt_ts(chart.get('priceCheckedAt'))}", 10, False, GREY)]
 
     if master:
         lines += [
