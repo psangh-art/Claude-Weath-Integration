@@ -75,6 +75,49 @@ something worth remembering.
     images) shows only magnitude shifts in the expected direction, zero detections
     gained or lost. (AZN's yellow-drawn channel still yields a stray-blue false
     single — pre-existing, unrelated to this fix, worth a separate look.)
+  - **`find_today_x` now excludes the OHLC legend band + reaches through
+    fill-dimmed candles (2026-07-17).** Two related today_x errors, both found by
+    reviewing the annotated review deck against the drawn charts:
+    (1) **Teal/red OHLC legend text** at the very top ("O.. H.. L.. C.. +66..") is
+    drawn in the up-candle teal / down-candle red and matches `candle_mask`. On a
+    chart with blank future space the legend extends further RIGHT than the last real
+    candle, so today_x landed in the legend and the ascending rail was read out in the
+    future projection — **ADM read a 4345 top rail vs the true ~3935 at today** (user:
+    "alert high should be the top of the parallel"). Fix: zero the top `min(100, h/2)`
+    px before counting candle columns. (2) **Candles drawn INSIDE a channel fill** are
+    dimmed by the navy overlay (down #F23645→~#9A293E, up #089981→~#086764) and fall
+    below the tight mask, so on **FRAS** today_x stopped at 0.73w and understated the
+    top rail (827→843). Fix: a `find_today_x`-only dim-candle mask (`b<=110` keeps it
+    off the magenta event chips), unioned with the tight mask. THREE guards make the
+    dim extension safe — do not remove: the chip's LEFT EDGE is found on the TIGHT mask
+    (the dim mask fills the axis-panel gap and would swallow the whole series — cost
+    SILVER/NATGAS their read); the extension is a CONTIGUOUS walk right from the last
+    bright candle that stops at the first real gap (so genuine blank future is never
+    crossed and the chip's own antialiasing bleed can't drag today onto the chip edge —
+    that put NXT +16% and PAGE onto a stale reading); gap tolerance `max(15, .012w)`.
+    Isolated A/B over the 342-ticker batch: legend fix **14 changed, 0 lost** (all the
+    expected direction); dim fix **8 changed, 0 gained/lost** (FRAS 843, 7 small
+    toward-today shifts). Verified on-chart: ADM/FRAS sit on the rail at the last bar,
+    SILVER/NATGAS/NXT/EZJ/PAGE unregressed.
+  - **Axis bracket guard retries psm 11 when the read doesn't bracket the price
+    (2026-07-17).** `fit_price_axis` rejected a chart when its clean labels didn't
+    bracket the known price — but the labels NEAREST the price are the ones most often
+    missed: on a chart zoomed wide to show an old spike, today's ticks sit in the busy
+    candle region where the default OCR block-segments over them (**AO World** read only
+    [150-450] and was dropped, so its two yellow trend lines never fed alerts; user:
+    "AO World should use the 2 trend lines"). Fix: when the default clean labels don't
+    bracket the price AND psm 11 hasn't run, retry with sparse-text psm 11 and accept it
+    ONLY if the recovered set has ≥3 labels AND actually brackets the price. A genuinely
+    off-frame price still finds no bracketing labels and stays rejected. Batch A/B: **24
+    recovered (None→read), 0 lost, 0 existing reads altered** — incl. AO 87.8/119.64,
+    and KGF/NXT/IMB (the tickers the 2026-07-16 one-tick note said to leave rejected,
+    now correct because the user redrew them as on-frame monthly charts — verified the
+    recovered rails sit on the drawings).
+  - **Review-deck level tags shrunk to "Low"/"High" + value, no background box
+    (2026-07-17, user request).** `annotate_chart_levels` in `build_review_deck.py`
+    draws small coloured text with a thin dark stroke instead of a filled label chip,
+    so the level markers stay legible without covering the chart — the user reads many
+    charts fast to confirm the detected levels.
   - **Price-bracket guard now extrapolates one tick past the read labels
     (2026-07-16).** `fit_price_axis`'s bracket check used to reject any read where the
     known price fell outside `[lo_lbl×0.9, hi_lbl×1.1]` of the OCR'd axis labels. The

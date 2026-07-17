@@ -165,23 +165,76 @@ def find_today_x(arr, w):
     the chip — walk left across that solid block to its left edge (the plot/axis
     boundary) and take today as the rightmost real candle strictly left of it.
     Returns None when no candle column is found (blank or non-candle chart)."""
-    counts = candle_mask(arr).sum(axis=0)
-    xs = np.nonzero(counts >= 5)[0]
-    if not len(xs):
+    # Candles drawn INSIDE a semi-transparent channel fill are dimmed by the navy
+    # overlay (a bright down-candle #F23645 -> ~#9A293E, up-candle #089981 -> ~#086764)
+    # and fall below the tight candle_mask, so on a chart whose recent price sits in a
+    # filled channel the tight mask stops early and 'today' lands short of the last bar
+    # (FRAS: today read at frac 0.73 instead of ~0.90, understating the top rail). For
+    # LOCATING today only, also accept these dimmed candle colours -- red-dominant /
+    # teal-dominant, but darker. b<=110 keeps them clear of the magenta event markers
+    # (~#C83296) that would otherwise match the dim-red test. The navy fill itself
+    # (~#081433) fails both (red needs r>=110, teal needs g>=80). The tight mask still
+    # governs everywhere else; this only extends the today_x search.
+    r = arr[..., 0].astype(np.int32)
+    g = arr[..., 1].astype(np.int32)
+    b = arr[..., 2].astype(np.int32)
+    dim_red = (r >= 110) & (r <= 205) & (r - g >= 55) & (r - b >= 45) & (g <= 110) & (b <= 110)
+    dim_teal = (r <= 70) & (g >= 80) & (g <= 175) & (g - r >= 40) & (b >= 50) & (b <= g + 20)
+
+    # The OHLC legend text at the very top of the pane ("O.. H.. L.. C.. +66..")
+    # is drawn in the up-candle TEAL / down-candle RED and so matches candle_mask.
+    # On a chart with blank future space it extends further RIGHT than the last
+    # real candle, so the rightmost candle-coloured column lands in the legend and
+    # 'today' gets pulled out into the projection -- overstating ascending rails
+    # (ADM read a 4345 top rail vs the true ~4258 at today) and understating
+    # descending ones. Ignore the top legend band before counting candle columns;
+    # the last-price chip sits mid-height, so this doesn't affect the chip walk.
+    legend_cut = min(100, arr.shape[0] // 2)
+    tight = candle_mask(arr)
+    tight[:legend_cut, :] = False
+    txs = np.nonzero(tight.sum(axis=0) >= 5)[0]
+    if not len(txs):
         return None
-    plot_right = int(xs[-1]) + 1
-    if xs[-1] >= 0.975 * w:
+
+    # Locate the last-price chip's LEFT EDGE using the TIGHT mask only. The chip is
+    # bright (never dimmed), and the axis-panel margin leaves a clean gap between it
+    # and the real candles -- but the fill-dimmed candles below FILL that gap, so the
+    # walk must run on the tight mask or it would cross straight from the chip into
+    # the candle body and swallow the whole series (SILVER/NATGAS lost their read
+    # this way). The union mask is used only afterwards to pick the last real bar.
+    plot_right = int(txs[-1]) + 1
+    if txs[-1] >= 0.975 * w:
         # Rightmost run reaches the far edge -> it's the last-price chip. Walk left
         # across the solid block (internal gaps <=3px) to its left edge; the plot
         # ends there, separated from real candles by the axis-panel margin.
-        k = len(xs) - 1
-        while k > 0 and xs[k - 1] >= xs[k] - 3:
+        k = len(txs) - 1
+        while k > 0 and txs[k - 1] >= txs[k] - 3:
             k -= 1
-        plot_right = int(xs[k])           # chip's left edge
-    plot_xs = xs[xs < plot_right]
-    if not len(plot_xs):
+        plot_right = int(txs[k])          # chip's left edge
+
+    tight_xs = txs[txs < plot_right]
+    if not len(tight_xs):
         return None
-    return int(plot_xs[-1])               # rightmost real candle in the plot
+    tight_today = int(tight_xs[-1])           # last BRIGHT candle before the chip
+
+    # Extend today rightward THROUGH fill-dimmed candles, but only while they form a
+    # CONTIGUOUS run bridging from the last bright bar (FRAS: bright bars stop at 0.73w
+    # and the dimmed run continues unbroken to 0.87w). Walk right column by column and
+    # stop at the first real gap: this way genuine blank future space is never crossed,
+    # so the chip's own faint antialiasing bleed (1-2 dim columns flush to the chip,
+    # 0.31w past NXT's true last monthly candle) can't drag today onto the chip edge
+    # and swing a steep channel. A distance threshold alone can't tell the two apart.
+    union = candle_mask(arr) | dim_red | dim_teal
+    union[:legend_cut, :] = False
+    ucounts = union.sum(axis=0)
+    gap = max(15, int(round(0.012 * w)))      # bridges candle spacing, not a future band
+    today = tight_today
+    x = tight_today + 1
+    while x < plot_right and x - today <= gap:
+        if ucounts[x] >= 5:
+            today = x
+        x += 1
+    return today
 
 
 def fit_price_axis(img, arr, w, h, known_price=None):
@@ -258,9 +311,11 @@ def fit_price_axis(img, arr, w, h, known_price=None):
     # that already pass, so this can't shift an existing fit.
     labels = _ocr_labels('')
     clean = _clean_labels(labels)
+    tried_sparse = False
     if len(clean) < 3:
         alt_labels = _ocr_labels('--psm 11')
         alt_clean = _clean_labels(alt_labels)
+        tried_sparse = True
         if len(alt_clean) > len(clean):
             labels, clean = alt_labels, alt_clean
 
@@ -275,8 +330,6 @@ def fit_price_axis(img, arr, w, h, known_price=None):
     #     it doesn't, the OCR'd axis is on the wrong scale (systematic misread) and
     #     must not produce a channel — this is what stops a false channel off an
     #     axis that OCR'd as 280..520 against a true price of 197 (BT.A).
-    lbl_vals = sorted(c[0] for c in clean)
-    lo_lbl, hi_lbl = lbl_vals[0], lbl_vals[-1]
     # The lowest or highest axis label is often occluded by the last-price chip, the
     # crosshair, or a drawn marker and so never OCRs (WPP's "200" label sits behind
     # the price chip + dashed line + arrow; the fit off 400..1200 is still perfect).
@@ -285,12 +338,32 @@ def fit_price_axis(img, arr, w, h, known_price=None):
     # further means the current price is genuinely off the visible frame (NXT 14765
     # against a 3000..10000 axis, KGF 284 against 500..700): a stale/wrong-range
     # chart with no drawn line near today's price, which must still be rejected.
-    tick = float(np.median(np.diff(lbl_vals))) if len(lbl_vals) >= 2 else 0.0
-    margin_lo = max(0.1 * lo_lbl, tick)
-    margin_hi = max(0.1 * hi_lbl, tick)
-    if known_price is not None and not (lo_lbl - margin_lo <= known_price <= hi_lbl + margin_hi):
-        return None, None, (f'OCR axis labels [{lo_lbl:g}-{hi_lbl:g}] do not bracket known price '
-                            f'{known_price:g} — axis read untrustworthy')
+    def _brackets(cl):
+        vv = sorted(c[0] for c in cl)
+        lo, hi = vv[0], vv[-1]
+        tk = float(np.median(np.diff(vv))) if len(vv) >= 2 else 0.0
+        return (lo - max(0.1 * lo, tk) <= known_price <= hi + max(0.1 * hi, tk)), lo, hi
+
+    if known_price is not None:
+        ok, lo_lbl, hi_lbl = _brackets(clean)
+        # The labels NEAREST the price are the ones most often missed: on a chart
+        # zoomed wide enough to show an old spike, today's ticks (AO World's 50/0)
+        # sit down in the busy candle region where the default OCR block-segments
+        # over them, so it reads only the uncluttered upper labels [150-450] and the
+        # bracket check wrongly rejects an on-frame price. Retry with sparse-text
+        # psm 11, which reads scattered labels; accept it ONLY if the recovered set
+        # has >=3 labels AND actually brackets the price. A genuinely off-frame
+        # price (NXT/KGF) finds no bracketing labels either way and stays rejected.
+        if not ok and not tried_sparse:
+            alt_clean = _clean_labels(_ocr_labels('--psm 11'))
+            if len(alt_clean) >= 3:
+                ok2, _, _ = _brackets(alt_clean)
+                if ok2:
+                    clean = alt_clean
+                    ok, lo_lbl, hi_lbl = _brackets(clean)
+        if not ok:
+            return None, None, (f'OCR axis labels [{lo_lbl:g}-{hi_lbl:g}] do not bracket known price '
+                                f'{known_price:g} — axis read untrustworthy')
 
     # 3. Least-squares fit across ALL clean labels, not just two endpoints.
     vals = np.array([c[0] for c in clean])

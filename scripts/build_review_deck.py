@@ -189,9 +189,9 @@ def annotate_chart_levels(src_path, channel):
         return src_path
     levels = []
     if isinstance(channel.get('lower'), (int, float)):
-        levels.append(('low', 'Alert Low', float(channel['lower'])))
+        levels.append(('low', 'Low', float(channel['lower'])))
     if isinstance(channel.get('upper'), (int, float)):
-        levels.append(('high', 'Alert High', float(channel['upper'])))
+        levels.append(('high', 'High', float(channel['upper'])))
     if not levels:
         return src_path
     try:
@@ -200,21 +200,24 @@ def annotate_chart_levels(src_path, channel):
         return src_path
     w, h = im.size
     draw = ImageDraw.Draw(im)
-    font = _level_font(max(22, int(h * 0.038)))
+    font = _level_font(max(13, int(h * 0.024)))
     lw = max(2, int(h * 0.004))
+    sw = max(1, lw // 2)
     for key, label, price in levels:
         y = int(round((price - b) / a))
         if not (0 <= y < h):     # level sits off the visible frame — skip its line
             continue
         colour = _LEVEL_COLOURS[key]
         draw.line([(0, y), (w, y)], fill=colour, width=lw)
-        tag = f'{label}  {price:.2f}'
+        tag = f'{label} {price:.2f}'
         l, t, r, bo = draw.textbbox((0, 0), tag, font=font)
-        tw, th = r - l, bo - t
-        pad = int(th * 0.35)
-        ty = min(max(0, y - th - pad * 2 - lw), h - th - pad * 2)
-        draw.rectangle([0, ty, tw + pad * 2, ty + th + pad * 2], fill=colour)
-        draw.text((pad, ty + pad - t), tag, fill=(0, 0, 0), font=font)
+        th = bo - t
+        pad = max(3, int(th * 0.25))
+        # No background box — draw coloured text with a thin dark stroke so it
+        # stays legible over the chart. Sit it just above the line.
+        ty = min(max(0, y - th - pad - lw), h - th - pad)
+        draw.text((pad, ty - t), tag, fill=colour, font=font,
+                  stroke_width=sw, stroke_fill=(0, 0, 0))
     os.makedirs(_ANNOTATED_DIR, exist_ok=True)
     out = os.path.join(_ANNOTATED_DIR, os.path.basename(src_path))
     try:
