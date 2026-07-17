@@ -65,6 +65,20 @@ AGENTS = [
      'Gmail draft to the user.',
      'Decision support only — drafts, never sends; no trades; flags unreadable '
      'charts instead of guessing.'),
+    ('data-developer',
+     'The pipeline’s data layer: bank/broker CSV loaders (Amex/Barclays/Fidelity, '
+     'fidelity_file_classifier, preflight_check), ticker normalisation, the spending '
+     'pivots and future-month estimates, and the alert/below-alert derivations and '
+     'ticker matching in update_master_sheet.py.',
+     'Not for chart capture/browser automation, workbook visuals (excel-formatter), '
+     'the front end, or auditing (test-analyst finds; this agent fixes).'),
+    ('validation',
+     'Audits the review deck’s detected patterns and Alert Low/High against the '
+     'signed-off pattern rules; groups faults by root cause and fixes every instance '
+     'with a batch A/B; flags charts that look like a genuinely new pattern for the '
+     'user to rule on.',
+     'Not for running the pipeline, workbook formatting, the front end, or '
+     'fundamental analysis (investment-analyst).'),
     ('ChatGPT (external)',
      'Independent code reviewer: periodic outside review of the system’s '
      'architecture and scripts (e.g. the 2026-07-12 “Investment OS” review) — '
@@ -124,12 +138,19 @@ def main():
              'each owns one part of the system; the user sets direction and merges all PRs',
              11, color=GREY)
 
-    # 6 rows must fit above the 7.5in slide bottom: last row top = 0.98 + 5*1.06
-    # = 6.28in, bottom = 7.26in.
-    row_h = Inches(0.98)
+    # Rows adapt to the agent count so they always fit above the 7.5in bottom:
+    # step is capped at 1.06 (roomy for a few) and shrinks as agents are added.
+    top0 = 0.98
+    bottom_limit = 7.28
+    step = min(1.06, (bottom_limit - top0) / max(1, len(AGENTS)))
+    small = step < 0.95                 # tighten fonts/pill when rows are dense
+    name_pt = 12 if small else 13
+    body_pt = 9 if small else 10
+    pill_h = min(0.5, step - 0.28)
+    row_h = Inches(step - 0.05)
     for i, (name, scope, boundary) in enumerate(AGENTS):
-        y = Inches(0.98 + i * 1.06)
-        num = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.4), y + Inches(0.1), Inches(0.3), Inches(0.3))
+        y = Inches(top0 + i * step)
+        num = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.4), y + Inches(0.08), Inches(0.3), Inches(0.3))
         num.fill.solid(); num.fill.fore_color.rgb = NAVY
         num.line.fill.background()
         tf = num.text_frame; tf.word_wrap = False
@@ -137,21 +158,21 @@ def main():
         r = p.add_run(); r.text = str(i + 1)
         r.font.size = Pt(12); r.font.bold = True; r.font.color.rgb = WHITE; r.font.name = 'Arial'
 
-        pill = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.85), y, Inches(2.45), Inches(0.5))
+        pill = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.85), y, Inches(2.45), Inches(pill_h))
         pill.fill.solid(); pill.fill.fore_color.rgb = EXTERNAL_PILL if name in EXTERNAL else PILL
         pill.line.fill.background()
         tf = pill.text_frame; tf.word_wrap = False
         tf.vertical_anchor = MSO_ANCHOR.MIDDLE
         p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
         r = p.add_run(); r.text = name
-        r.font.size = Pt(13); r.font.bold = True; r.font.color.rgb = WHITE; r.font.name = 'Consolas'
+        r.font.size = Pt(name_pt); r.font.bold = True; r.font.color.rgb = WHITE; r.font.name = 'Consolas'
 
-        add_text(slide, Inches(3.5), y, Inches(4.9), row_h, scope, 10, color=RGBColor(0, 0, 0))
-        add_text(slide, Inches(8.6), y, Inches(3.6), row_h, boundary, 10, color=TEAL)
+        add_text(slide, Inches(3.5), y, Inches(4.9), row_h, scope, body_pt, color=RGBColor(0, 0, 0))
+        add_text(slide, Inches(8.6), y, Inches(3.6), row_h, boundary, body_pt, color=TEAL)
 
-    add_text(slide, Inches(3.5), Inches(0.98) - Inches(0.28), Inches(4.9), Inches(0.25),
+    add_text(slide, Inches(3.5), Inches(top0 - 0.28), Inches(4.9), Inches(0.25),
              'OWNS', 9, bold=True, color=GREY)
-    add_text(slide, Inches(8.6), Inches(0.98) - Inches(0.28), Inches(3.6), Inches(0.25),
+    add_text(slide, Inches(8.6), Inches(top0 - 0.28), Inches(3.6), Inches(0.25),
              'STOPS AT', 9, bold=True, color=GREY)
 
     prs.save(deck_path)
