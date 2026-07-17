@@ -778,6 +778,46 @@ read this run (`lower`/`upper`), so a wrong level shows up wrong, which is the p
   deck's agents slide is refreshed on request by re-running
   `add_agents_slide_2026-07-12.py` (re-runnable — replaces the slide).
 
+## Investment Dashboard + output hygiene (2026-07-17)
+
+A batch of dashboard/deck changes, all committed:
+
+- **Only ONE version of each output file per run.** `config.py` now has
+  `recycle_to_bin()` + `purge_old_versions(target)` (Windows SHFileOperation,
+  `FOF_ALLOWUNDO` — Recycle Bin, never hard-delete). `purge_old_versions` clears
+  the browser/Office `X (N).ext` duplicates next to a canonical output, leaving the
+  canonical for the caller's own overwrite. Wired into `build_review_deck.py` and
+  `build_rules_deck.py` before `.save()`, and a new `purge_output_duplicates.py`
+  runs as the last action of `run_full_pipeline.js`'s cleanup step over every output
+  (master, layouts, feedback md, the 3 decks, spending). `cleanup_downloads.py`
+  stays deliberately rename-only. **Any new output-writer should call
+  `purge_old_versions` too.**
+- **Intelligence screen (dashboard) uses the Yahoo Finance chart API, NOT Stooq.**
+  Stooq's CSV endpoint returns a bot/JS-challenge page — verified dead. The six
+  index symbols live in `config.json → intelligenceIndices` (Yahoo `^FTSE`, `^GDAXI`,
+  `^STOXX50E`, `^GSPC`, `^IXIC`, `^DJI`). `dashboard_server.js` `/api/intelligence`
+  fetches server-side (browser can't call Yahoo cross-origin), 5-min cache,
+  `?refresh=1` forces. Each widget's ↻ pulls live; value + day change (from
+  `meta.chartPreviousClose`) + a 30-pt close-series sparkline.
+- **Watchlist `Chg (1d)` column** comes from `dashboard_data._price_changes()` —
+  day-over-day: latest history.db run vs the most recent run on an EARLIER calendar
+  day (same-day re-runs don't count).
+- **Watchlist is strictly the 'AT LOWER BOUNDARY' band** (already noted); the top
+  **Refresh** regenerates from the latest CAPTURED prices (history.db) — it does NOT
+  fetch live market prices; only the Intelligence ↻ does.
+- **Review-deck link → in-app gallery.** `dashboard_server.js` serves the existing
+  `pipeline_app/review_deck.html` at `/decks/review-deck` (rewriting relative
+  `asset?p=` to the absolute `/asset?p=` route) with an `/asset` image proxy
+  whitelisted to repo + Downloads. Architecture/alert-rules stay raw `.pptx`
+  downloads — **no slide renderer (LibreOffice) is available**, so there's no image
+  gallery for pptx-only diagram decks.
+- **Architecture deck now reflects the Investment Dashboard.**
+  `add_investment_dashboard_slide_2026-07-17.py` inserts a dedicated readable slide
+  (after the flow diagram) with click-through links to `localhost:4600`; the Agents
+  slide (`add_agents_slide_2026-07-12.py`) now lists all 8 agents with a
+  count-adaptive row layout. AZN's Alert Low = the 12,218 horizontal support (the
+  old stray-blue note was stale — resolved).
+
 ## Open items / things to verify on the next export run
 
 - Brent/Palladium/Copper charts were added by the user 2026-07-13 and the symbol
