@@ -29,3 +29,6 @@ data/stage_timings.json
 
 # Investment-analyst per-run image QA output (regenerated each analysis run)
 scripts/analyst_image_issues.json
+
+# Investment Dashboard (Phase 1 build) — generated data + local server data
+scripts/dashboard_app/data/
