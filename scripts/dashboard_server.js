@@ -9,6 +9,8 @@ import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
+import os from 'os';
+import { productWebLink } from './config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -65,6 +67,38 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (pathname === '/refresh') { regenerate('manual'); res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); return; }
+
+  // Serve the built decks (from Downloads) so the nav links work standalone.
+  // Each deck ALSO has a productWebLinks key (scripts/config.json) — the same
+  // one-time-pasted OneDrive share link pipeline_app_server.js's Output Bay
+  // uses. When it's set, redirect straight there instead of streaming the raw
+  // file: an Office share link opens directly in PowerPoint Online, which is
+  // what "open in PowerPoint Online" actually requires (a real HTTPS URL Office
+  // can serve — localhost can't be wrapped with the officeapps.live.com viewer,
+  // since that service has to fetch the file itself). Falls back to serving the
+  // raw .pptx (today's behaviour — downloads/opens locally) until the link is
+  // pasted in, exactly like the Production Centre's Output Bay tiles already do.
+  const DOWNLOADS = path.join(os.homedir(), 'Downloads');
+  const DECKS = {
+    '/decks/architecture.pptx': { file: 'Financial_Data_Pipeline_Architecture.pptx', linkKey: 'architecturePptx' },
+    '/decks/alert-rules.pptx': { file: 'Alert_Rules_Model.pptx', linkKey: 'alertRules' },
+    '/decks/review-deck.pptx': { file: 'Investment_Review_Deck.pptx', linkKey: 'reviewDeck' },
+  };
+  if (DECKS[pathname]) {
+    const deck = DECKS[pathname];
+    const webLink = productWebLink(deck.linkKey);
+    if (webLink) { res.writeHead(302, { Location: webLink }); res.end(); return; }
+    const f = path.join(DOWNLOADS, deck.file);
+    fs.readFile(f, (e, buf) => {
+      if (e) { res.writeHead(404); res.end('Deck not found — run the pipeline to build it.'); return; }
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'Content-Disposition': `inline; filename="${deck.file}"`,
+      });
+      res.end(buf);
+    });
+    return;
+  }
 
   // Static: data JSON, then app files; default to index.html. No path traversal.
   let rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');

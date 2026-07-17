@@ -30,6 +30,10 @@ const DECK_SUMMARY = path.join(APP_DIR, 'review_deck_summary.json');
 const DECK_PPTX = downloadsFile('reviewDeckPptx');
 const SPENDING_XLSX = downloadsFile('spendingSummaryXlsx');
 const ARCH_PPTX = downloadsFile('architecturePptx');
+// Alert Rules deck (Alert_Rules_Model.pptx) — not built by this app, but mirrored
+// here too (2026-07-17) so its dashboard-app nav link can resolve a PowerPoint
+// Online productWebLinks entry the same way the other two decks do.
+const ALERT_RULES_PPTX = downloadsFile('alertRulesPptx');
 const TIMINGS_PATH = path.join(REPO_ROOT, 'data', 'stage_timings.json');
 // The Finance Google Sheet the pipeline syncs into (see CLAUDE.md).
 const FINANCE_SHEET_URL = financeSheetUrl();
@@ -83,7 +87,7 @@ function syncOneDriveProducts() {
     console.error(`Could not create OneDrive products folder: ${err.message}`);
     return;
   }
-  for (const src of [DECK_PPTX, ARCH_PPTX, SPENDING_XLSX]) {
+  for (const src of [DECK_PPTX, ARCH_PPTX, ALERT_RULES_PPTX, SPENDING_XLSX]) {
     if (!fs.existsSync(src)) continue;
     try {
       fs.copyFileSync(src, path.join(ONEDRIVE_PRODUCTS_DIR, path.basename(src)));

@@ -5,6 +5,7 @@
   "feedbackMd": "Feedback_for_Claude_Code.md",
   "reviewDeckPptx": "Investment_Review_Deck.pptx",
   "architecturePptx": "Financial_Data_Pipeline_Architecture.pptx",
+  "alertRulesPptx": "Alert_Rules_Model.pptx",
   "spendingSummaryXlsx": "spending_summary.xlsx",
   "pythonCandidates": [
     "C:\\Users\\Paul\\AppData\\Local\\Python\\bin\\python.exe",
@@ -17,6 +18,7 @@
   "productWebLinks": {
     "reviewDeck": "",
     "architecturePptx": "",
+    "alertRules": "",
     "spendingSummary": ""
   }
 }
