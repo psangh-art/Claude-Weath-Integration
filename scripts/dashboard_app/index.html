@@ -313,6 +313,9 @@ tbody tr:hover{background:var(--panel-2)}
 .chip-btn.primary:hover{filter:brightness(1.06)}
 .design-hint{font-size:11.5px;color:var(--muted);margin-bottom:10px;flex-shrink:0;line-height:1.45}
 .design-list{display:flex;flex-direction:column;gap:6px;overflow-y:auto;flex:1;min-height:0}
+.design-group-title{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:800;
+  color:var(--muted);margin:10px 0 2px;padding-bottom:4px;border-bottom:1px solid var(--line-soft)}
+.design-group-title:first-child{margin-top:0}
 .design-row{display:flex;align-items:center;gap:12px;background:var(--panel-2);border:1px solid var(--line-soft);
   border-radius:9px;padding:8px 12px;transition:border-color .15s}
 .design-row:hover{border-color:var(--line)}
@@ -1140,6 +1143,7 @@ WIDGET_DEFS.watchlist.push({
       {key:'gap', label:'Gap', sv:r=>gapToLowPct(r.current,r.alert_low)},
       {key:'alert_low', label:'Alert Low', sv:r=>r.alert_low, num:true},
       {key:'current', label:'Current', sv:r=>r.current, num:true},
+      {key:'change_pct', label:'Chg (1d)', sv:r=>r.change_pct, num:true},
       {key:'alert_high', label:'Alert High', sv:r=>r.alert_high, num:true},
       {key:'upside_pct', label:'Upside %', sv:r=>r.upside_pct, num:true},
       {key:'pe', label:'P/E', sv:r=>r.pe, num:true},
@@ -1190,6 +1194,7 @@ WIDGET_DEFS.watchlist.push({
           '<td>'+zonebar(gapPct)+'</td>'+
           '<td class="money-flat num">'+fmtMoney(r.alert_low,2)+'</td>'+
           '<td class="money-flat num">'+fmtMoney(r.current,2)+'</td>'+
+          '<td class="num" title="'+(r.change==null?'':('Day change: '+(r.change>0?'+':'')+r.change))+'">'+deltaChip(r.change_pct,{kind:'pct',decimals:2})+'</td>'+
           '<td class="money-flat num">'+fmtMoney(r.alert_high,2)+'</td>'+
           '<td class="mono num">'+fmtPct(r.upside_pct,2)+'</td>'+
           '<td class="mono num">'+(r.pe==null?'—':Number(r.pe).toFixed(1))+'</td>'+
@@ -1204,7 +1209,7 @@ WIDGET_DEFS.watchlist.push({
           '</tr>';
       }).join('');
       scroll.innerHTML='<table><thead>'+headerRow()+'</thead><tbody>'+
-        (trs||'<tr><td colspan="18" class="dim" style="text-align:center;padding:18px">No matching stocks</td></tr>')+'</tbody></table>';
+        (trs||'<tr><td colspan="19" class="dim" style="text-align:center;padding:18px">No matching stocks</td></tr>')+'</tbody></table>';
       scroll.querySelectorAll('thead th').forEach(th=>{
         th.addEventListener('click',()=>{
           const c=cols.find(x=>x.key===th.dataset.key);
@@ -1219,27 +1224,29 @@ WIDGET_DEFS.watchlist.push({
   }
 });
 
-/* ---------------------- Design (Overview widget-order control) ---------------------- */
+/* ---------------------- Design (Widgets — order control for every screen) ---------------------- */
 WIDGET_DEFS.design.push({
-  id:'overview-order', title:'Overview Widget Order', size:'L', span:12,
+  id:'overview-order', title:'Widgets', size:'L', span:12,
   mount(body,action){
-    action.innerHTML='<button class="chip-btn" id="dlResetOrder">Reset to default</button>';
+    action.innerHTML='<button class="chip-btn" id="dlResetOrder">Reset all to default</button>';
 
-    body.innerHTML='<div class="design-hint">Order sets left-to-right, then top-to-bottom placement on the '+
-      'Overview grid. Edit the numbers below and click Apply — this updates the same order Edit-mode '+
-      'drag-and-drop uses, so it persists across reloads.</div>'+
+    body.innerHTML='<div class="design-hint">Every widget on every screen. The number sets left-to-right, '+
+      'then top-to-bottom placement on that screen. Edit the numbers and click Apply — this updates the same '+
+      'order Edit-mode drag-and-drop uses, so it persists across reloads.</div>'+
       '<div class="design-list"></div>'+
       '<div class="design-actions"><button class="chip-btn primary" id="dlApplyOrder">Apply order</button>'+
       '<span class="design-status" id="dlOrderStatus"></span></div>';
     const listEl=body.querySelector('.design-list');
     const statusEl=body.querySelector('#dlOrderStatus');
 
-    // Every Overview widget gets a number: currently-visible ones keep their
-    // real position, anything removed via Edit-mode is appended after them so
-    // Apply can bring it back at a sensible spot rather than losing it silently.
-    function currentPositions(){
-      const order=getOrder('overview');
-      const all=WIDGET_DEFS.overview.map(w=>w.id);
+    // Every screen with widgets, in nav order. Each widget gets a per-screen
+    // number: currently-visible ones keep their real position, anything removed
+    // via Edit-mode is appended after them so Apply can bring it back at a
+    // sensible spot rather than losing it silently.
+    const SCREENS=Object.keys(WIDGET_DEFS).filter(s=>WIDGET_DEFS[s] && WIDGET_DEFS[s].length);
+    function positionsFor(screen){
+      const order=getOrder(screen);
+      const all=WIDGET_DEFS[screen].map(w=>w.id);
       const extra=all.filter(id=>order.indexOf(id)===-1);
       const seq=order.concat(extra);
       const pos={};
@@ -1247,31 +1254,36 @@ WIDGET_DEFS.design.push({
       return pos;
     }
     function renderList(){
-      const pos=currentPositions();
-      const defs=WIDGET_DEFS.overview.slice().sort((a,b)=>pos[a.id]-pos[b.id]);
-      listEl.innerHTML=defs.map(d=>{
-        return '<div class="design-row" data-id="'+d.id+'">'+
-          '<span class="design-num"><input type="number" min="1" max="'+defs.length+'" step="1" value="'+pos[d.id]+'"></span>'+
-          '<span class="design-name">'+escapeHtml(d.title)+'</span>'+
-          '<span class="design-size">'+(SIZE_LABELS[d.size]||d.size)+'</span>'+
-          '</div>';
+      listEl.innerHTML=SCREENS.map(screen=>{
+        const pos=positionsFor(screen);
+        const defs=WIDGET_DEFS[screen].slice().sort((a,b)=>pos[a.id]-pos[b.id]);
+        const rows=defs.map(d=>{
+          return '<div class="design-row" data-id="'+d.id+'" data-screen="'+screen+'">'+
+            '<span class="design-num"><input type="number" min="1" max="'+defs.length+'" step="1" value="'+pos[d.id]+'"></span>'+
+            '<span class="design-name">'+escapeHtml(d.title)+'</span>'+
+            '<span class="design-size">'+(SIZE_LABELS[d.size]||d.size)+'</span>'+
+            '</div>';
+        }).join('');
+        return '<div class="design-group-title">'+escapeHtml(SCREEN_TITLES[screen]||screen)+'</div>'+rows;
       }).join('');
     }
     function applyOrder(){
-      const rows=Array.from(listEl.querySelectorAll('.design-row'));
-      const entries=rows.map((r,i)=>({id:r.dataset.id, n:parseInt(r.querySelector('input').value,10), i}));
-      entries.sort((a,b)=>{
-        const an=isNaN(a.n)?9999:a.n, bn=isNaN(b.n)?9999:b.n;
-        return an-bn || a.i-b.i;
+      SCREENS.forEach(screen=>{
+        const rows=Array.from(listEl.querySelectorAll('.design-row[data-screen="'+screen+'"]'));
+        const entries=rows.map((r,i)=>({id:r.dataset.id, n:parseInt(r.querySelector('input').value,10), i}));
+        entries.sort((a,b)=>{
+          const an=isNaN(a.n)?9999:a.n, bn=isNaN(b.n)?9999:b.n;
+          return an-bn || a.i-b.i;
+        });
+        saveOrder(screen, entries.map(e=>e.id));
       });
-      saveOrder('overview', entries.map(e=>e.id));
-      statusEl.textContent='Applied — Overview order updated.';
+      statusEl.textContent='Applied — widget order updated on every screen.';
       renderList();
     }
     body.querySelector('#dlApplyOrder').addEventListener('click',applyOrder);
     action.querySelector('#dlResetOrder').addEventListener('click',()=>{
-      saveOrder('overview', DEFAULT_ORDER.overview.slice());
-      statusEl.textContent='Reset to default order.';
+      SCREENS.forEach(screen=>saveOrder(screen, (DEFAULT_ORDER[screen]||[]).slice()));
+      statusEl.textContent='Reset every screen to default order.';
       renderList();
     });
     renderList();

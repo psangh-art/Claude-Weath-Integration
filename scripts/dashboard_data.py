@@ -70,6 +70,52 @@ def _latest_prices():
     return prices
 
 
+def _price_changes():
+    """ticker(upper) -> {'change', 'change_pct'} day-over-day: latest captured
+    price vs the most recent captured price from an EARLIER calendar day. Same-day
+    re-runs don't count as 'the last change' — we want the daily move. Returns {}
+    when there's no prior-day run to compare against."""
+    changes = {}
+    if not os.path.exists(HISTORY_DB):
+        return changes
+    con = sqlite3.connect(HISTORY_DB)
+    try:
+        row = con.execute('SELECT MAX(run_id) FROM chart_snapshots').fetchone()
+        if not row or row[0] is None:
+            return changes
+        latest_run = row[0]
+        # Calendar day of the latest run (price_checked_at is an ISO string).
+        d = con.execute('SELECT MAX(substr(price_checked_at,1,10)) FROM chart_snapshots '
+                        'WHERE run_id=?', (latest_run,)).fetchone()
+        latest_day = d[0] if d else None
+        latest = {}
+        for tkr, price in con.execute(
+                'SELECT ticker, price FROM chart_snapshots WHERE run_id=? AND price IS NOT NULL',
+                (latest_run,)):
+            if tkr:
+                latest[str(tkr).strip().upper()] = price
+        # Most recent run strictly before latest_day (a genuine prior trading day).
+        prow = con.execute(
+            'SELECT MAX(run_id) FROM chart_snapshots WHERE substr(price_checked_at,1,10) < ?',
+            (latest_day,)).fetchone()
+        if not prow or prow[0] is None:
+            return changes
+        prev = {}
+        for tkr, price in con.execute(
+                'SELECT ticker, price FROM chart_snapshots WHERE run_id=? AND price IS NOT NULL',
+                (prow[0],)):
+            if tkr:
+                prev[str(tkr).strip().upper()] = price
+    finally:
+        con.close()
+    for tkr, now_p in latest.items():
+        old_p = prev.get(tkr)
+        if isinstance(old_p, (int, float)) and old_p and isinstance(now_p, (int, float)):
+            changes[tkr] = {'change': round(now_p - old_p, 2),
+                            'change_pct': round((now_p - old_p) / old_p * 100.0, 2)}
+    return changes
+
+
 def _price_for(ticker, xlsx_literal, latest):
     """Prefer the captured price; fall back to a literal xlsx price (commodities)."""
     if ticker:
@@ -89,7 +135,7 @@ def _tv_url(cell):
     return None
 
 
-def _read_soi_band(soi, soif, band_substring, base, latest):
+def _read_soi_band(soi, soif, band_substring, base, latest, changes=None):
     """Read one 'Stocks of Interest' section-table band (e.g. 'AT LOWER BOUNDARY')
     into dashboard watchlist row dicts. Returns [] if that band isn't found on the
     sheet (never invents rows) — membership within a band is still hand-curated
@@ -117,11 +163,13 @@ def _read_soi_band(soi, soif, band_substring, base, latest):
         upside = ((high - low) / low * 100.0) if (high and low) else None
         bd_row = base.get(tk, {})
         updated = soi.cell(r, SOI_UPDATED).value
+        chg = (changes or {}).get(tk, {})
         rows.append({
             'stock': stock, 'ticker': ticker,
             'pattern': soi.cell(r, SOI_PATTERN).value,
             'proximity_pct': round(prox, 2) if prox is not None else None,
             'alert_low': low, 'current': price, 'alert_high': high,
+            'change': chg.get('change'), 'change_pct': chg.get('change_pct'),
             'upside_pct': round(upside, 2) if upside is not None else None,
             'pe': bd_row.get('pe'), 'div_yield_pct': bd_row.get('div_yield_pct'),
             'chart_note': soi.cell(r, SOI_CHARTNOTE).value,
@@ -140,6 +188,7 @@ def build(workbook=WORKBOOK):
     wb = openpyxl.load_workbook(workbook, data_only=True)
     wbf = openpyxl.load_workbook(workbook, data_only=False)  # for HYPERLINK formulas
     latest = _latest_prices()
+    changes = _price_changes()   # day-over-day price move per ticker
     now = datetime.datetime.now()
 
     # ---------------- Portfolio (holdings tables) ----------------
@@ -299,7 +348,7 @@ def build(workbook=WORKBOOK):
     # Strictly the 'AT LOWER BOUNDARY — within 5% of alert low' band (user decision
     # 2026-07-17): the Watchlist is the buy-zone list, not the whole Stocks-of-Interest
     # ladder. The other bands stay out.
-    watchlist = _read_soi_band(soi, soif, SOI_WATCHLIST_BAND, base, latest)
+    watchlist = _read_soi_band(soi, soif, SOI_WATCHLIST_BAND, base, latest, changes)
 
     overview = {
         'generated_at': now.isoformat(timespec='seconds'),
