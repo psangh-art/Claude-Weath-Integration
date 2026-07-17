@@ -72,7 +72,7 @@ REFRESH_NOISE_THRESHOLD = 0.03  # don't rewrite if new Alert Low is within 3% of
 ALERT_LOW_BUFFER = 1.05  # Alert Low sits 5% above the support line, as an early warning
 
 
-def is_noise_refresh(ws, row, existing_source, alert_low, on_alert):
+def is_noise_refresh(ws, row, existing_source, alert_low, on_alert, alert_high=None):
     """True when a re-read is close enough to what's already there to leave alone.
 
     The threshold exists to stop harmless churn, but it used to gate the whole row
@@ -81,7 +81,16 @@ def is_noise_refresh(ws, row, existing_source, alert_low, on_alert):
     Alert Low landed within 3% of the bad one, the row was skipped, and the stale
     inversion survived every subsequent run. A row is only 'noise' if what's already
     in the sheet is coherent; an inverted pair, or a level price has now reached, is
-    always rewritten."""
+    always rewritten.
+
+    A parallel channel writes BOTH rails, and the two don't drift together (different
+    slopes) — a near-unchanged Alert Low must NOT mask a drifted Alert High, or the
+    High goes stale forever (BARC/TSCO/ADM/FCIT carried Alert Highs 5–18% off their
+    true top rail this way, 2026-07-17 validation audit). So when an `alert_high` is
+    supplied, the row is 'noise' only if BOTH the Low and the High are within
+    threshold of what's in the sheet; if the sheet has no comparable High yet, that's
+    a change, not noise. When `alert_high` is None (single-sided reads) only the Low
+    is checked, exactly as before."""
     if on_alert:
         return False
     if existing_source != 'Auto' or not isinstance(alert_low, (int, float)):
@@ -92,7 +101,14 @@ def is_noise_refresh(ws, row, existing_source, alert_low, on_alert):
     existing_high = ws.cell(row=row, column=COL_ALERT_HIGH).value
     if isinstance(existing_high, (int, float)) and existing_high and existing_low >= existing_high:
         return False        # currently inverted — repair it rather than call it noise
-    return abs(alert_low - existing_low) / existing_low <= REFRESH_NOISE_THRESHOLD
+    if abs(alert_low - existing_low) / existing_low > REFRESH_NOISE_THRESHOLD:
+        return False        # Alert Low itself moved enough to rewrite
+    if isinstance(alert_high, (int, float)) and alert_high:
+        if not (isinstance(existing_high, (int, float)) and existing_high):
+            return False    # we'd be adding/repairing an Alert High — not noise
+        if abs(alert_high - existing_high) / existing_high > REFRESH_NOISE_THRESHOLD:
+            return False    # Alert High drifted — rewrite even though the Low is close
+    return True
 
 
 def buffered_alert_low(lower, upper, on_alert=False, price=None):
@@ -319,7 +335,7 @@ def process(master_ws, charts, channel_by_ticker):
             alert_low = buffered_alert_low(lower, upper, on_alert, row.get('price'))
             alert_high = upper
 
-            if is_noise_refresh(master_ws, master_row, existing_source, alert_low, on_alert):
+            if is_noise_refresh(master_ws, master_row, existing_source, alert_low, on_alert, alert_high):
                 skipped_noise.append({'ticker': master_ticker, 'company': company,
                                       'existing_low': master_ws.cell(row=master_row, column=COL_ALERT_LOW).value,
                                       'new_low': alert_low})

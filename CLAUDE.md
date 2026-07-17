@@ -818,6 +818,37 @@ A batch of dashboard/deck changes, all committed:
   count-adaptive row layout. AZN's Alert Low = the 12,218 horizontal support (the
   old stray-blue note was stale — resolved).
 
+## Validation audit (2026-07-17) — Alert High no longer goes stale independently
+
+The `validation` agent's first run found a live write-path bug: `is_noise_refresh()`
+(update_master_sheet.py) gated the whole parallel-channel row on the **Alert Low**
+delta alone. The two rails of a channel drift at different rates (different slopes),
+so an Alert Low within the 3% noise band would skip BOTH cell writes and let a
+drifted **Alert High** go stale indefinitely. **Fixed:** `is_noise_refresh` now
+takes `alert_high`; a parallel row is 'noise' only when BOTH rails are within
+threshold (and if the sheet has no comparable High yet, that's a change, not noise).
+Single-sided reads (`single_low`) still check only the Low — unchanged. Clean A/B
+(old vs new code, same workbook copy, same `channel_results_tmp.json`): **7 rows
+moved noise→applied — ADM (High 4258→3933), BARC (491→578), TSCO (598→526), FCIT
+(346→363), QQ, SHEL, ULVR — zero regressions, zero other applied rows changed.** The
+live sheet's stale Highs correct themselves on the next pipeline run.
+
+Still OPEN from that audit (not code-fixed — need a decision/redraw, NOT a blind patch):
+- **AV. (Aviva)** ships Alert High 693.54 = a drawn "Sell at 693" #2962FF horizontal
+  annotation mistaken for a rail, because the REAL channel is pale-cyan (RGB≈178,235,242)
+  that `channel_blue_mask` (r∈[15,60]) can't see. True top rail ≈869. Same bug CLASS as
+  the old AZN stray-blue note. A fix means widening the mask to the channel-tool cyan or
+  down-weighting lone flat "rails" as annotations — both need a full 342-chart A/B before
+  landing (regression risk); do NOT blind-patch.
+- **MKS / TPK / MTRO** ship CORRECT numbers but a wrong pattern LABEL ('price BELOW
+  channel') when only one rail survives the plausibility gates — cosmetic, needs a
+  classifier tweak with sign-off on wording.
+- **IAG** carries a ~9x-stale Alert Low (49.19 vs price ~444) — the captured layout has
+  no markup so the read is honestly rejected and the OLD level is inherited (working as
+  designed). Needs the user to re-mark IAG's Monthly view (the yellow COVID-low trendline)
+  or clear the level by hand. **PFD** similar (axis OCR [300-800] doesn't bracket price
+  191; unusual chart with a huge historic range) — a dedicated look, not a quick patch.
+
 ## Open items / things to verify on the next export run
 
 - Brent/Palladium/Copper charts were added by the user 2026-07-13 and the symbol
