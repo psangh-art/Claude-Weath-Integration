@@ -73,8 +73,10 @@ something worth remembering.
     and reverted). Validated: patched fit matches direct pixel reads at today_x to
     ±2 on CCH/CCR/ALW/FCIT/PSON/RKT; clean A/B (committed vs patched on the same
     images) shows only magnitude shifts in the expected direction, zero detections
-    gained or lost. (AZN's yellow-drawn channel still yields a stray-blue false
-    single — pre-existing, unrelated to this fix, worth a separate look.)
+    gained or lost. (AZN's stray-blue false single — flagged here originally — was
+    RESOLVED by the yellow-trend-line work: on the current capture AZN reads
+    `blue_lines: []` and three legit yellow lines, see the AZN note under the
+    all-yellow section below. This parenthetical is kept only as history.)
   - **`find_today_x` now excludes the OHLC legend band + reaches through
     fill-dimmed candles (2026-07-17).** Two related today_x errors, both found by
     reviewing the annotated review deck against the drawn charts:
@@ -168,8 +170,9 @@ something worth remembering.
     that was rejecting them; verified at caps 8000/20000.)
   - **Yellow hand-drawn TREND LINES now feed alerts (user rule 2026-07-14).** Some
     charts have no blue TradingView channel — the user marks support/resistance with
-    straight YELLOW trend lines instead (AZN is all-yellow: alert-low line ~10,960,
-    alert-high line ~15,700, no blue). `channel_detect.py` now detects them:
+    straight YELLOW trend lines instead (AZN is all-yellow: an ascending channel
+    — lower rail ~10,958, upper rail ~15,707 — PLUS a flat horizontal support line
+    at ~12,218, no blue). `channel_detect.py` now detects them:
     `trend_yellow_mask` (R≥220,G≥205,B≤95 — line core ~#FDEA3B; excludes the pale
     app icon and amber event chips), `_extract_straight_lines` (RANSAC + a COVERAGE
     check so a wavy yellow indicator/EMA is rejected — real trend lines are dead
@@ -178,7 +181,12 @@ something worth remembering.
     **Governing selection rule (replaces blue-only):** on each side of today's price,
     use the line CLOSEST to price among {blue parallel rails, yellow trend lines} —
     Alert Low = nearest support below, Alert High = nearest resistance above; a
-    yellow line beyond the blue rail is out-competed automatically. Every candidate
+    yellow line beyond the blue rail is out-competed automatically. **AZN confirms
+    this rule (user decision 2026-07-17):** its Alert Low reads the horizontal
+    support line at ~12,218 (nearest support below the 12,594 price), NOT the
+    ascending lower rail at ~10,958 — the user drew the flat line as the buy level
+    and price sitting just above it is the intended signal; keep the nearest-support
+    read, do not special-case AZN back to the rail. Every candidate
     is split by which side of price it sits on (NOT by blue lower/upper role — a
     price that has broken just outside the channel would otherwise give a degenerate
     alert_high < alert_low; that's how the SILVER 58.38/58.36 bug appeared and was
