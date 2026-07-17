@@ -42,13 +42,9 @@ WS_MONTHLY_INCREASE_ROW = 46            # 'Monthly Investment Increase' (literal
 # --- Stocks of Interest section-table columns (A..Q) ---
 SOI_STOCK, SOI_TICKER, SOI_PATTERN, SOI_ALOW, SOI_AHIGH = 1, 2, 3, 5, 7
 SOI_CHARTNOTE, SOI_RATING, SOI_HOLDINGS, SOI_TARGET, SOI_NOTES, SOI_UPDATED, SOI_TV = 11, 12, 13, 14, 15, 16, 17
-# Dashboard watchlist (2026-07-17): read section BANDS in nearest-to-alert-low-first
-# priority — same band order refresh_soi_sections.py lays them out on the sheet —
-# collecting rows until WATCHLIST_MAX_ROWS is reached, rather than only the single
-# 'within 5%' band (which alone can be as few as 4-6 rows). A band substring that
-# isn't present on the sheet (or is exhausted) is simply skipped.
-SOI_WATCHLIST_BANDS = ['AT LOWER BOUNDARY', 'NEAR LOWER BOUNDARY', 'WATCHLIST', 'BREAKOUTS', 'BEYOND 30%']
-WATCHLIST_MAX_ROWS = 20
+# Dashboard watchlist = strictly the 'AT LOWER BOUNDARY — within 5% of alert low'
+# section band of Stocks of Interest (user decision 2026-07-17). Only this band.
+SOI_WATCHLIST_BAND = 'AT LOWER BOUNDARY'
 # --- Base Data columns (header row 2) ---
 BD_TICKER, BD_NAME, BD_PE, BD_DIV_PENCE, BD_DIVYLD, BD_EXDIV = 1, 2, 6, 8, 9, 11
 
@@ -97,7 +93,7 @@ def _read_soi_band(soi, soif, band_substring, base, latest):
     """Read one 'Stocks of Interest' section-table band (e.g. 'AT LOWER BOUNDARY')
     into dashboard watchlist row dicts. Returns [] if that band isn't found on the
     sheet (never invents rows) — membership within a band is still hand-curated
-    (see refresh_soi_sections.py); this only widens which bands we pull FROM."""
+    (see refresh_soi_sections.py); this only reads the rows already placed there."""
     rows = []
     band_row = None
     for r in range(1, soi.max_row + 1):
@@ -300,19 +296,10 @@ def build(workbook=WORKBOOK):
                 'ex_div': (exdiv.strftime('%Y-%m-%d') if isinstance(exdiv, datetime.datetime) else exdiv)}
     soi = wb['Stocks of Interest']
     soif = wbf['Stocks of Interest']
-    # Pull from each section band in nearest-to-alert-low-first priority order,
-    # topping up to WATCHLIST_MAX_ROWS rather than stopping at the single
-    # 'within 5%' band (2026-07-17 — that band alone can be under 10 rows).
-    watchlist = []
-    bands_used = []
-    for band in SOI_WATCHLIST_BANDS:
-        if len(watchlist) >= WATCHLIST_MAX_ROWS:
-            break
-        section_rows = _read_soi_band(soi, soif, band, base, latest)
-        if not section_rows:
-            continue
-        bands_used.append(band)
-        watchlist.extend(section_rows[:WATCHLIST_MAX_ROWS - len(watchlist)])
+    # Strictly the 'AT LOWER BOUNDARY — within 5% of alert low' band (user decision
+    # 2026-07-17): the Watchlist is the buy-zone list, not the whole Stocks-of-Interest
+    # ladder. The other bands stay out.
+    watchlist = _read_soi_band(soi, soif, SOI_WATCHLIST_BAND, base, latest)
 
     overview = {
         'generated_at': now.isoformat(timespec='seconds'),
@@ -344,9 +331,7 @@ def build(workbook=WORKBOOK):
                 'summary': {'total_profit_2026': round(profit_2026, 2),
                             'count': len(sold), 'win_rate': win_rate}}
     watchlist_payload = {'generated_at': now.isoformat(timespec='seconds'),
-                         'criterion': 'Nearest to alert low first (Stocks of Interest — up to %d, '
-                                      'across the At Lower Boundary / Near / Watchlist / Breakouts sections)'
-                                      % WATCHLIST_MAX_ROWS,
+                         'criterion': 'Within 5% of alert low (Stocks of Interest — at lower boundary)',
                          'rows': watchlist}
 
     # ---------------- Targets (income + allocation by Type) ----------------
