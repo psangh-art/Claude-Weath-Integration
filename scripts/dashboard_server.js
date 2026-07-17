@@ -19,6 +19,17 @@ const PORT = 4600;
 const APP_DIR = path.join(__dirname, 'dashboard_app');
 const DATA_DIR = path.join(APP_DIR, 'data');
 const PYTHON = process.env.PYTHON || 'python';
+const REPO_ROOT = path.join(__dirname, '..');
+const REVIEW_GALLERY = path.join(__dirname, 'pipeline_app', 'review_deck.html');
+
+// Whitelist for the /asset image proxy the review-deck gallery uses: only images
+// inside the repo or Downloads (same rule as pipeline_app_server.js).
+function isAllowedAsset(abs) {
+  const resolved = path.resolve(abs);
+  const roots = [path.resolve(REPO_ROOT), path.resolve(path.join(os.homedir(), 'Downloads'))];
+  return roots.some(root => resolved === root || resolved.startsWith(root + path.sep))
+    && /\.(png|jpe?g)$/i.test(resolved);
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -146,6 +157,27 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ error: String(e.message || e), indices: {} }));
     });
     return;
+  }
+
+  // Review-deck IN-APP GALLERY (user request 2026-07-17): serve the image
+  // gallery build_review_deck.py emits (scripts/pipeline_app/review_deck.html),
+  // rewriting its relative "asset?p=" image srcs to the absolute "/asset?p="
+  // route below so they resolve no matter the page path. (Architecture and
+  // alert-rules stay raw .pptx downloads — no slide renderer is available.)
+  if (pathname === '/decks/review-deck') {
+    fs.readFile(REVIEW_GALLERY, 'utf-8', (e, html) => {
+      if (e) { res.writeHead(404); res.end('Review-deck gallery not built yet — run the pipeline (or build_review_deck.py).'); return; }
+      const fixed = html.replace(/(["'])asset\?p=/g, '$1/asset?p=');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(fixed);
+    });
+    return;
+  }
+  // Image proxy for the gallery — whitelisted to the repo + Downloads only.
+  if (pathname === '/asset') {
+    const p = url.searchParams.get('p');
+    if (p && isAllowedAsset(p)) { serveFile(res, path.resolve(p)); return; }
+    res.writeHead(403); res.end('Forbidden'); return;
   }
 
   // Serve the built decks (from Downloads) so the nav links work standalone.
