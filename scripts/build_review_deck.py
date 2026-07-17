@@ -37,7 +37,7 @@ if sys.platform == "win32":
         pass
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-from config import CFG, downloads_dir
+from config import CFG, downloads_dir, purge_old_versions
 DOWNLOADS = downloads_dir()
 MASTER_PATH = os.path.join(DOWNLOADS, CFG['masterWorkbook'])
 # The Investment Production Centre front end serves these two: an in-Chrome
@@ -558,6 +558,9 @@ def main():
     appendix.append((', '.join(unchartered_watch) or '—', 10, False, GREY))
     add_text(slide, Inches(0.5), Inches(1.1), Inches(12.3), Inches(6.1), appendix)
 
+    purged = purge_old_versions(out_path)
+    if purged:
+        print(f'Recycled {len(purged)} old "(N)" copy(ies) of {os.path.basename(out_path)}')
     prs.save(out_path)
     n_slides = len(prs.slides._sldIdLst)
     print(f'Deck: {n_slides} slides -> {out_path}')

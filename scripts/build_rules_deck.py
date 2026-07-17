@@ -29,7 +29,7 @@ sys.path.insert(0, SCRIPT_DIR)
 # both decks must look like the same document.
 from build_review_deck import (add_text, add_picture_fitted, section_slide,
                                NAVY, RED, AMBER, GREEN, GREY, SLIDE_W, SLIDE_H)
-from config import CFG, downloads_dir
+from config import CFG, downloads_dir, purge_old_versions
 from channel_detect import ON_ALERT_TOL
 
 DEFAULT_RESULTS = os.path.join(os.path.dirname(SCRIPT_DIR), 'logs', 'channel_results_newrules.json')
@@ -337,6 +337,9 @@ def main():
                       'All %d captured reads follow the six patterns — no unresolved charts'
                       % sum(1 for r in results if r.get('kind')))
 
+    purged = purge_old_versions(out_path)
+    if purged:
+        print('Recycled %d old "(N)" copy(ies) of %s' % (len(purged), os.path.basename(out_path)))
     prs.save(out_path)
     print('Rules deck -> %s' % out_path)
     print('  %d named patterns, %d charts needing a rule' % (len(PATTERNS), len(unknowns)))
