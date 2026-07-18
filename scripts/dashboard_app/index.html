@@ -311,6 +311,11 @@ tbody tr:hover{background:var(--panel-2)}
 .chip-btn:hover{color:var(--text);background:var(--panel-3)}
 .chip-btn.primary{background:linear-gradient(150deg,var(--accent),var(--accent-2));border-color:transparent;color:#04231d}
 .chip-btn.primary:hover{filter:brightness(1.06)}
+.wl-live{display:inline-flex;align-items:center;gap:6px}
+.wl-live svg{width:13px;height:13px}
+.wl-live:disabled{opacity:.6;cursor:default}
+.wl-live.spinning svg{animation:spin 1s linear infinite}
+.wl-live-stamp{font-size:11px;white-space:nowrap}
 .design-hint{font-size:11.5px;color:var(--muted);margin-bottom:10px;flex-shrink:0;line-height:1.45}
 /* Intelligence index widgets */
 .intel-val{font-size:26px;font-weight:800;letter-spacing:-.01em;line-height:1.05;margin-top:2px}
@@ -590,7 +595,7 @@ const NAV_ITEMS=[
 // (which is only ever in-app screens) — see renderRail().
 const EXTERNAL_LINKS=[
   {id:'ext-alerts', label:'Review Deck', icon:ICONS.bell, href:'/decks/review-deck'},
-  {id:'ext-architecture', label:'Architecture', icon:ICONS.doc, href:'/decks/architecture.pptx'},
+  {id:'ext-architecture', label:'Architecture', icon:ICONS.doc, href:'/decks/architecture'},
   {id:'ext-alert-rules', label:'Alert Rules', icon:ICONS.doc, href:'/decks/alert-rules.pptx'},
   {id:'ext-data', label:'Data', icon:ICONS.sheet, href:'https://docs.google.com/spreadsheets/d/1UjAz_QUuh86_e6yq8QJf2veI8IpkRCyVfWaK6maqiyc/'},
   {id:'ext-pipeline', label:'Pipeline', icon:ICONS.flow, href:'http://localhost:4590'},
@@ -1133,10 +1138,53 @@ WIDGET_DEFS.watchlist.push({
       subcap.hidden=!criterion;
     }
 
-    action.innerHTML='<input class="search-input" type="text" placeholder="Filter…" value="'+escapeHtml(UI.watchlist.filter)+'"/><span class="row-count"></span>';
+    action.innerHTML='<button class="chip-btn wl-live" title="Fetch live market prices for these stocks now">'+ICONS.refresh+'<span>Live prices</span></button>'+
+      '<span class="wl-live-stamp dim"></span>'+
+      '<input class="search-input" type="text" placeholder="Filter…" value="'+escapeHtml(UI.watchlist.filter)+'"/><span class="row-count"></span>';
     const input=action.querySelector('.search-input');
     const rowCount=action.querySelector('.row-count');
+    const liveBtn=action.querySelector('.wl-live');
+    const liveStamp=action.querySelector('.wl-live-stamp');
     input.addEventListener('input',()=>{ UI.watchlist.filter=input.value; draw(); });
+
+    // Live-price refresh (user request 2026-07-18): the TOP Refresh re-derives the
+    // watchlist from the last CAPTURED prices; this pulls LIVE market prices from
+    // Yahoo (server-side /api/watchlist-live) and overlays them onto the rows,
+    // recomputing proximity. Captured values return on the next data refresh.
+    async function refreshLive(){
+      liveBtn.disabled=true; liveBtn.classList.add('spinning');
+      liveStamp.textContent='fetching…';
+      try{
+        const r=await fetch('/api/watchlist-live');
+        const j=await r.json();
+        const prices=j.prices||{};
+        let applied=0, unsupported=0;
+        for(const row of (DATA.watchlist.rows||[])){
+          const p=prices[String(row.ticker||'').trim().toUpperCase()];
+          if(!p) continue;
+          if(p.error){ unsupported++; continue; }
+          if(typeof p.price==='number'){
+            row.current=p.price;
+            row.change=(p.change==null?null:p.change);
+            row.change_pct=(p.change_pct==null?null:p.change_pct);
+            if(typeof row.alert_low==='number'&&row.alert_low)
+              row.proximity_pct=Math.round((row.current-row.alert_low)/row.alert_low*100*100)/100;
+            applied++;
+          }
+        }
+        const t=new Date(j.at||Date.now());
+        const hh=String(t.getHours()).padStart(2,'0'), mm=String(t.getMinutes()).padStart(2,'0');
+        liveStamp.textContent='Live · '+hh+':'+mm+(unsupported?(' · '+unsupported+' no live source'):'');
+        liveStamp.title=applied+' updated'+(unsupported?(', '+unsupported+' unsupported (e.g. commodities)'):'');
+        draw();
+      }catch(e){
+        liveStamp.textContent='live fetch failed';
+        liveStamp.title=String(e&&e.message||e);
+      }finally{
+        liveBtn.disabled=false; liveBtn.classList.remove('spinning');
+      }
+    }
+    liveBtn.addEventListener('click',refreshLive);
 
     body.innerHTML='<div class="table-scroll"></div>';
     const scroll=body.querySelector('.table-scroll');
@@ -1239,9 +1287,9 @@ WIDGET_DEFS.watchlist.push({
 });
 
 /* ---------------------- Intelligence (live index widgets) ---------------------- */
-// Live market indices fetched SERVER-side from Stooq (/api/intelligence — the
-// browser can't call stooq.com cross-origin). Cached in this module; each widget's
-// ↻ button forces a fresh pull for just these widgets (?refresh=1).
+// Live market indices fetched SERVER-side from the Yahoo Finance chart API
+// (/api/intelligence — the browser can't call Yahoo cross-origin). Cached in this
+// module; each widget's ↻ button forces a fresh pull for just these widgets (?refresh=1).
 const INTEL={loaded:false, loading:false, error:null, at:null, indices:{}};
 async function loadIntelligence(force){
   if(INTEL.loading) return;

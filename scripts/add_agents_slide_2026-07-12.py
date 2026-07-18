@@ -9,8 +9,12 @@ column.
 
 Usage: python add_agents_slide_2026-07-12.py [deck.pptx]
 """
+import os
 import shutil
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from config import purge_old_versions
 
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -175,6 +179,12 @@ def main():
     add_text(slide, Inches(8.6), Inches(top0 - 0.28), Inches(3.6), Inches(0.25),
              'STOPS AT', 9, bold=True, color=GREY)
 
+    # Recycle any stale 'Financial_Data_Pipeline_Architecture (N).pptx' duplicate
+    # copies before saving, so only one version of the deck survives (user rule
+    # 2026-07-18) — same pattern as build_review_deck.py / build_rules_deck.py.
+    purged = purge_old_versions(deck_path)
+    if purged:
+        print(f'Recycled {len(purged)} old duplicate copy(ies) of the architecture deck')
     prs.save(deck_path)
     print(f'Added agents slide ({len(AGENTS)} agents) as slide {len(prs.slides._sldIdLst)} -> {deck_path}')
 

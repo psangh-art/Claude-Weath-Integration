@@ -860,6 +860,52 @@ Still OPEN from that audit (data/workflow, NOT a code fix — need a redraw, not
   or clear the level by hand. **PFD** similar (axis OCR [300-800] doesn't bracket price
   191; unusual chart with a huge historic range) — a dedicated look, not a quick patch.
 
+## Dashboard: in-app architecture view + live Watchlist prices (2026-07-18)
+
+Three user requests, all committed:
+
+- **Architecture deck now opens IN THE APP as a readable HTML view, not a raw
+  .pptx download.** The nav "Architecture" link pointed at `/decks/architecture.pptx`,
+  which (no OneDrive share link pasted, no LibreOffice renderer available) only ever
+  streamed the raw file for the browser to download — the user reported it "just not
+  working". `scripts/render_architecture_html.py` reads the SAME
+  `Financial_Data_Pipeline_Architecture.pptx` the deck scripts produce and lays every
+  slide out as absolutely-positioned HTML boxes from each shape's EMU geometry, fill,
+  border and per-run font styling, so it stays in sync with the deck automatically
+  (no hand-maintained second copy). Fully responsive with pure CSS: each slide is a
+  `container-type:inline-size` stage at the slide's aspect ratio, children positioned
+  in %, fonts in `cqw`; lines/connectors drawn in one SVG per slide whose viewBox is
+  the slide's EMU coords. `dashboard_server.js` serves it at `/decks/architecture`
+  (`ensureArchitectureHtml()` regenerates lazily when the .pptx is newer than the
+  cached `dashboard_app/architecture.html`, which is gitignored). Front-end nav link
+  updated to `/decks/architecture`. The old `/decks/architecture.pptx` route still
+  works as a raw-download fallback. A few boxes clip a long single-line label
+  (e.g. "TradingView"→"TradingVie…") because the box height is fixed and text is
+  `overflow:hidden` — acceptable, the diagram is faithful and readable; don't switch
+  to `overflow:visible` on 131 boxes (they'd overlap).
+- **Watchlist now has a LIVE-price refresh, separate from the top Refresh button.**
+  The top **Refresh** re-derives the watchlist from the last CAPTURED prices
+  (history.db); the new **"Live prices"** ↻ button on the Watchlist screen pulls LIVE
+  market prices from Yahoo on demand. Server route `/api/watchlist-live`
+  (`getWatchlistLive()` in `dashboard_server.js`) reads the current watchlist tickers
+  from `watchlist.json`, maps each to a Yahoo symbol (default rule = LSE equity
+  `<TICKER>.L` with `.`→`-`, quoted in pence to match the sheet), and fetches
+  `regularMarketPrice` + `chartPreviousClose` via the same Yahoo chart API the
+  Intelligence screen uses. `config.json → watchlistYahooSymbols` overrides the rule;
+  `''` marks a ticker as having NO pence-denominated live source (commodities are
+  USD/oz — PALL/PLAT/GOLD/SILVER/COPP/NATGAS/UKOIL are set to `''` and report
+  "no live source" rather than being guessed). The front end overlays the live
+  price/change onto the rows, recomputes proximity, and stamps "Live · HH:MM · N no
+  live source". Verified end-to-end in-browser: 5 LSE equities updated with real
+  day-changes, Palladium correctly unsupported.
+- **Architecture deck old-version deletion.** Item #3 of the request. The newest
+  architecture editor (`add_investment_dashboard_slide_2026-07-17.py`) already called
+  `purge_old_versions`, and the end-of-pipeline `purge_output_duplicates.py` sweeps the
+  architecture deck too. Added the same `purge_old_versions(deck_path)` call to
+  `add_agents_slide_2026-07-12.py` (which CLAUDE.md says is re-run on request) for
+  consistency. Alert_Rules_Model (`build_rules_deck.py`) and Investment_Review_Deck
+  (`build_review_deck.py`) already purged — confirmed, no change needed.
+
 ## Open items / things to verify on the next export run
 
 - Brent/Palladium/Copper charts were added by the user 2026-07-13 and the symbol

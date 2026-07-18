@@ -28,5 +28,15 @@
     "architecturePptx": "",
     "alertRules": "",
     "spendingSummary": ""
+  },
+  "watchlistYahooSymbols": {
+    "_comment": "Overrides for the Watchlist live-price fetch. Default rule = LSE equity: '<TICKER>.L' (pence). Set '' to mark a ticker as having no pence-denominated live source (commodities are priced in USD/oz and would not match the sheet).",
+    "PALL": "",
+    "PLAT": "",
+    "GOLD": "",
+    "SILVER": "",
+    "COPP": "",
+    "NATGAS": "",
+    "UKOIL": ""
   }
 }

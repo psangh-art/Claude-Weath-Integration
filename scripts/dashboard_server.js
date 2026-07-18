@@ -7,7 +7,7 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import os from 'os';
 import { productWebLink, CFG } from './config.js';
@@ -21,6 +21,25 @@ const DATA_DIR = path.join(APP_DIR, 'data');
 const PYTHON = process.env.PYTHON || 'python';
 const REPO_ROOT = path.join(__dirname, '..');
 const REVIEW_GALLERY = path.join(__dirname, 'pipeline_app', 'review_deck.html');
+
+// In-app readable view of the architecture deck. No slide renderer is available,
+// so a raw .pptx link only downloads the file — render_architecture_html.py lays
+// the SAME .pptx out as HTML instead. Regenerated lazily when the .pptx is newer
+// than the cached HTML, so the view always reflects the latest deck build.
+const ARCH_PPTX = path.join(os.homedir(), 'Downloads', 'Financial_Data_Pipeline_Architecture.pptx');
+const ARCH_HTML = path.join(APP_DIR, 'architecture.html');
+function ensureArchitectureHtml() {
+  let src;
+  try { src = fs.statSync(ARCH_PPTX); } catch { return false; }  // no deck built yet
+  let stale = true;
+  try { stale = fs.statSync(ARCH_HTML).mtimeMs < src.mtimeMs; } catch { stale = true; }
+  if (stale) {
+    const r = spawnSync(PYTHON, [path.join(__dirname, 'render_architecture_html.py'), ARCH_PPTX, ARCH_HTML],
+      { cwd: REPO_ROOT, env: { ...process.env, PYTHONUTF8: '1' } });
+    if (r.status !== 0) { console.error('[arch] render failed:', String(r.stderr || '').slice(-300)); return false; }
+  }
+  return true;
+}
 
 // Whitelist for the /asset image proxy the review-deck gallery uses: only images
 // inside the repo or Downloads (same rule as pipeline_app_server.js).
@@ -125,6 +144,68 @@ async function getIntelligence(force) {
   return intelCache.payload;
 }
 
+// ---- Watchlist LIVE prices (user request 2026-07-18) ----------------------
+// The top Refresh button re-derives the watchlist from the last CAPTURED prices
+// (history.db). This endpoint instead pulls LIVE market prices for the watchlist
+// tickers straight from Yahoo, on demand (the Watchlist screen's ↻). LSE equities
+// are quoted in pence (GBp) on Yahoo, matching the sheet; the default symbol rule
+// is '<TICKER>.L' with '.'→'-' (BT.A → BT-A.L). config.json → watchlistYahooSymbols
+// overrides it, and '' marks a ticker (e.g. a USD/oz commodity) as having no
+// pence-denominated live source, so it's reported unsupported rather than guessed.
+const WATCH_SYMBOL_OVERRIDE = (CFG.watchlistYahooSymbols && typeof CFG.watchlistYahooSymbols === 'object')
+  ? CFG.watchlistYahooSymbols : {};
+function yahooSymbolFor(ticker) {
+  if (!ticker) return null;
+  const t = String(ticker).trim().toUpperCase();
+  if (Object.prototype.hasOwnProperty.call(WATCH_SYMBOL_OVERRIDE, t)) {
+    return WATCH_SYMBOL_OVERRIDE[t] || null;   // '' => explicitly unsupported
+  }
+  return t.replace(/\./g, '-') + '.L';          // default: LSE equity in pence
+}
+
+async function fetchQuote(symbol) {
+  const url = 'https://query1.finance.yahoo.com/v8/finance/chart/'
+            + encodeURIComponent(symbol) + '?range=5d&interval=1d';
+  const j = await fetchJson(url, 8000);
+  const result = j && j.chart && j.chart.result && j.chart.result[0];
+  if (!result) throw new Error('no data (check symbol)');
+  const meta = result.meta || {};
+  const last = typeof meta.regularMarketPrice === 'number' ? meta.regularMarketPrice : null;
+  const prev = typeof meta.chartPreviousClose === 'number' ? meta.chartPreviousClose
+             : (typeof meta.previousClose === 'number' ? meta.previousClose : null);
+  if (last == null) throw new Error('no price');
+  return { price: last, prev, currency: meta.currency || null };
+}
+
+async function getWatchlistLive() {
+  let tickers = [];
+  try {
+    const wl = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'watchlist.json'), 'utf-8'));
+    const rows = Array.isArray(wl) ? wl : (wl.rows || []);
+    tickers = [...new Set(rows.map(r => r.ticker).filter(Boolean).map(t => String(t).trim().toUpperCase()))];
+  } catch (e) {
+    return { at: new Date().toISOString(), prices: {}, error: 'watchlist not built yet' };
+  }
+  const prices = {};
+  await Promise.all(tickers.map(async (t) => {
+    const sym = yahooSymbolFor(t);
+    if (!sym) { prices[t] = { error: 'no live source' }; return; }
+    try {
+      const q = await fetchQuote(sym);
+      const change = (q.prev != null) ? q.price - q.prev : null;
+      prices[t] = {
+        price: Math.round(q.price * 100) / 100,
+        change: change == null ? null : Math.round(change * 100) / 100,
+        change_pct: (q.prev) ? Math.round((change / q.prev * 100) * 100) / 100 : null,
+        currency: q.currency, symbol: sym,
+      };
+    } catch (e) {
+      prices[t] = { error: String(e.message || e), symbol: sym };
+    }
+  }));
+  return { at: new Date().toISOString(), prices };
+}
+
 function serveFile(res, file) {
   fs.readFile(file, (e, buf) => {
     if (e) { res.writeHead(404); res.end('Not found'); return; }
@@ -159,6 +240,18 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Live market prices for the Watchlist tickers (Watchlist screen's ↻ button).
+  if (pathname === '/api/watchlist-live') {
+    getWatchlistLive().then(payload => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify(payload));
+    }).catch(e => {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: String(e.message || e), prices: {} }));
+    });
+    return;
+  }
+
   // Review-deck IN-APP GALLERY (user request 2026-07-17): serve the image
   // gallery build_review_deck.py emits (scripts/pipeline_app/review_deck.html),
   // rewriting its relative "asset?p=" image srcs to the absolute "/asset?p="
@@ -170,6 +263,19 @@ const server = http.createServer((req, res) => {
       const fixed = html.replace(/(["'])asset\?p=/g, '$1/asset?p=');
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(fixed);
+    });
+    return;
+  }
+  // Architecture deck IN-APP READABLE VIEW (user request 2026-07-18): a raw .pptx
+  // link only downloaded the file, so render the deck as HTML and serve it here.
+  if (pathname === '/decks/architecture') {
+    if (!ensureArchitectureHtml()) {
+      res.writeHead(404); res.end('Architecture deck not built yet — run the pipeline (or the deck scripts).'); return;
+    }
+    fs.readFile(ARCH_HTML, 'utf-8', (e, html) => {
+      if (e) { res.writeHead(404); res.end('Architecture view not available.'); return; }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
     });
     return;
   }
