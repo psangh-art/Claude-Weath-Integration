@@ -1771,7 +1771,10 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     fid_rows_start = cur_row  # track start row for Fidelity total formula
 
     for i, (acc, val) in enumerate(fid_non_sipp_accs):
-        label = FIDELITY_ACC_LABELS.get(acc, acc)
+        # Show the account number alongside the friendly name (user request
+        # 2026-07-18) — e.g. "Investment Account (Joint) (SANQ000468)".
+        _base = FIDELITY_ACC_LABELS.get(acc)
+        label = f"{_base} ({acc})" if _base else acc
         if acc == "SANQ000468" and sanq_monthly:
             monthly_vals = {m: sanq_monthly.get(m, val) for m in all_months}
         else:
