@@ -294,7 +294,8 @@ def build(workbook=WORKBOOK):
                            if gain_last_month is not None and months[-2]['value'] else None)
 
     portfolio_value = round(inv_value_total + funds_value_total, 2)
-    monthly_dividend = round(funds_monthly_income, 2)  # equities added in Phase 1.5
+    # monthly_dividend is completed below, once Base Data dividend yields are read,
+    # so it can include SHARE dividends (income + accumulation), not just income funds.
 
     # ---------------- Historic (completed sales) ----------------
     hist = wb['History']
@@ -343,6 +344,21 @@ def build(workbook=WORKBOOK):
                                   if _num(bd.cell(r, BD_DIVYLD).value) is not None else None),
                 'div_pence': _num(bd.cell(r, BD_DIV_PENCE).value),
                 'ex_div': (exdiv.strftime('%Y-%m-%d') if isinstance(exdiv, datetime.datetime) else exdiv)}
+    # Monthly SHARE dividends (user request 2026-07-18): add the ACTUAL share income
+    # + accumulation dividends that spending_summary computes and exports to
+    # data/spending_dividends.json each pipeline run, on top of the income-fund revenue
+    # (which stays sourced from the master's Income Funds tab — no double count).
+    # Falls back to 0 until that file exists (e.g. a run without the Fidelity exports).
+    share_income_monthly = share_accum_monthly = 0.0
+    try:
+        with open(os.path.join(REPO, 'data', 'spending_dividends.json'), encoding='utf-8') as _f:
+            _dv = json.load(_f)
+        share_income_monthly = float(_dv.get('share_income_monthly') or 0)
+        share_accum_monthly = float(_dv.get('share_accumulation_monthly') or 0)
+    except (OSError, ValueError):
+        pass
+    monthly_dividend = round(funds_monthly_income + share_income_monthly + share_accum_monthly, 2)
+
     soi = wb['Stocks of Interest']
     soif = wbf['Stocks of Interest']
     # Strictly the 'AT LOWER BOUNDARY — within 5% of alert low' band (user decision
@@ -360,7 +376,9 @@ def build(workbook=WORKBOOK):
             'trading_profit_2026': {'value': round(profit_2026, 2),
                                     'sells': sum(1 for s in sold if s['sell_date'][:4] == '2026')},
             'monthly_dividend': {'value': monthly_dividend,
-                                 'caveat': 'Income-fund revenue; equity dividends added in Phase 1.5.'},
+                                 'caveat': f'Income funds £{funds_monthly_income:,.0f}/mo + share income '
+                                           f'£{share_income_monthly:,.0f}/mo + share accumulation '
+                                           f'£{share_accum_monthly:,.0f}/mo.'},
             'cash_available': {'value': round(cash_available, 2),
                                'pct_of_portfolio': round(cash_available / portfolio_value * 100.0, 2) if portfolio_value else None,
                                'caveat': 'Fidelity cash accounts only; uninvested account cash added in Phase 1.5.'},

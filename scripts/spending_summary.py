@@ -16,6 +16,7 @@ import sys
 import os
 import io
 import csv
+import json
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -3235,6 +3236,35 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     salary_annual = sum(load_spend_history().get('Salary', {}).values()) + salary_may * 8
     total_annual_income = fid_annual + salary_annual + equity_annual
     income_avg_pm = round(total_annual_income / 12)
+
+    # Emit the monthly SHARE-dividend figures for the Investment Dashboard's Monthly
+    # Dividend metric (user request 2026-07-18: add share income + accumulation
+    # dividends). share_income = equity dividends run at equity_annual/12; share
+    # accumulation = the Acc funds' reinvested income (inc_ppu × units), already
+    # computed per fund/month in build_acc_holdings as 'price_appreciation' — take the
+    # latest month's total across all Acc funds (same figure as the Wealth Summary's
+    # 'TOTAL Accumulative (price appreciation)' row). Written to data/ for the dashboard;
+    # income-fund revenue stays sourced from the master's Income Funds tab (no dup).
+    try:
+        acc_appr = {}
+        for _funds in (acc_holdings or {}).values():
+            for _fd in _funds.values():
+                for _per, _v in (_fd.get('price_appreciation') or {}).items():
+                    acc_appr[_per] = acc_appr.get(_per, 0) + _v
+        _dividends = {
+            'generated_at': pd.Timestamp.now().isoformat(timespec='seconds'),
+            'share_income_monthly': round(equity_annual / 12.0, 2),
+            'share_accumulation_monthly': round(acc_appr[max(acc_appr)], 2) if acc_appr else 0.0,
+        }
+        _repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _dp = os.path.join(_repo, 'data', 'spending_dividends.json')
+        os.makedirs(os.path.dirname(_dp), exist_ok=True)
+        with open(_dp, 'w', encoding='utf-8') as _f:
+            json.dump(_dividends, _f, indent=2)
+        print(f"  Share dividends -> income £{_dividends['share_income_monthly']:,.0f}/mo, "
+              f"accumulation £{_dividends['share_accumulation_monthly']:,.0f}/mo")
+    except Exception as _e:
+        print(f"  (share-dividend export skipped: {_e})")
 
     # 2. Paul SIPP 25% drawdown
     paul_sipp_val_tgt = 0
