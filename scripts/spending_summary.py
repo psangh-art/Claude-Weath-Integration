@@ -1752,11 +1752,21 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     for m in all_months:
         sanq_monthly[m] = sanq_monthly.get(m, 0) + sanq_non_acc_val
 
-    # Override with ACTUAL AccountSummary value for the current data month (June 2026)
-    # The growth-projection model overshoots; June actual = £791,867.11
-    JUNE_2026 = pd.Period("2026-06", "M")
-    if JUNE_2026 in all_months:
-        sanq_monthly[JUNE_2026] = fid_by_acc.get("SANQ000468", sanq_monthly.get(JUNE_2026, 0))
+    # The AccountSummary total is the ACTUAL current value of the account. The
+    # forward growth-projection past the build anchor (MAY_2026 in build_acc_holdings)
+    # is unreliable — it collapsed the current month (was hardcoded to override only
+    # JUNE, so when "now" advanced to July the July value dropped ~£145k to a broken
+    # projection: bug #20, 2026-07-18). Hold the current data month and every month
+    # after it flat at the actual total — exactly as every OTHER Fidelity account row
+    # already is (see the `else` branch below) — keeping only the reliable historical
+    # backward ramp for earlier months. HOLD_FROM is the first forward-projected month
+    # after the May build anchor; if that anchor is ever moved, move this with it.
+    sanq_actual = fid_by_acc.get("SANQ000468", 0)
+    HOLD_FROM = pd.Period("2026-06", "M")
+    if sanq_actual:
+        for m in all_months:
+            if m >= HOLD_FROM:
+                sanq_monthly[m] = sanq_actual
 
     fid_rows_start = cur_row  # track start row for Fidelity total formula
 
