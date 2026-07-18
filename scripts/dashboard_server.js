@@ -90,7 +90,7 @@ function ensurePipelineApp(cb) {
     if (up) return cb(true);
     if (!pipelineStarting) {
       pipelineStarting = true;
-      console.log('[pipeline] not running — starting Investment Production Centre...');
+      console.log('[pipeline] not running — starting the Pipeline app...');
       try {
         const child = spawn(process.execPath, [path.join(__dirname, 'pipeline_app_server.js')],
           { cwd: REPO_ROOT, detached: true, stdio: 'ignore' });
@@ -314,13 +314,13 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Open the Investment Production Centre, starting it first if it isn't up.
+  // Open the Pipeline app (formerly "Investment Production Centre"), starting it first.
   if (pathname === '/pipeline') {
     ensurePipelineApp((up) => {
       if (up) { res.writeHead(302, { Location: `http://localhost:${PIPELINE_PORT}/` }); res.end(); return; }
       res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end('<body style="font-family:system-ui;padding:40px;max-width:640px">'
-        + '<h2>Couldn’t start the Investment Production Centre</h2>'
+        + '<h2>Couldn’t start the Pipeline app</h2>'
         + `<p>The pipeline build screen (port ${PIPELINE_PORT}) did not come up. `
         + 'Try launching it directly with <b>Run Pipeline App.bat</b>, then click Pipeline again.</p></body>');
     });
