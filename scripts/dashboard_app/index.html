@@ -244,7 +244,9 @@ svg{display:block}
 .news-yield{font-family:var(--mono);color:var(--muted);font-size:10.5px;flex-shrink:0;min-width:40px;text-align:right}
 
 /* ============================== SPARKLINE ============================== */
-.sparkline{width:100%;height:20px;overflow:visible}
+.sparkline{width:100%;height:20px;overflow:visible;display:block}
+.intel-spark{height:40px;margin-top:6px}
+.intel-spark .sparkline{height:40px}
 
 /* ============================== CHART (value over time) ============================== */
 /* Kept to Medium height (2026-07-17) — compressed viewBox/padding above and
@@ -466,6 +468,22 @@ function sparklineSVG(values,opts){
     '<path d="'+path+'" fill="none" stroke="'+color+'" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>'+
     '</svg>';
 }
+// Trend colour by first-vs-last % change (user spec 2026-07-18): green when up
+// (> +1%), red when down (< -1%), yellow when flat/sideways (between -1% and +1%).
+function trendColor(series){
+  const v=(series||[]).filter(x=>x!=null);
+  if(v.length<2) return 'var(--muted)';
+  const pct=(v[v.length-1]-v[0])/(Math.abs(v[0])||1)*100;
+  return pct>1 ? 'var(--success)' : pct<-1 ? 'var(--danger)' : '#e0b400';
+}
+// Reusable widget sparklines, coloured by trend (green/red/yellow):
+//   dailySparkline   — 30 days of closing prices
+//   monthlySparkline — the previous 6 months within the current year
+function trendSparkline(series,opts){
+  return sparklineSVG(series, Object.assign({color:trendColor(series)}, opts||{}));
+}
+function dailySparkline(series,opts){ return trendSparkline((series||[]).slice(-30), opts); }
+function monthlySparkline(series,opts){ return trendSparkline((series||[]).slice(-6), opts); }
 function ringSVG(segments,opts){
   opts=opts||{};
   const size=opts.size||120, thickness=opts.thickness||16;
@@ -612,7 +630,7 @@ WIDGET_DEFS.overview.push({
   mount(body){
     body.classList.add('metric-body');
     const m=DATA.overview.metrics.portfolio_value;
-    const spark=sparklineSVG(DATA.overview.value_over_time && DATA.overview.value_over_time.portfolio,{color:'var(--accent)'});
+    const spark=monthlySparkline(DATA.overview.value_over_time && DATA.overview.value_over_time.portfolio);
     body.innerHTML='<div class="metric">'+
       '<div class="metric-main"><div class="metric-value" title="'+fmtMoney(m.value,2)+'">'+fmtMoneyCompact(m.value)+'</div>'+
       '<div class="metric-sub">Across all accounts</div></div>'+
@@ -1335,13 +1353,13 @@ function mountIndexWidget(body,action,key){
     '<div class="intel-val">'+intelNum(d.value)+'</div>'+
     '<div class="intel-row">'+deltaChip(d.change_pct,{kind:'pct',decimals:2})+
       '<span class="intel-abs" style="color:'+absCol+'">'+(d.change>0?'+':'')+intelNum(d.change)+'</span></div>'+
-    sparkline(d.series,down)+
+    '<div class="intel-spark">'+dailySparkline(d.series,{width:200,height:44})+'</div>'+
     '<div class="intel-meta">'+escapeHtml((d.currency?d.currency+' · ':'')+'as of '+(d.as_of||'—'))+'</div>';
 }
 [['ftse','FTSE 100'],['dax','DAX'],['stoxx50','Euro STOXX 50'],['spx','S&P 500'],['nasdaq','Nasdaq'],['dow','Dow Jones']]
   .forEach(([key,label])=>{
     WIDGET_DEFS.intelligence.push({
-      id:'intel-'+key, title:label, size:'S', span:4,
+      id:'intel-'+key, title:label, size:'M', span:4,   // M: room for the daily sparkline
       mount(body,action){ mountIndexWidget(body,action,key); }
     });
   });
