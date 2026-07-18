@@ -934,6 +934,26 @@ Three user requests, all committed:
   NOT expect `window.close()` alone to remove a normal tab — the cover is the reliable
   part. Verified in-browser: opening a 2nd tab dropped the cover on the 1st.
 
+## Dashboard wired into the pipeline as one flow (2026-07-18)
+
+The Investment Dashboard used to be a separate downstream app: `dashboard_data.py`
+regenerated its JSON only on the dashboard server's own startup / manual Refresh, so
+a pipeline run did NOT update it. User asked for a single logic flow tied into the
+pipeline. Now `run_full_pipeline.js`'s `finally` block runs `refreshDashboard()`
+right after `recordHistory()` (dashboard reads `history.db`, so it must run after the
+record step): it runs `python dashboard_data.py` to regenerate the JSON from the
+just-updated workbook + history.db, then best-effort `curl`s the dashboard's new
+**`/pipeline-updated`** route (`dashboard_server.js`), which broadcasts an SSE
+`refresh` so any open dashboard reloads live. It's a QUIET sub-step (no numbered
+`=== Step N/M ===` marker — same as `recordHistory`/`integrate_spending_tabs`), so
+the Production Centre stage count is unchanged. `spending_summary.py` already runs
+in-pipeline (Production Centre stage 2 → mirrored into the master by
+`integrate_spending_tabs.py`), so the full chain is now: preflight → spending build →
+TradingView capture → OCR → master sheet (+SOI +spending tabs) → history.db →
+**dashboard data + notify** → review deck → verify → cleanup. `/pipeline-updated`
+only broadcasts (no re-generation — the pipeline already wrote the files); the dashboard
+isn't required to be running (data lands on disk regardless).
+
 ## Open items / things to verify on the next export run
 
 - Brent/Palladium/Copper charts were added by the user 2026-07-13 and the symbol

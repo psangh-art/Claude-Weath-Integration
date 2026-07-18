@@ -282,6 +282,15 @@ const server = http.createServer((req, res) => {
   }
   if (pathname === '/refresh') { regenerate('manual'); res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); return; }
 
+  // The pipeline finished and already regenerated the data files (run_full_pipeline
+  // -> dashboard_data.py). Just tell open dashboards to reload via SSE — no need to
+  // regenerate again here. This is what ties a pipeline run into the live dashboard.
+  if (pathname === '/pipeline-updated') {
+    broadcast('refresh', { at: Date.now(), source: 'pipeline' });
+    res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}');
+    return;
+  }
+
   // Open the Investment Production Centre, starting it first if it isn't up.
   if (pathname === '/pipeline') {
     ensurePipelineApp((up) => {

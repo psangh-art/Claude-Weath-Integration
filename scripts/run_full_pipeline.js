@@ -202,6 +202,24 @@ function recordHistory() {
   if (line) console.log(`History: ${line}`);
 }
 
+function refreshDashboard() {
+  // Wire the Investment Dashboard into the pipeline as one flow (user request
+  // 2026-07-18): regenerate its data from the just-updated workbook + history.db,
+  // then notify any open dashboard so it reflects this run live. Quiet sub-step
+  // (no numbered "=== Step N/M ===" marker). Reads history.db, so runs AFTER
+  // recordHistory(); spending_summary already feeds the workbook earlier in the run.
+  const gen = spawnSync('python', [path.join(__dirname, 'dashboard_data.py')], { encoding: 'utf-8' });
+  if (gen.status !== 0) {
+    console.error('Dashboard: data refresh failed —', (gen.stderr || '').slice(-200));
+    return;
+  }
+  const summary = (gen.stdout || '').trim().split('\n').find(l => l.includes('Portfolio value'));
+  console.log(`Dashboard: data refreshed${summary ? ' (' + summary.trim() + ')' : ''}`);
+  // Best-effort: tell a running dashboard (:4600) to reload and SSE-notify open
+  // tabs. Silent no-op if the dashboard isn't running — the data is already on disk.
+  spawnSync('curl', ['-s', '-m', '2', 'http://localhost:4600/pipeline-updated'], { encoding: 'utf-8' });
+}
+
 try {
   main();
 } finally {
@@ -210,6 +228,7 @@ try {
   // or don't exist rather than requiring a fully clean run (the deck's whole job
   // is to show what's missing).
   recordHistory();
+  refreshDashboard();
   runDeck();
   runVerify();
   runCleanup();
