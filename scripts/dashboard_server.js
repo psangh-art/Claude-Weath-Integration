@@ -291,6 +291,29 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Pipeline status for the Overview status button: last pipeline run (latest
+  // history.db capture) + the age of each input file (from preflight_check.py).
+  if (pathname === '/api/pipeline-status') {
+    let files = [], lastRun = null;
+    try {
+      const pf = spawnSync(PYTHON, [path.join(__dirname, 'preflight_check.py')],
+        { encoding: 'utf-8', cwd: REPO_ROOT, env: { ...process.env, PYTHONUTF8: '1' } });
+      const r = JSON.parse(pf.stdout);
+      files = Object.values(r.files || {}).map(f => ({
+        label: f.label, present: f.present, as_of: f.as_of, age_days: f.age_days, stale: f.stale }));
+    } catch (e) { /* leave files empty */ }
+    try {
+      const hr = spawnSync(PYTHON, ['-c',
+        "import sqlite3,os;d=os.path.join('data','history.db');"
+        + "print(sqlite3.connect(d).execute('SELECT MAX(price_checked_at) FROM chart_snapshots').fetchone()[0] if os.path.exists(d) else '')"],
+        { encoding: 'utf-8', cwd: REPO_ROOT });
+      lastRun = (hr.stdout || '').trim() || null;
+    } catch (e) { /* leave null */ }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ last_run: lastRun, files }));
+    return;
+  }
+
   // Open the Investment Production Centre, starting it first if it isn't up.
   if (pathname === '/pipeline') {
     ensurePipelineApp((up) => {
