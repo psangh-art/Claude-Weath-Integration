@@ -29,18 +29,25 @@ const REVIEW_GALLERY = path.join(__dirname, 'pipeline_app', 'review_deck.html');
 // than the cached HTML, so the view always reflects the latest deck build.
 const ARCH_PPTX = path.join(os.homedir(), 'Downloads', 'Financial_Data_Pipeline_Architecture.pptx');
 const ARCH_HTML = path.join(APP_DIR, 'architecture.html');
-function ensureArchitectureHtml() {
+const ALERTRULES_PPTX = path.join(os.homedir(), 'Downloads', 'Alert_Rules_Model.pptx');
+const ALERTRULES_HTML = path.join(APP_DIR, 'alert_rules.html');
+// Render a .pptx deck to its in-app HTML if the HTML is missing/stale. `renderArgs`
+// are passed to render_architecture_html.py (the shared renderer): [pptx, html] for
+// the architecture deck, ['alert-rules'] for the alert-rules deck (self-pathed).
+function ensureDeckHtml(pptxPath, htmlPath, renderArgs) {
   let src;
-  try { src = fs.statSync(ARCH_PPTX); } catch { return false; }  // no deck built yet
+  try { src = fs.statSync(pptxPath); } catch { return false; }  // no deck built yet
   let stale = true;
-  try { stale = fs.statSync(ARCH_HTML).mtimeMs < src.mtimeMs; } catch { stale = true; }
+  try { stale = fs.statSync(htmlPath).mtimeMs < src.mtimeMs; } catch { stale = true; }
   if (stale) {
-    const r = spawnSync(PYTHON, [path.join(__dirname, 'render_architecture_html.py'), ARCH_PPTX, ARCH_HTML],
+    const r = spawnSync(PYTHON, [path.join(__dirname, 'render_architecture_html.py'), ...renderArgs],
       { cwd: REPO_ROOT, env: { ...process.env, PYTHONUTF8: '1' } });
-    if (r.status !== 0) { console.error('[arch] render failed:', String(r.stderr || '').slice(-300)); return false; }
+    if (r.status !== 0) { console.error('[deck] render failed:', String(r.stderr || '').slice(-300)); return false; }
   }
   return true;
 }
+const ensureArchitectureHtml = () => ensureDeckHtml(ARCH_PPTX, ARCH_HTML, [ARCH_PPTX, ARCH_HTML]);
+const ensureAlertRulesHtml = () => ensureDeckHtml(ALERTRULES_PPTX, ALERTRULES_HTML, ['alert-rules']);
 
 // Whitelist for the /asset image proxy the review-deck gallery uses: only images
 // inside the repo or Downloads (same rule as pipeline_app_server.js).
@@ -335,6 +342,19 @@ const server = http.createServer((req, res) => {
     }
     fs.readFile(ARCH_HTML, 'utf-8', (e, html) => {
       if (e) { res.writeHead(404); res.end('Architecture view not available.'); return; }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    });
+    return;
+  }
+  // Alert Rules deck IN-APP READABLE VIEW (user request 2026-07-18): same as the
+  // architecture view — render the .pptx to HTML rather than download it.
+  if (pathname === '/decks/alert-rules') {
+    if (!ensureAlertRulesHtml()) {
+      res.writeHead(404); res.end('Alert Rules deck not built yet — run build_rules_deck.py.'); return;
+    }
+    fs.readFile(ALERTRULES_HTML, 'utf-8', (e, html) => {
+      if (e) { res.writeHead(404); res.end('Alert Rules view not available.'); return; }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);
     });

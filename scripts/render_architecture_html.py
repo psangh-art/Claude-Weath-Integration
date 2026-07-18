@@ -122,11 +122,15 @@ def _pct(v, total):
     return f'{(v / total) * 100:.4f}%'
 
 
-def render(pptx_path=DEFAULT_PPTX, out_path=DEFAULT_OUT):
+def render(pptx_path=DEFAULT_PPTX, out_path=DEFAULT_OUT,
+           heading='Financial Data Pipeline — Architecture',
+           subtitle='Live in-app view of the architecture deck',
+           doc_title='Pipeline Architecture'):
     prs = Presentation(pptx_path)
     sw, sh = prs.slide_width, prs.slide_height
     slide_w_pt = sw / EMU_PER_PT
-    scale_cqw = 100.0 / slide_w_pt  # pt -> cqw
+    scale_cqw = 100.0 / slide_w_pt * 0.93  # pt -> cqw (slightly under 1:1 so dense
+                                            # flow-diagram labels fit inside their box)
 
     slides_html = []
     for si, slide in enumerate(prs.slides):
@@ -199,8 +203,11 @@ def render(pptx_path=DEFAULT_PPTX, out_path=DEFAULT_OUT):
 
     body = '\n'.join(slides_html)
     mtime = os.path.getmtime(pptx_path)
-    page = _PAGE.replace('{{SLIDES}}', body).replace(
-        '{{COUNT}}', str(len(prs.slides)))
+    page = (_PAGE.replace('{{SLIDES}}', body)
+            .replace('{{COUNT}}', str(len(prs.slides)))
+            .replace('{{TITLE}}', html.escape(doc_title))
+            .replace('{{HEADING}}', html.escape(heading))
+            .replace('{{SUBTITLE}}', html.escape(subtitle)))
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(page)
@@ -212,7 +219,7 @@ _PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pipeline Architecture</title>
+<title>{{TITLE}}</title>
 <style>
   :root{
     --bg:#f4f6fb; --card:#ffffff; --ink:#1c2431; --muted:#5b6675;
@@ -241,9 +248,12 @@ _PAGE = """<!doctype html>
     background:#ffffff; border-radius:8px; overflow:hidden; }
   @media (prefers-color-scheme: dark){ .stage{ background:#f7f9fc; } }
   :root[data-theme="dark"] .stage{ background:#f7f9fc; }
+  /* overflow:visible + tight line-height so a two-line label (title + caption)
+     is never clipped to "TradingVie…" — the deck's boxes have room, the clip was
+     ours (user request 2026-07-18: clean the boxes so the text is showing). */
   .box{ position:absolute; display:flex; flex-direction:column;
-    justify-content:center; padding:0.35cqw 0.55cqw; overflow:hidden;
-    line-height:1.18; color:#222; }
+    justify-content:center; padding:0.15cqw 0.4cqw; overflow:visible;
+    line-height:1.04; color:#222; }
   .box .ln{ white-space:pre-wrap; word-break:break-word; }
   .pic{ position:absolute; object-fit:contain; }
   .lines{ position:absolute; inset:0; width:100%; height:100%;
@@ -253,8 +263,8 @@ _PAGE = """<!doctype html>
 </head>
 <body>
   <header>
-    <h1>Financial Data Pipeline — Architecture</h1>
-    <p>Live in-app view of the architecture deck ({{COUNT}} slides), rendered from the PowerPoint so it always matches the latest build.</p>
+    <h1>{{HEADING}}</h1>
+    <p>{{SUBTITLE}} ({{COUNT}} slides), rendered from the PowerPoint so it always matches the latest build.</p>
   </header>
   <div class="wrap">
     {{SLIDES}}
@@ -269,8 +279,22 @@ _PAGE = """<!doctype html>
 """
 
 
+# Convenience wrapper for the Alert Rules deck — same renderer, different labels.
+ALERT_RULES_PPTX = os.path.join(os.path.expanduser('~'), 'Downloads', 'Alert_Rules_Model.pptx')
+ALERT_RULES_OUT = os.path.join(REPO, 'scripts', 'dashboard_app', 'alert_rules.html')
+
+def render_alert_rules(pptx_path=ALERT_RULES_PPTX, out_path=ALERT_RULES_OUT):
+    return render(pptx_path, out_path,
+                  heading='Alert Rules Model',
+                  subtitle='Live in-app view of the alert-rules deck',
+                  doc_title='Alert Rules Model')
+
+
 if __name__ == '__main__':
-    src = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PPTX
-    dst = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_OUT
-    out, _ = render(src, dst)
+    if len(sys.argv) > 1 and sys.argv[1] == 'alert-rules':
+        out, _ = render_alert_rules()
+    else:
+        src = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PPTX
+        dst = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_OUT
+        out, _ = render(src, dst)
     print('Wrote', out)
