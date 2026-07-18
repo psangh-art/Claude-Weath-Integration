@@ -598,7 +598,7 @@ const EXTERNAL_LINKS=[
   {id:'ext-architecture', label:'Architecture', icon:ICONS.doc, href:'/decks/architecture'},
   {id:'ext-alert-rules', label:'Alert Rules', icon:ICONS.doc, href:'/decks/alert-rules.pptx'},
   {id:'ext-data', label:'Data', icon:ICONS.sheet, href:'https://docs.google.com/spreadsheets/d/1UjAz_QUuh86_e6yq8QJf2veI8IpkRCyVfWaK6maqiyc/'},
-  {id:'ext-pipeline', label:'Pipeline', icon:ICONS.flow, href:'http://localhost:4590'},
+  {id:'ext-pipeline', label:'Pipeline', icon:ICONS.flow, href:'/pipeline'},
 ];
 
 const SIZE_LABELS={S:'Small', M:'Medium', L:'Large'};
@@ -665,7 +665,7 @@ WIDGET_DEFS.overview.push({
 });
 
 WIDGET_DEFS.overview.push({
-  id:'value-over-time', title:'Portfolio Value Over Time', size:'M', span:8,
+  id:'value-over-time', title:'Portfolio Value Over Time', size:'M', span:4,
   mount(body,action){
     const frames=['3M','6M','YTD','1Y','ALL'];
     action.innerHTML='<div class="seg">'+frames.map(f=>'<button data-tf="'+f+'" class="'+(UI.chart.timeframe===f?'active':'')+'">'+f+'</button>').join('')+'</div>';
@@ -729,7 +729,7 @@ WIDGET_DEFS.overview.push({
 });
 
 WIDGET_DEFS.overview.push({
-  id:'alert-status', title:'Alert Status', size:'M', span:4,
+  id:'alert-status', title:'Alert Status', size:'M', span:2,
   mount(body){
     const a=DATA.overview.alert_status||{below:0,near:0,above:0,total:0};
     const segs=[{value:a.below,color:'var(--danger)',label:'Below alert low'},
@@ -743,7 +743,7 @@ WIDGET_DEFS.overview.push({
 
 const ALLOC_COLORS=['var(--accent)','var(--success)','var(--warn)','var(--muted)','var(--danger)'];
 WIDGET_DEFS.overview.push({
-  id:'targets', title:'Targets', size:'M', span:4,
+  id:'targets', title:'Targets', size:'M', span:2,
   mount(body){
     const t=DATA.targets||{};
     const income=t.income_per_month, annual=t.annual_income, total=t.total||0;
@@ -768,7 +768,7 @@ WIDGET_DEFS.overview.push({
 });
 
 WIDGET_DEFS.overview.push({
-  id:'news', title:'Relevant News', size:'M', span:4,
+  id:'news', title:'Relevant News', size:'M', span:2,
   mount(body){
     const rows=(DATA.news && DATA.news.rows)||[];
     if(!rows.length){
@@ -1627,9 +1627,11 @@ function wireTopbarActions(){
   });
 }
 
+let _sse=null;
 function connectSSE(){
   let es;
   try{ es=new EventSource('/events'); }catch(e){ setStatus('bad'); return; }
+  _sse=es;
   es.addEventListener('hello',()=>setStatus('ok'));
   es.addEventListener('refresh',async()=>{
     try{
@@ -1653,8 +1655,49 @@ function connectSSE(){
   es.onopen=()=>{ setStatus('ok'); };
 }
 
+/* ------------------ single-instance guard (user request 2026-07-18) ------------------ */
+// Opening a new Investment Dashboard should close the old tabs left open in the
+// browser. A page can't force-close a tab the USER opened (Chrome only lets a
+// script close windows it opened itself), so: the newest tab broadcasts a claim,
+// every older tab tries window.close() and — if the browser refuses — drops a
+// full-screen "inactive, reopened elsewhere" cover and stops polling, so there's
+// never confusion about which tab is live and the stale ones go quiet.
+function singleInstanceGuard(){
+  if(!('BroadcastChannel' in window)) return;
+  const myTs=Date.now(), myRid=Math.random();
+  let steppedDown=false;
+  let ch;
+  try{ ch=new BroadcastChannel('investment-dashboard'); }catch(e){ return; }
+  function isOlderThan(m){ return m.ts>myTs || (m.ts===myTs && m.rid>myRid); }
+  function stepDown(){
+    if(steppedDown) return; steppedDown=true;
+    try{ if(_sse) _sse.close(); }catch(_){}
+    try{ window.close(); }catch(_){}            // works only if this tab was script-opened
+    setTimeout(()=>{                             // still here → the browser refused; show a cover
+      const cover=document.createElement('div');
+      cover.style.cssText='position:fixed;inset:0;z-index:99999;display:flex;flex-direction:column;'
+        +'align-items:center;justify-content:center;gap:16px;text-align:center;padding:24px;'
+        +'background:rgba(8,12,20,.94);color:#e7ecf5;font-family:system-ui,sans-serif';
+      cover.innerHTML='<div style="font-size:20px;font-weight:700">Dashboard reopened in a new tab</div>'
+        +'<div style="font-size:14px;color:#93a0b4;max-width:420px">This tab is now inactive. '
+        +'You can close it — the live dashboard is in the newest tab.</div>'
+        +'<button id="si-close" style="margin-top:6px;padding:9px 18px;border-radius:8px;border:none;'
+        +'background:#1f7a33;color:#fff;font-weight:650;cursor:pointer">Close this tab</button>';
+      document.body.appendChild(cover);
+      const b=document.getElementById('si-close');
+      if(b) b.addEventListener('click',()=>{ try{ window.close(); }catch(_){}});
+    },120);
+  }
+  ch.onmessage=(e)=>{
+    const m=e.data||{};
+    if(m.type==='claim' && isOlderThan(m)){ stepDown(); }
+  };
+  ch.postMessage({type:'claim', ts:myTs, rid:myRid});   // tell existing tabs a newer one is here
+}
+
 /* ---------------------------- init ---------------------------- */
 (async function init(){
+  singleInstanceGuard();
   renderRail();
   renderTopbar();
   setStatus('pending');

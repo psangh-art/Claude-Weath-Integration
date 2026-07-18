@@ -5,6 +5,7 @@
 // it changes. Separate from pipeline_app_server.js (that RUNS the pipeline; this one
 // only CONSUMES its output). Port 4600.
 import http from 'http';
+import net from 'net';
 import fs from 'fs';
 import path from 'path';
 import { spawn, spawnSync } from 'child_process';
@@ -55,6 +56,53 @@ const MIME = {
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
 };
+
+// ---- Pipeline app (Investment Production Centre, port 4590) ---------------
+// The dashboard's "Pipeline" nav link opens the build screen that runs the
+// spending/OCR/master-sheet pipeline. That's a SEPARATE server (pipeline_app_
+// server.js). The launcher tries to start it in the background, but if that
+// failed (or it crashed / was never started), clicking Pipeline hit a dead port
+// and the browser said "site cannot be reached" (user report 2026-07-18). The
+// nav link now points at THIS server's /pipeline route, which starts the app on
+// demand if it isn't already listening, then redirects — so it always works.
+const PIPELINE_PORT = (CFG && CFG.appPort) || 4590;
+
+function portOpen(port, cb) {
+  const sock = net.connect({ port, host: '127.0.0.1' });
+  let settled = false;
+  const finish = (up) => { if (!settled) { settled = true; sock.destroy(); cb(up); } };
+  sock.setTimeout(1000);
+  sock.once('connect', () => finish(true));
+  sock.once('timeout', () => finish(false));
+  sock.once('error', () => finish(false));
+}
+
+let pipelineStarting = false;
+function ensurePipelineApp(cb) {
+  portOpen(PIPELINE_PORT, (up) => {
+    if (up) return cb(true);
+    if (!pipelineStarting) {
+      pipelineStarting = true;
+      console.log('[pipeline] not running — starting Investment Production Centre...');
+      try {
+        const child = spawn(process.execPath, [path.join(__dirname, 'pipeline_app_server.js')],
+          { cwd: REPO_ROOT, detached: true, stdio: 'ignore' });
+        child.unref();
+      } catch (e) {
+        console.error('[pipeline] spawn failed:', e.message);
+        pipelineStarting = false;
+        return cb(false);
+      }
+    }
+    let tries = 0;                                   // poll up to ~8s for it to listen
+    const iv = setInterval(() => {
+      portOpen(PIPELINE_PORT, (u) => {
+        if (u) { clearInterval(iv); pipelineStarting = false; cb(true); }
+        else if (++tries >= 16) { clearInterval(iv); pipelineStarting = false; cb(false); }
+      });
+    }, 500);
+  });
+}
 
 const sseClients = new Set();
 function broadcast(event, data) {
@@ -226,6 +274,19 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (pathname === '/refresh') { regenerate('manual'); res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); return; }
+
+  // Open the Investment Production Centre, starting it first if it isn't up.
+  if (pathname === '/pipeline') {
+    ensurePipelineApp((up) => {
+      if (up) { res.writeHead(302, { Location: `http://localhost:${PIPELINE_PORT}/` }); res.end(); return; }
+      res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<body style="font-family:system-ui;padding:40px;max-width:640px">'
+        + '<h2>Couldn’t start the Investment Production Centre</h2>'
+        + `<p>The pipeline build screen (port ${PIPELINE_PORT}) did not come up. `
+        + 'Try launching it directly with <b>Run Pipeline App.bat</b>, then click Pipeline again.</p></body>');
+    });
+    return;
+  }
 
   // Live index quotes for the Intelligence screen. ?refresh=1 bypasses the cache.
   if (pathname === '/api/intelligence') {

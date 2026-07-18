@@ -906,6 +906,34 @@ Three user requests, all committed:
   consistency. Alert_Rules_Model (`build_rules_deck.py`) and Investment_Review_Deck
   (`build_review_deck.py`) already purged — confirmed, no change needed.
 
+- **Widget WIDTH vs SIZE, and medium widths halved.** In the dashboard grid,
+  `size` (S/M/L) is the widget's HEIGHT (grid-row span 1/2/3) and `span` is its WIDTH
+  (columns out of 12) — they are independent. User asked to "reduce width of medium by
+  50%": the four `size:'M'` widgets had their `span` halved — Portfolio Value Over Time
+  8→4, and Alert Status / Targets / Relevant News 4→2 each. (If a widget's width ever
+  needs changing, edit its `span`, not its `size`.)
+
+- **"Pipeline" nav link now self-heals (was "site cannot be reached").** The link opens
+  the Investment Production Centre — a SEPARATE server (`pipeline_app_server.js`, port
+  `CFG.appPort`=4590). `Run Investment Dashboard.bat` tries to start it in the
+  background, but if that failed / it crashed / node was killed, clicking Pipeline hit a
+  dead port. The link now points at the dashboard's own **`/pipeline`** route, which
+  `ensurePipelineApp()` uses to check port 4590 (raw TCP via `net.connect`), spawn
+  `pipeline_app_server.js` detached if it's down, poll up to ~8s for it to listen, then
+  302-redirect. Verified: with 4590 down, hitting /pipeline starts it and redirects to a
+  live HTTP 200. The old direct `http://localhost:4590` link is gone from the front end.
+
+- **Single-instance guard: opening a new dashboard supersedes old tabs.** User wanted
+  old dashboard tabs closed when a new one opens. `singleInstanceGuard()` (front end,
+  runs first in `init`) uses a `BroadcastChannel('investment-dashboard')`: the newest tab
+  (largest `ts`) broadcasts a claim, every older tab calls `window.close()` and — since
+  **browsers refuse to close a tab the USER opened** (only script-opened windows can be
+  closed) — falls back to a full-screen "this tab is inactive, reopened elsewhere" cover
+  and closes its SSE (`_sse`) so it stops polling. So user-opened stale tabs go quiet and
+  clearly inactive rather than literally vanishing; a script-opened tab does close. Do
+  NOT expect `window.close()` alone to remove a normal tab — the cover is the reliable
+  part. Verified in-browser: opening a 2nd tab dropped the cover on the 1st.
+
 ## Open items / things to verify on the next export run
 
 - Brent/Palladium/Copper charts were added by the user 2026-07-13 and the symbol
