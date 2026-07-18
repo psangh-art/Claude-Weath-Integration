@@ -51,7 +51,7 @@ SCREENS = [
     ('Overview',     'Portfolio value, gains, dividends, cash, alert status'),
     ('Portfolio',    'Every holding + income funds, alert proximity, P&L'),
     ('Historic',     'Realised sells, 2026 trading profit, win rate'),
-    ('Watchlist',    "'At lower boundary' buy zone + 1-day price change"),
+    ('Watchlist',    "'At lower boundary' buy zone · 1-day change · live-price refresh"),
     ('Intelligence', 'FTSE / DAX / STOXX50 / S&P / Nasdaq / Dow — live'),
     ('Design',       'Reorder every widget on every screen'),
 ]
@@ -96,7 +96,8 @@ def build_slide(prs):
     _set_text(s.text_frame, [(
         'Local web app (scripts/dashboard_app + dashboard_server.js, port 4600) — reads the '
         'master workbook and history.db, and presents the portfolio, watchlist and live market '
-        'intelligence. Consumes the pipeline’s output; never runs it.',
+        'intelligence. Auto-refreshed by every pipeline run (regenerated + live-notified as the '
+        'final stage of the flow), so it always reflects the latest data.',
         12, False, INK, PP_ALIGN.LEFT)])
 
     # Big click-through "open" button
@@ -113,7 +114,7 @@ def build_slide(prs):
     _set_text(d.text_frame, [
         ('Data sources', 11, True, NAVY, PP_ALIGN.LEFT),
         ('Stocks_Buy_Strategy.xlsx (Investments, Stocks of Interest) · history.db (captured prices) · '
-         'Yahoo Finance chart API for the live indices', 9.5, False, INK, PP_ALIGN.LEFT),
+         'Yahoo Finance chart API for the live indices + live watchlist prices', 9.5, False, INK, PP_ALIGN.LEFT),
     ])
 
     # Section label
@@ -150,18 +151,33 @@ def main():
     deck_path = sys.argv[1] if len(sys.argv) > 1 else DECK
     prs = Presentation(deck_path)
 
-    for s in prs.slides:
-        for sh in s.shapes:
-            if sh.has_text_frame and sh.text_frame.text.split('\n')[0].strip() == MARKER:
-                print('Investment Dashboard slide already present — nothing to do.')
-                return
-
     backup = deck_path + '.bak-before-dashboard-slide-2026-07-17'
     shutil.copyfile(deck_path, backup)
     print(f'Backup -> {backup}')
 
-    build_slide(prs)
-    move_after_first(prs)
+    # Re-runnable REPLACE (was a skip-if-present no-op). Two ordering rules matter:
+    #  1) ADD the new slide FIRST, THEN delete the old one. add_slide() derives the new
+    #     part name from the current slide COUNT — deleting first frees a gap that makes
+    #     the new slide collide with an existing part (the agents slide became
+    #     "slide4.xml" twice -> "Duplicate name" on save, and the agents slide was lost).
+    #  2) When deleting, drop the RELATIONSHIP as well as the sldId, or the orphaned
+    #     part's stale rels resurrect it on save.
+    build_slide(prs)                       # appended at the end with a fresh part name
+    move_after_first(prs)                  # move the new slide to index 1
+
+    sld_lst = prs.slides._sldIdLst
+    sld_ids = list(sld_lst)
+    slides = list(prs.slides)
+    for i, s in enumerate(slides):
+        if i == 1:
+            continue                       # skip the just-added slide (now at index 1)
+        if any(sh.has_text_frame and sh.text_frame.text.split('\n')[0].strip() == MARKER
+               for sh in s.shapes):
+            sid = sld_ids[i]
+            prs.part.drop_rel(sid.rId)
+            sld_lst.remove(sid)
+            print('Removed the previous Investment Dashboard slide (replaced).')
+            break
 
     purged = purge_old_versions(deck_path)
     if purged:
