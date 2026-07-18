@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""Post-run consumption of the pipeline's input files (added 2026-07-12,
-user-directed): once a run has completed successfully, the bank/broker exports
-it consumed are REMOVED from ~/Downloads — including every other version of the
-same file (Windows "name (1).csv" duplicates and copies previously renamed with
-the "Delete " prefix by cleanup_downloads.py).
+"""Post-run consumption of the pipeline's input files (added 2026-07-12; changed
+2026-07-18 to KEEP the last copy instead of deleting): once a run has completed
+successfully, the newest Amex/Barclays/Fidelity export of each type is MOVED to
+`~/Downloads/old_pipeline/` under a canonical name, so exactly ONE (the latest)
+version of each is retained there — Amex `activity.csv`, Barclays `data.csv`,
+Fidelity `AccountSummary.csv`, the historic `TransactionHistory.csv`, and the
+pending `TransactionHistory_pending.csv`. A prior copy already in old_pipeline is
+replaced (only the last version is kept, including for the historic file). Every
+OTHER version left in Downloads (the browser's "name (1).csv" duplicates and any
+"Delete " copies) is sent to the Recycle Bin.
 
-Files are sent to the Windows RECYCLE BIN (SHFileOperation with FOF_ALLOWUNDO),
-not hard-deleted, so a misidentified file is always recoverable — this is the
-deliberate safety floor under the "delete used inputs" policy.
+Nothing is hard-deleted: replaced/duplicate files go to the Windows RECYCLE BIN
+(SHFileOperation, FOF_ALLOWUNDO), and the kept copies sit in old_pipeline — so a
+misidentified file is always recoverable.
 
 Consumed families (same matching as preflight_check.py / fidelity_file_classifier):
   - Amex:      activity.csv           (+ " (N)" duplicates, + "Delete " copies)
@@ -125,29 +130,88 @@ def find_consumables(downloads_dir):
     return hits
 
 
+# Where the LAST version of each consumed input is kept (user request 2026-07-18):
+# a subfolder of Downloads, one file per type, so the most recent Amex/Fidelity
+# export is always retrievable without cluttering Downloads or accumulating history.
+OLD_DIR_NAME = 'old_pipeline'
+# Canonical destination name per kept file, so old_pipeline holds exactly ONE of each.
+CANON_NAME = {
+    'amex': 'activity.csv',
+    'barclays': 'data.csv',
+    'fidelity_summary': 'AccountSummary.csv',
+    'fidelity_historic': 'TransactionHistory.csv',
+    'fidelity_pending': 'TransactionHistory_pending.csv',
+}
+
+
+def newest_per_family(downloads_dir):
+    """Newest consumed file per family; transactions split historic vs pending via
+    the content classifier so each is kept separately (only ONE version each)."""
+    by = {}
+    for h in find_consumables(downloads_dir):
+        by.setdefault(h['family'], []).append(h)
+    keep = {}
+    for fam in ('amex', 'barclays', 'fidelity_summary'):
+        if by.get(fam):
+            keep[fam] = max(by[fam], key=lambda h: h['mtime'])
+    try:
+        from fidelity_file_classifier import find_latest
+        fid = find_latest(downloads_dir)
+        for kind, fam in (('historic', 'fidelity_historic'), ('pending', 'fidelity_pending')):
+            info = fid.get(kind)
+            if info and info.get('path') and os.path.exists(info['path']):
+                keep[fam] = {'family': fam, 'name': os.path.basename(info['path']),
+                             'path': info['path'], 'mtime': os.path.getmtime(info['path'])}
+    except Exception as e:
+        print(f'  (classifier unavailable, transactions grouped as-is: {e})')
+    return by, keep
+
+
 def main():
     args = [a for a in sys.argv[1:] if a != '--apply']
     apply = '--apply' in sys.argv
     from config import downloads_dir as _cfg_downloads
     downloads_dir = args[0] if args else _cfg_downloads()
 
-    hits = find_consumables(downloads_dir)
-    if not hits:
-        print('No consumed input files found in Downloads — nothing to remove.')
+    by, keep = newest_per_family(downloads_dir)
+    all_hits = [h for hs in by.values() for h in hs]
+    if not all_hits:
+        print('No consumed input files found in Downloads — nothing to do.')
         return
 
-    for h in hits:
-        print(f"  [{h['family']}] {h['name']}")
+    kept_paths = {os.path.abspath(h['path']) for h in keep.values()}
+    to_recycle = [h for h in all_hits if os.path.abspath(h['path']) not in kept_paths]
+
+    old_dir = os.path.join(downloads_dir, OLD_DIR_NAME)
+    for fam, h in keep.items():
+        print(f"  KEEP  [{fam}] {h['name']} -> {OLD_DIR_NAME}/{CANON_NAME[fam]}")
+    for h in to_recycle:
+        print(f"  RECYCLE [{h['family']}] {h['name']}")
     if not apply:
-        print(f'DRY RUN: {len(hits)} file(s) would be sent to the Recycle Bin. '
-              'Re-run with --apply to remove them.')
+        print(f'DRY RUN: {len(keep)} file(s) would move to {OLD_DIR_NAME}/, '
+              f'{len(to_recycle)} duplicate(s) to the Recycle Bin. Re-run with --apply.')
         return
 
-    record_ingestion(hits)  # before recycling, while mtimes still exist
-    rc = recycle([h['path'] for h in hits])
-    remaining = [h['name'] for h in hits if os.path.exists(h['path'])]
+    # Record data-as-of dates before anything moves (mtimes still on the originals).
+    record_ingestion([h for h in keep.values() if 'mtime' in h])
+
+    os.makedirs(old_dir, exist_ok=True)
+    moved = 0
+    for fam, h in keep.items():
+        dest = os.path.join(old_dir, CANON_NAME[fam])
+        try:
+            if os.path.exists(dest):        # keep only the last version — recycle the old one
+                recycle([dest])
+            os.replace(h['path'], dest)     # same-drive move; overwrites if recycle missed it
+            moved += 1
+        except OSError as e:
+            print(f'  SKIPPED move of {h["name"]}: {e}', file=sys.stderr)
+
+    rc = recycle([h['path'] for h in to_recycle]) if to_recycle else 0
+    remaining = [h['name'] for h in to_recycle if os.path.exists(h['path'])]
     if rc == 0 and not remaining:
-        print(f'Removed {len(hits)} used input file(s) to the Recycle Bin.')
+        print(f'Kept {moved} latest input(s) in {OLD_DIR_NAME}/; '
+              f'recycled {len(to_recycle)} duplicate(s).')
     else:
         print(f'WARNING: recycle returned {rc}; still present: {remaining or "none"}',
               file=sys.stderr)
