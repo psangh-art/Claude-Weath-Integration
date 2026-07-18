@@ -160,8 +160,8 @@ def add_text(slide, x, y, w, h, lines, align=PP_ALIGN.LEFT):
     return box
 
 
-def add_flag_banner(slide, y, text):
-    box = add_text(slide, Inches(8.55), y, Inches(4.5), Inches(0.35),
+def add_flag_banner(slide, y, text, x=Inches(8.55), w=Inches(4.5)):
+    box = add_text(slide, x, y, w, Inches(0.35),
                    [(text, 13, True, RGBColor(0xFF, 0xFF, 0xFF))])
     box.fill.solid()
     box.fill.fore_color.rgb = RED
@@ -248,42 +248,52 @@ VERDICT_COLOURS = {'Buy candidate': GREEN, 'Hold': NAVY, 'Watch': AMBER, 'Avoid'
 
 
 def chart_slide(prs, chart, layout_name, master_key, master, channel, tv_alerts, analyst=None):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
-
+    # User request 2026-07-18: one FULL-SLIDE chart, then a separate details slide,
+    # so the chart is as large as possible for eyeballing the drawn levels.
+    blank = prs.slide_layouts[6]
     ticker = chart.get('ticker') or '?'
     desc = chart.get('description') or ''
-    add_text(slide, Inches(0.35), Inches(0.15), Inches(9.5), Inches(0.55),
-             [(f'{ticker} — {desc}', 24, True, NAVY)])
-    add_text(slide, Inches(10.0), Inches(0.22), Inches(3.0), Inches(0.4),
-             [(layout_name, 12, False, GREY)], align=PP_ALIGN.RIGHT)
 
-    # Chart image (left, large) or a loud MISSING placeholder
+    # ── Slide A: the chart, near full-bleed ──────────────────────────────────
+    # A thin title band (top ~0.5") leaves the maximum height for the chart, which
+    # matters because most crops are portrait/square and so height-bound on a 7.5"
+    # slide. Landscape crops also gain the full 12.6" width freed by moving the
+    # details to their own slide.
+    slide = prs.slides.add_slide(blank)
+    add_text(slide, Inches(0.35), Inches(0.08), Inches(9.5), Inches(0.42),
+             [(f'{ticker} — {desc}', 20, True, NAVY)])
+    add_text(slide, Inches(10.0), Inches(0.12), Inches(3.0), Inches(0.36),
+             [(layout_name, 11, False, GREY)], align=PP_ALIGN.RIGHT)
+
     img = chart.get('screenshot')
-    img_x, img_y = Inches(0.35), Inches(0.85)
-    img_w, img_h = Inches(8.0), Inches(6.3)
+    img_x, img_y = Inches(0.2), Inches(0.55)
+    img_w, img_h = Inches(12.93), Inches(6.9)    # was 8.0 x 6.3 (shared with text)
     if img and os.path.exists(img):
         # Draw the detected Alert Low/High straight onto the chart so the user can
         # confirm the levels at a glance (green = low, orange = high).
         add_picture_fitted(slide, annotate_chart_levels(img, channel), img_x, img_y, img_w, img_h)
     else:
-        box = add_text(slide, img_x, Inches(3.2), img_w, Inches(1.2),
-                       [('⚠ MISSING CHART', 36, True, RGBColor(0xFF, 0xFF, 0xFF)),
-                        (chart.get('error') or 'no screenshot captured this run', 14, False,
+        box = add_text(slide, img_x, Inches(3.4), img_w, Inches(1.2),
+                       [('⚠ MISSING CHART', 40, True, RGBColor(0xFF, 0xFF, 0xFF)),
+                        (chart.get('error') or 'no screenshot captured this run', 16, False,
                          RGBColor(0xFF, 0xFF, 0xFF))],
                        align=PP_ALIGN.CENTER)
         box.fill.solid()
         box.fill.fore_color.rgb = RED
 
-    # Info column (right)
-    x, w = Inches(8.55), Inches(4.5)
-    y = Inches(0.85)
+    # ── Slide B: the details (holdings / alerts / OCR / analyst / TV alerts) ──
+    slide = prs.slides.add_slide(blank)
+    add_text(slide, Inches(0.35), Inches(0.15), Inches(12.6), Inches(0.55),
+             [(f'{ticker} — {desc}   ·   details', 22, True, NAVY)])
+    x, w = Inches(0.5), Inches(12.3)
+    y = Inches(0.95)
 
     if master is None:
-        y = add_flag_banner(slide, y, '⚠ NOT IN MASTER SHEET')
+        y = add_flag_banner(slide, y, '⚠ NOT IN MASTER SHEET', x=x, w=w)
     has_tv_alert = bool(tv_alerts)
     has_master_alert = master is not None and isinstance(master.get('alert_low'), (int, float))
     if not has_tv_alert and not has_master_alert:
-        y = add_flag_banner(slide, y, '⚠ NO ALERTS (TradingView or master)')
+        y = add_flag_banner(slide, y, '⚠ NO ALERTS (TradingView or master)', x=x, w=w)
 
     lines = [(f"Live price: {fmt_num(chart.get('price'))}", 15, True, NAVY),
              (f"  captured {fmt_ts(chart.get('priceCheckedAt'))}", 10, False, GREY)]
