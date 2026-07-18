@@ -119,7 +119,10 @@ def main():
     spending_keys = ('amex', 'barclays', 'fidelity_account_summary', 'fidelity_historic')
     report = {
         'ok': master_ok,
-        'spending_ready': all(files[k]['present'] for k in spending_keys),
+        # Build the spending summary on PARTIAL inputs (user request 2026-07-18):
+        # ready if ANY spending source is present, not only when all four are.
+        # spending_summary.py tolerates the missing ones.
+        'spending_ready': any(files[k]['present'] for k in spending_keys),
         'stale_days': STALE_DAYS,
         'found': {k: v['path'] for k, v in files.items()},
         'missing': missing,

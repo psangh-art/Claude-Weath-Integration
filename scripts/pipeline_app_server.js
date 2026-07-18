@@ -200,12 +200,14 @@ function runPreflight() {
 
 function runFidelityBuild(found) {
   stageEvent(2, 'running');
+  // Pass '' for any absent source (partial-input builds, 2026-07-18) — a null in
+  // spawn args throws; spending_summary.py treats '' / missing paths as skipped.
   const args = [
     path.join(__dirname, 'spending_summary.py'),
-    found.amex,
-    found.barclays,
-    found.fidelity_historic,
-    found.fidelity_account_summary,
+    found.amex || '',
+    found.barclays || '',
+    found.fidelity_historic || '',
+    found.fidelity_account_summary || '',
     path.join(DOWNLOADS, 'spending_summary.xlsx'),
   ];
   if (found.fidelity_pending) args.push(found.fidelity_pending);

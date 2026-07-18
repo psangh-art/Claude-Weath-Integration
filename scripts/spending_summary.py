@@ -416,6 +416,10 @@ def categorise_barclays(row) -> str | None:
 
 # ── Data loading ───────────────────────────────────────────────────────────────
 def load_amex(path: str) -> pd.DataFrame:
+    # Tolerate a missing source so the summary can build on partial inputs
+    # (user request 2026-07-18: run even when only some files are provided).
+    if not path or not os.path.exists(path):
+        return pd.DataFrame(columns=["month", "category", "spend"])
     df = pd.read_csv(path)
     df["Date"] = pd.to_datetime(df["Date"], dayfirst=True)
     df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
@@ -427,6 +431,8 @@ def load_amex(path: str) -> pd.DataFrame:
 
 
 def load_barclays(path: str) -> pd.DataFrame:
+    if not path or not os.path.exists(path):
+        return pd.DataFrame(columns=["month", "category", "spend"])
     df = pd.read_csv(path)
     df["Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
     df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
@@ -453,6 +459,8 @@ def load_fidelity_income(path: str) -> pd.DataFrame:
     Includes: Income Received, Cash Dividend (positive amounts = money in).
     Includes: Income Payment (negative Amount, but Quantity = cash paid out to holder).
     """
+    if not path or not os.path.exists(path):
+        return pd.DataFrame(columns=["month", "account", "fund", "amount"])
     with open(path) as f:
         content = f.read()
 
@@ -1378,6 +1386,32 @@ def build_summary_data(account_summary_path, all_months):
         "may_idx": may_idx,
         "_account_summary_path": account_summary_path,
     }
+
+
+def _resolve_cell_num(ws, cell):
+    """Numeric value of a cell, resolving a simple '=SUM(range)' formula by summing
+    the referenced cells (recursively). The retirement-plan section reads section
+    totals back off the sheet, and those totals are written as SUM formulas — a
+    plain float() on them raises 'could not convert string to float: =SUM(...)'.
+    Returns 0.0 for anything non-numeric it can't resolve."""
+    v = cell.value
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str) and v.strip().upper().startswith('=SUM(') and v.strip().endswith(')'):
+        rng = v.strip()[5:-1]
+        total = 0.0
+        try:
+            for row in ws[rng]:
+                cells = row if isinstance(row, tuple) else (row,)
+                for c in cells:
+                    total += _resolve_cell_num(ws, c)
+        except (ValueError, KeyError):
+            return 0.0
+        return total
+    try:
+        return float(v or 0)
+    except (ValueError, TypeError):
+        return 0.0
 
 
 # ── Write Excel ────────────────────────────────────────────────────────────────
@@ -3193,7 +3227,7 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     paul_sipp_val_tgt = 0
     for _r in ws.iter_rows():
         if '2000001606' in str(_r[0].value or '') and 'SIPP' in str(_r[0].value or ''):
-            paul_sipp_val_tgt = float(_r[7].value or 0)  # May
+            paul_sipp_val_tgt = _resolve_cell_num(ws, _r[7])  # May
             break
     paul_drawdown = round(paul_sipp_val_tgt * 0.25)
 
@@ -3201,7 +3235,7 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     susan_sipp_val_tgt = 0
     for _r in ws.iter_rows():
         if '2000001604' in str(_r[0].value or '') and 'SIPP' in str(_r[0].value or ''):
-            susan_sipp_val_tgt = float(_r[7].value or 0)
+            susan_sipp_val_tgt = _resolve_cell_num(ws, _r[7])
             break
     susan_drawdown = round(susan_sipp_val_tgt * 0.25)
 
@@ -3209,9 +3243,9 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     paul_isa_val = susan_isa_val = 0
     for _r in ws.iter_rows():
         if str(_r[0].value or '').strip() == 'Investment ISA (Paul)':
-            paul_isa_val = float(_r[7].value or 0)
+            paul_isa_val = _resolve_cell_num(ws, _r[7])
         if str(_r[0].value or '').strip() == 'Investment ISA (Susan)':
-            susan_isa_val = float(_r[7].value or 0)
+            susan_isa_val = _resolve_cell_num(ws, _r[7])
     isa_combined = round(paul_isa_val + susan_isa_val)
 
     # 5. Growth % (Shares + Non-Income Funds) and Income % of total invested
@@ -3219,11 +3253,11 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     for _r in ws.iter_rows():
         v = str(_r[0].value or '').strip()
         if v == 'Shares':
-            shares_val = float(_r[9].value or 0)
+            shares_val = _resolve_cell_num(ws, _r[9])
         elif v == 'Income Funds':
-            inc_fund_val = float(_r[9].value or 0)
+            inc_fund_val = _resolve_cell_num(ws, _r[9])
         elif v == 'Non-Income Funds':
-            non_inc_val = float(_r[9].value or 0)
+            non_inc_val = _resolve_cell_num(ws, _r[9])
     total_invested = shares_val + inc_fund_val + non_inc_val
     growth_pct  = round((shares_val + non_inc_val) / total_invested * 100, 1) if total_invested else 0
     income_pct  = round(inc_fund_val / total_invested * 100, 1) if total_invested else 0
@@ -3527,14 +3561,21 @@ def main():
     # of the settled holdings figure. Not required; omit to skip.
     pending_path = args[5] if len(args) > 5 else None
 
-    for path in (amex_path, bar_path, fid_path):
-        if not os.path.exists(path):
-            print(f"Error: file not found — {path}")
-            sys.exit(1)
+    # Partial inputs are allowed (user request 2026-07-18): build with whatever
+    # sources are present. Only bail if NONE of the three are — nothing to do.
+    def _have(p):
+        return bool(p) and os.path.exists(p)
+    if not any(_have(p) for p in (amex_path, bar_path, fid_path)):
+        print("Error: none of the spending sources found (Amex / Barclays / Fidelity).")
+        sys.exit(1)
+    missing = [name for name, p in (('Amex', amex_path), ('Barclays', bar_path),
+                                    ('Fidelity', fid_path)) if not _have(p)]
+    if missing:
+        print(f"  Partial inputs — building without: {', '.join(missing)}")
 
-    print(f"  Amex:     {amex_path}")
-    print(f"  Barclays: {bar_path}")
-    print(f"  Fidelity: {fid_path}")
+    print(f"  Amex:     {amex_path if _have(amex_path) else '(not provided)'}")
+    print(f"  Barclays: {bar_path if _have(bar_path) else '(not provided)'}")
+    print(f"  Fidelity: {fid_path if _have(fid_path) else '(not provided)'}")
     if pending_path:
         print(f"  Pending:  {pending_path}")
     print(f"  Output:   {output_path}\n")
