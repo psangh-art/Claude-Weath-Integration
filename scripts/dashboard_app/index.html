@@ -112,6 +112,7 @@ svg{display:block}
 .widget[data-size="S"]{grid-row:span 1}
 .widget[data-size="M"]{grid-row:span 2}
 .widget[data-size="L"]{grid-row:span 3}
+.widget[data-size="XL"]{grid-row:span 8}
 .grid.editing .widget{border-style:dashed;border-color:color-mix(in oklab,var(--accent) 40%,var(--line))}
 .widget.dragging{opacity:.4}
 .widget-head{display:flex;align-items:center;gap:8px;padding:10px 13px;border-bottom:1px solid var(--line-soft);
@@ -318,10 +319,10 @@ tbody tr:hover{background:var(--panel-2)}
 .wl-live-stamp{font-size:11px;white-space:nowrap}
 .design-hint{font-size:11.5px;color:var(--muted);margin-bottom:10px;flex-shrink:0;line-height:1.45}
 /* Intelligence index widgets */
-.intel-val{font-size:26px;font-weight:800;letter-spacing:-.01em;line-height:1.05;margin-top:2px}
-.intel-row{display:flex;align-items:center;gap:10px;margin:7px 0 4px}
-.intel-abs{font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums}
-.intel-meta{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.045em;margin-top:6px}
+.intel-val{font-size:19px;font-weight:800;letter-spacing:-.01em;line-height:1.05;margin-top:1px}
+.intel-row{display:flex;align-items:center;gap:8px;margin:4px 0 3px}
+.intel-abs{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
+.intel-meta{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-top:4px}
 .intel-load,.intel-err{font-size:12px;color:var(--muted);padding:14px 2px}
 .intel-err{color:var(--warn,#c98a00)}
 .spark{width:100%;height:44px;display:block;margin-top:2px}
@@ -570,7 +571,7 @@ const ICONS={
 /* ---------------------------- app state ---------------------------- */
 const DATA={overview:null, portfolio:null, historic:null, watchlist:null, targets:null, news:null, activity:null};
 const UI={
-  screen:localStorage.getItem('dashboard:screen')||'overview',
+  screen:'overview',   // always open on Overview (user request 2026-07-18), regardless of last-viewed
   editMode:false,
   chart:{timeframe:'ALL'},
   holdings:{tab:'investments',
@@ -601,7 +602,7 @@ const EXTERNAL_LINKS=[
   {id:'ext-pipeline', label:'Pipeline', icon:ICONS.flow, href:'/pipeline'},
 ];
 
-const SIZE_LABELS={S:'Small', M:'Medium', L:'Large'};
+const SIZE_LABELS={S:'Small', M:'Medium', L:'Large', XL:'X-Large'};
 
 /* ---------------------------- widget definitions ---------------------------- */
 const WIDGET_DEFS={overview:[], portfolio:[], historic:[], watchlist:[], intelligence:[], design:[]};
@@ -1347,7 +1348,7 @@ function mountIndexWidget(body,action,key){
 
 /* ---------------------- Design (Widgets — order control for every screen) ---------------------- */
 WIDGET_DEFS.design.push({
-  id:'overview-order', title:'Widgets', size:'L', span:12,
+  id:'overview-order', title:'Widgets', size:'XL', span:12,
   mount(body,action){
     action.innerHTML='<button class="chip-btn" id="dlResetOrder">Reset all to default</button>';
 
