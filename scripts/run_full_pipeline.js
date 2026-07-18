@@ -189,6 +189,16 @@ function main() {
     return;
   }
 
+  // Sub-step of step 3 (quiet, no numbered "=== Step N/M ===" marker): refresh the
+  // master's protected 'Income Funds' tab Current Value from the latest Fidelity
+  // AccountSummary — otherwise those literals go stale (user report 2026-07-18: not
+  // updated since 3 Jul). Runs before the dashboard refresh (finally block) so the
+  // dashboard reflects it. Best-effort: skips cleanly if AccountSummary isn't present.
+  const incFundsResult = spawnSync('python', [path.join(__dirname, 'refresh_income_funds.py'), '--apply'],
+    { encoding: 'utf-8' });
+  const ifLine = (incFundsResult.stdout || '').trim().split('\n').filter(Boolean).pop();
+  if (ifLine) console.log(`Income Funds: ${ifLine}`);
+
   console.log('\nDone. tradingview_layouts.xlsx, Stocks_Buy_Strategy.xlsx, and Feedback_for_Claude_Code.md are all up to date in Downloads.');
 }
 
