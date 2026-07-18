@@ -370,6 +370,9 @@ def build(workbook=WORKBOOK):
         'generated_at': now.isoformat(timespec='seconds'),
         'currency': 'GBP',
         'metrics': {
+            'accumulation_income': {'value': share_accum_monthly,
+                                    'caveat': 'Monthly reinvested income from accumulation funds '
+                                              '(latest month of the Acc funds’ price-appreciation).'},
             'portfolio_value': {'value': portfolio_value},
             'gain_last_month': {'value': gain_last_month, 'pct': gain_last_month_pct,
                                 'caveat': 'Month-on-month investment-account change (includes contributions).'},

@@ -626,6 +626,17 @@ const SIZE_LABELS={S:'Small', M:'Medium', L:'Large', XL:'X-Large'};
 const WIDGET_DEFS={overview:[], portfolio:[], historic:[], watchlist:[], intelligence:[], design:[]};
 
 WIDGET_DEFS.overview.push({
+  id:'m-accum-income', title:'Accumulative Fund Income', size:'S', span:2,
+  mount(body){
+    body.classList.add('metric-body');
+    const m=DATA.overview.metrics.accumulation_income||{};
+    body.innerHTML='<div class="metric">'+
+      '<div class="metric-main"><div class="metric-value">'+fmtMoney(m.value,0)+'</div>'+
+      '<div class="metric-sub">Reinvested / mo'+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div>'+
+      '</div>';
+  }
+});
+WIDGET_DEFS.overview.push({
   id:'m-portfolio-value', title:'Total Portfolio Value', size:'S', span:2,
   mount(body){
     body.classList.add('metric-body');
@@ -1441,16 +1452,24 @@ const DEFAULT_ORDER={
 
 /* ---------------------------- layout persistence ---------------------------- */
 function getOrder(screen){
+  const ids=WIDGET_DEFS[screen].map(d=>d.id);
+  let saved=null;
   try{
     const raw=localStorage.getItem('dashboard:layout:'+screen);
-    if(raw){
-      const arr=JSON.parse(raw);
-      const ids=WIDGET_DEFS[screen].map(d=>d.id);
-      const valid=arr.filter(id=>ids.indexOf(id)!==-1);
-      if(valid.length) return valid;
-    }
+    if(raw){ const arr=JSON.parse(raw); saved=arr.filter(id=>ids.indexOf(id)!==-1); }
   }catch(e){}
-  return DEFAULT_ORDER[screen].slice();
+  const base=(saved&&saved.length)?saved:DEFAULT_ORDER[screen].slice();
+  // Insert any widget missing from the saved order at its DEFAULT_ORDER position, so a
+  // newly-added widget appears where it's defined (e.g. at the top) instead of vanishing.
+  const def=DEFAULT_ORDER[screen]||ids;
+  ids.forEach(id=>{
+    if(base.indexOf(id)!==-1) return;
+    const di=def.indexOf(id);
+    let pos=base.length;
+    for(let i=0;i<base.length;i++){ if(def.indexOf(base[i])>di){ pos=i; break; } }
+    base.splice(pos,0,id);
+  });
+  return base;
 }
 function saveOrder(screen,order){
   localStorage.setItem('dashboard:layout:'+screen, JSON.stringify(order));
