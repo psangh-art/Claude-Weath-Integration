@@ -22,7 +22,7 @@ import shutil
 import sys
 
 import openpyxl
-from openpyxl.styles import Font
+from openpyxl.styles import Font, Alignment
 from openpyxl.utils import get_column_letter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -83,6 +83,16 @@ def main():
             longest = max(longest, *(len(line) for line in s.split("\n")))
         width = min(max(longest + 2, WIDTH_FLOOR), WIDTH_CAP)
         ws.column_dimensions[L].width = width
+
+    # 4. Taller header row + wrap, so the full header text shows (user #14: History
+    #    row 1 in the Finance sheet was clipping its header text vertically).
+    ws.row_dimensions[1].height = 30
+    for c in range(1, ws.max_column + 1):
+        hc = ws.cell(1, c)
+        if hc.value is not None:
+            a = hc.alignment
+            hc.alignment = Alignment(horizontal=a.horizontal or "left",
+                                     vertical=a.vertical or "bottom", wrap_text=True)
 
     wb.save(path)
     print(f"Saved. Replaced {replaced} account numbers with owner names; "
