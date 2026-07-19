@@ -143,6 +143,10 @@ svg{display:block}
 .widget-body{flex:1;min-height:0;padding:12px 14px 13px;display:flex;flex-direction:column}
 
 .grid-spacer{grid-column:span var(--span,1);grid-row:span 1;pointer-events:none}
+.news-item{padding:5px 0;border-bottom:1px solid var(--line-soft)}
+.news-item:last-child{border-bottom:none}
+.news-item.is-past .news-chip-date{opacity:.55}
+.news-desc{font-size:10.5px;line-height:1.35;color:var(--muted);margin:2px 0 0 4px;white-space:normal}
 .ghost-tile{grid-column:span var(--span,6);grid-row:span 1;border:1.5px dashed var(--line);border-radius:14px;
   display:flex;align-items:center;justify-content:center;padding:10px;min-height:104px}
 .ghost-tile[data-size="M"]{grid-row:span 2}
@@ -883,12 +887,15 @@ WIDGET_DEFS.overview.push({
       if(r.amount_pence!=null) amt=Number(r.amount_pence).toFixed(1)+'p';
       else if(r.amount_pounds!=null) amt=fmtMoney(r.amount_pounds,0)+'/mo';
       const yieldTxt=r.div_yield_pct!=null?fmtPct(r.div_yield_pct,2):'—';
-      return '<div class="news-row">'+chip+
+      // Second line SAYS WHAT THE EVENT IS — a date and an amount alone don't
+      // tell you what happens or what to do (user request 2026-07-19).
+      const desc=r.description?'<div class="news-desc">'+escapeHtml(r.description)+'</div>':'';
+      return '<div class="news-item'+(r.past?' is-past':'')+'"><div class="news-row">'+chip+
         '<span class="news-name" title="'+escapeHtml(r.name)+'">'+escapeHtml(r.name)+
         (r.ticker?' <span class="news-ticker">'+escapeHtml(r.ticker)+'</span>':'')+'</span>'+
         '<span class="news-amt">'+amt+'</span>'+
         '<span class="news-yield">'+yieldTxt+'</span>'+
-        '</div>';
+        '</div>'+desc+'</div>';
     }).join('');
     body.innerHTML='<div class="news-list">'+items+'</div>';
   }

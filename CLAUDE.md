@@ -976,6 +976,15 @@ Three user requests, all committed:
     matcher was tried and REVERTED: the generic words ('high', 'yield', 'bond', 'inc',
     'global') outnumber the distinguishing ones, so it paired AXA and IFSL Marlborough
     with other managers' funds. Don't reintroduce name matching for these.
+- **Relevant News rows DESCRIBE the event (user request 2026-07-19).** A date + amount
+  alone doesn't say what happens. Each row now carries a `description`: equities get
+  "Goes ex-dividend in N days — Xp per share (Y% yield). Hold through <date> to qualify"
+  (or "Last went ex-dividend <date> (N days ago)… next date not yet published" when
+  Base Data's ex-div date is in the past — most of them are); income funds describe the
+  REAL last distribution from the transaction export ("Monthly income of £9,268 paid
+  into cash on 30 Jun 2026 (ex-div 24 Jun), across 6 holdings"), and Acc units say the
+  income is reinvested rather than paid out. Equity rows are grouped BY TICKER — the
+  same stock in three accounts is one dividend event (Aviva was listed three times).
 - **The grid is 24 columns, not 12 (2026-07-19).** The user asked for Smalls at 1.5
   columns and Mediums at 3 — grid spans are integers, so the track count doubled and
   every span with it. Widths in 24ths: Small 3, Medium 6, Large 12, XL 24. Talk about

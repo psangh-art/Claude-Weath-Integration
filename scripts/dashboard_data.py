@@ -698,19 +698,80 @@ def build(workbook=WORKBOOK):
     }
     targets['total'] = round(sum(a['value'] for a in targets['allocation']), 2)
 
-    # ---------------- Relevant News (ex-div dates + amounts for holdings) ------------
+    # ---------------- Relevant News (dividend events for what we hold) ------------
+    # Each row DESCRIBES the event (user request 2026-07-19) — a date and an amount
+    # alone don't say what is happening or what to do about it.
     news = []
-    for iv in investments:                     # equity/commodity holdings
+    today = now.date()
+
+    def _describe_exdiv(when, pence, yld):
+        d = _tx_date(when) or None
+        if d is None:
+            try:
+                d = datetime.date.fromisoformat(str(when)[:10])
+            except ValueError:
+                d = None
+        amt = f'{pence:.2f}p per share' if isinstance(pence, (int, float)) else 'amount not published'
+        ytxt = f' ({yld:.2f}% yield)' if isinstance(yld, (int, float)) else ''
+        if d is None:
+            return 'Ex-dividend date not published.', None
+        days = (d - today).days
+        if days > 0:
+            return (f'Goes ex-dividend in {days} day{"s" if days != 1 else ""} — {amt}{ytxt}. '
+                    f'Hold through {d.strftime("%d %b %Y")} to qualify.'), days
+        return (f'Last went ex-dividend {d.strftime("%d %b %Y")} ({-days} days ago) — {amt}{ytxt}. '
+                f'Next date not yet published in Base Data.'), days
+
+    # One row per TICKER, not per position — the same stock held in three accounts
+    # is still one dividend event (Aviva was listed three times).
+    by_ticker = {}
+    for iv in investments:
+        tk = str(iv['ticker']).strip().upper() if iv['ticker'] else None
+        if not tk:
+            continue
+        g = by_ticker.setdefault(tk, {'name': iv['name'], 'ticker': iv['ticker'], 'holdings': 0.0})
+        g['holdings'] += iv['holdings'] or 0.0
+    for iv in by_ticker.values():              # equity/commodity holdings
         b = base.get(str(iv['ticker']).strip().upper()) if iv['ticker'] else None
         if b and b.get('ex_div'):
+            desc, days = _describe_exdiv(b['ex_div'], b.get('div_pence'), b.get('div_yield_pct'))
             news.append({'name': iv['name'], 'ticker': iv['ticker'], 'event': 'Ex-dividend',
+                         'description': desc, 'days_until': days, 'past': (days is not None and days < 0),
                          'date': b['ex_div'], 'amount_pence': b.get('div_pence'),
                          'div_yield_pct': b.get('div_yield_pct'), 'holding': iv['holdings']})
-    for f in income_funds:                      # income funds pay monthly
-        news.append({'name': f['name'], 'ticker': None, 'event': 'Monthly income',
-                     'date': None, 'amount_pounds': f['monthly_income'],
-                     'div_yield_pct': f['div_yield_pct'], 'holding': f['holdings']})
-    news.sort(key=lambda n: (n['date'] is None, n['date'] or ''))
+
+    # Income funds: describe the ACTUAL last distribution (from the transaction
+    # export), rolled up across the family's accounts in that fund.
+    by_fund = {}
+    for pos in income_positions:
+        g = by_fund.setdefault(pos['name'], {'paid': 0.0, 'n': 0, 'pay': None, 'ex': None,
+                                             'holdings': 0.0})
+        g['holdings'] += pos['holdings'] or 0.0
+        if pos['last_income']:
+            g['paid'] += pos['last_income']
+            g['n'] += 1
+            g['pay'] = max(g['pay'] or '', pos['payment_date'] or '')
+            g['ex'] = max(g['ex'] or '', pos['ex_div_date'] or '')
+    for fname, g in by_fund.items():
+        if g['n'] and g['pay']:
+            d = datetime.date.fromisoformat(g['pay'])
+            exd = (' (ex-div ' + datetime.date.fromisoformat(g['ex']).strftime('%d %b') + ')') if g['ex'] else ''
+            desc = (f'Monthly income of £{g["paid"]:,.2f} paid into cash on '
+                    f'{d.strftime("%d %b %Y")}{exd}, across {g["n"]} holding'
+                    f'{"s" if g["n"] != 1 else ""}. Next distribution due next month.')
+        else:
+            desc = ('Accumulation units — income is reinvested into the fund rather than '
+                    'paid out, so there is no cash distribution to expect.')
+            d = None
+        news.append({'name': fname, 'ticker': None, 'event': 'Monthly income',
+                     'description': desc, 'past': False,
+                     'date': g['pay'], 'amount_pounds': round(g['paid'], 2) if g['n'] else None,
+                     'div_yield_pct': (round(g['paid'] * 12 / g['holdings'] * 100.0, 2)
+                                       if (g['n'] and g['holdings']) else None),
+                     'holding': round(g['holdings'], 2)})
+    # Soonest first: upcoming events before past ones, undated last.
+    news.sort(key=lambda n: (n['date'] is None, 0 if not n.get('past') else 1,
+                             n['date'] or ''))
     news_payload = {'generated_at': now.isoformat(timespec='seconds'), 'rows': news}
 
     # ---------------- Activity (things to do, with links) ----------------
