@@ -157,11 +157,11 @@ svg{display:block}
    the text rather than beside it, smaller type, tighter body padding — so more
    metric cards fit per row as the user keeps adding widgets. */
 .widget-body.metric-body{padding:9px 11px 9px}
-.metric{display:flex;flex-direction:column;justify-content:space-between;align-items:flex-start;gap:5px;flex:1;min-height:0}
+.metric{display:flex;flex-direction:column;justify-content:space-between;align-items:flex-start;gap:4px;flex:1;min-height:0;overflow:hidden}
 .metric-main{min-width:0;width:100%}
 .metric-value{font-family:var(--mono);font-size:16.5px;font-weight:750;letter-spacing:-.01em;line-height:1.08}
 .metric-sub{margin-top:3px;display:flex;align-items:center;gap:5px;font-size:9.5px;color:var(--muted)}
-.metric-graphic{flex-shrink:0;display:flex;align-items:center;width:100%;margin-top:1px}
+.metric-graphic{flex-shrink:0;display:flex;align-items:center;width:100%;margin-top:0;line-height:0;overflow:hidden}
 .tip{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;
   background:var(--panel-3);color:var(--faint);font-size:10px;font-weight:700;cursor:help;position:relative;flex-shrink:0}
 .tip[data-tip]:hover::after,.tip[data-tip]:focus::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);
@@ -644,7 +644,7 @@ const SIZE_LABELS={S:'Small', M:'Medium', L:'Large', XL:'X-Large'};
 const WIDGET_DEFS={overview:[], portfolio:[], historic:[], watchlist:[], intelligence:[], design:[]};
 
 WIDGET_DEFS.overview.push({
-  id:'m-accum-income', title:'Accumulative Fund Income', size:'S', span:2,
+  id:'m-accum-income', title:'Accumulative Fund Income', size:'S', span:1,
   mount(body){
     body.classList.add('metric-body');
     const m=DATA.overview.metrics.accumulation_income||{};
@@ -655,11 +655,13 @@ WIDGET_DEFS.overview.push({
   }
 });
 WIDGET_DEFS.overview.push({
-  id:'m-portfolio-value', title:'Total Portfolio Value', size:'S', span:2,
+  id:'m-portfolio-value', title:'Total Portfolio Value', size:'S', span:1,
   mount(body){
     body.classList.add('metric-body');
     const m=DATA.overview.metrics.portfolio_value;
-    const spark=monthlySparkline(DATA.overview.value_over_time && DATA.overview.value_over_time.portfolio);
+    // Graphic deliberately half the default sparkline size (user request 2026-07-18)
+    const spark=monthlySparkline(DATA.overview.value_over_time && DATA.overview.value_over_time.portfolio,
+                                 {width:52, height:18});
     body.innerHTML='<div class="metric">'+
       '<div class="metric-main"><div class="metric-value" title="'+fmtMoney(m.value,2)+'">'+fmtMoneyCompact(m.value)+'</div>'+
       '<div class="metric-sub">Across all accounts</div></div>'+
@@ -667,7 +669,7 @@ WIDGET_DEFS.overview.push({
   }
 });
 WIDGET_DEFS.overview.push({
-  id:'m-gain-month', title:'Gain vs Last Month', size:'S', span:2,
+  id:'m-gain-month', title:'Gain vs Last Month', size:'S', span:1,
   mount(body){
     body.classList.add('metric-body');
     const m=DATA.overview.metrics.gain_last_month;
@@ -678,7 +680,7 @@ WIDGET_DEFS.overview.push({
   }
 });
 WIDGET_DEFS.overview.push({
-  id:'m-trading-profit', title:'2026 Trading Profit', size:'S', span:2,
+  id:'m-trading-profit', title:'2026 Trading Profit', size:'S', span:1,
   mount(body){
     body.classList.add('metric-body');
     const m=DATA.overview.metrics.trading_profit_2026;
@@ -688,7 +690,7 @@ WIDGET_DEFS.overview.push({
   }
 });
 WIDGET_DEFS.overview.push({
-  id:'m-monthly-dividend', title:'Monthly Dividend', size:'S', span:2,
+  id:'m-monthly-dividend', title:'Monthly Dividend', size:'S', span:1,
   mount(body){
     body.classList.add('metric-body');
     const m=DATA.overview.metrics.monthly_dividend;
@@ -698,16 +700,18 @@ WIDGET_DEFS.overview.push({
   }
 });
 WIDGET_DEFS.overview.push({
-  id:'m-cash-available', title:'Cash Available', size:'S', span:2,
+  id:'m-cash-available', title:'Cash Available', size:'S', span:1,
   mount(body){
     body.classList.add('metric-body');
     const m=DATA.overview.metrics.cash_available;
     const pct=(m.pct_of_portfolio||0)*100;
+    // No centre label: at the halved small-widget width the ring has to be tiny,
+    // so the % moves into the sub line where it stays legible.
     const ring=ringSVG([{value:pct,color:'var(--accent)'},{value:100-pct,color:'var(--panel-3)'}],
-      {size:36,thickness:5,centerLine1:fmtPct(pct,pct<1?2:1)});
+      {size:18,thickness:4});
     body.innerHTML='<div class="metric">'+
       '<div class="metric-main"><div class="metric-value">'+fmtMoney(m.value,0)+'</div>'+
-      '<div class="metric-sub">of portfolio'+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div>'+
+      '<div class="metric-sub">'+fmtPct(pct,pct<1?2:1)+' of portfolio'+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div>'+
       '<div class="metric-graphic">'+ring+'</div></div>';
   }
 });
@@ -906,7 +910,7 @@ WIDGET_DEFS.overview.push({
 
 /* ---------------------- Portfolio: holdings table ---------------------- */
 WIDGET_DEFS.portfolio.push({
-  id:'holdings-table', title:'Holdings', size:'L', span:12,
+  id:'holdings-table', title:'Holdings', size:'XL', span:12,
   mount(body,action){
     action.innerHTML='<div class="tabs">'+
       '<button class="tab" data-tab="investments">Investments</button>'+
@@ -929,6 +933,10 @@ WIDGET_DEFS.portfolio.push({
       {key:'name', label:'Investment', sv:r=>(r.name||'').toLowerCase()},
       {key:'account', label:'Account', sv:r=>r.account||''},
       {key:'wrapper', label:'Wrapper', sv:r=>r.wrapper||''},
+      {key:'holdings', label:'Value (£)', sv:r=>r.holdings, num:true},
+      {key:'buy_price', label:'Buy Price', sv:r=>r.buy_price, num:true},
+      {key:'current_price', label:'Current', sv:r=>r.current_price, num:true},
+      {key:'pl_today', label:'P&L if Sold', sv:r=>r.pl_today, num:true},
       {key:'gap_to_low_pct', label:'Gap to Lower Boundary', sv:r=>r.gap_to_low_pct},
       {key:'alert_low', label:'Alert Low', sv:r=>r.alert_low, num:true},
       {key:'alert_low_source', label:'Source', sv:r=>r.alert_low_source||''},
@@ -989,6 +997,10 @@ WIDGET_DEFS.portfolio.push({
           '<td><div class="cell-name">'+escapeHtml(r.name)+'</div><div class="cell-sub">'+escapeHtml(r.ticker||'')+'</div></td>'+
           '<td class="dim">'+escapeHtml(r.account||'—')+'</td>'+
           '<td class="dim">'+escapeHtml(r.wrapper||'—')+'</td>'+
+          '<td class="money-flat num">'+fmtMoney(r.holdings,0)+'</td>'+
+          '<td class="money-flat num">'+fmtMoney(r.buy_price,2)+'</td>'+
+          '<td class="money-flat num">'+fmtMoney(r.current_price,2)+'</td>'+
+          '<td class="num">'+deltaChip(r.pl_today,{kind:'money',decimals:0})+'</td>'+
           '<td>'+zonebar(r.gap_to_low_pct)+'</td>'+
           '<td class="money-flat num">'+fmtMoney(r.alert_low,2)+'</td>'+
           '<td>'+sourceBadge(r.alert_low_source)+'</td>'+
@@ -1038,7 +1050,7 @@ WIDGET_DEFS.historic.push({
   }
 });
 WIDGET_DEFS.historic.push({
-  id:'sold-table', title:'Sold Positions', size:'L', span:12,
+  id:'sold-table', title:'Sold Positions', size:'XL', span:12,
   mount(body,action){
     action.innerHTML='<input class="search-input" type="text" placeholder="Filter…" value="'+escapeHtml(UI.sold.filter)+'"/><span class="row-count"></span>';
     const input=action.querySelector('.search-input');

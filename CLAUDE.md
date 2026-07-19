@@ -934,6 +934,37 @@ Three user requests, all committed:
   NOT expect `window.close()` alone to remove a normal tab — the cover is the reliable
   part. Verified in-browser: opening a 2nd tab dropped the cover on the 1st.
 
+## Dashboard Portfolio holdings come from the BROKER export, not the workbook (2026-07-19)
+
+The Portfolio screen listed 5 positions off the Investments sheet's `Holdings (£)`
+column and was missing real holdings (Centrica, AstraZeneca, Anglo American, Glencore,
+Vodafone) — that column goes stale and only carries a total, so it can't supply
+Account, Wrapper or book cost either. `dashboard_data._fidelity_positions()` now reads
+`~/Downloads/AccountSummary.csv`'s **'View all account details'** section (one row per
+holding-per-account) as the authoritative list of what is held. The section ABOVE it is
+an aggregate across accounts — reading both double-counts, so the parser only starts at
+that marker line. Per row: Account = account holder's first name (matches the History
+sheet's 'Paul'/'Susan' convention), Wrapper = Product, Value £ (col 10), Book cost
+(col 13), **Buy Price = book cost ÷ quantity × 100** (pence, to match the pence-quoted
+current price), **P&L if sold today = the broker's own Gain/loss £ (col 14)** — not
+derived, so it can't drift from the statement. Each row is joined back to the
+Investments sheet BY TICKER for Alert Low/High, Type and the TradingView link
+(`AS_TICKER_ALIASES` maps broker tickers to sheet tickers: `AV.`→`AV`, the platinum
+ETC `SPLT`→`PLAT`, `SPDM`→`PALL`; `AS_FUND_AS_INVESTMENT` pulls WS Guinness in by name
+since it has no ticker). Funds with no ticker are skipped — income funds keep coming
+from the Income Funds sheet, which is the only source of their yield/income. **If the
+export is absent the old workbook-Holdings path still runs**, so the dashboard never
+goes blank. Known cosmetic mismatch: PLAT/PALL rows show the broker's ETC buy price
+against the METAL's chart price (the alert levels are on the metal) — the £ P&L is
+still the broker's, which is the number that matters.
+
+Front-end, same batch (user requests): small Overview widgets halved in width
+(`span:2`→`span:1`) with `.metric` given `overflow:hidden` so a graphic can't spill out
+of the fixed 104px card — the graphic budget in an S card is only ~22px, so the
+portfolio sparkline is 52×18 and Cash Available's ring dropped to 18px with its % moved
+into the sub line (a centre label is illegible at that size). Holdings and Sold Positions
+tables went `L`→`XL` (grid-row span 8) to fill the page.
+
 ## Dashboard wired into the pipeline as one flow (2026-07-18)
 
 The Investment Dashboard used to be a separate downstream app: `dashboard_data.py`

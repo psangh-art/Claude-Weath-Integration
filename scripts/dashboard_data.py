@@ -125,6 +125,80 @@ def _price_for(ticker, xlsx_literal, latest):
     return _num(xlsx_literal)
 
 
+ACCOUNT_SUMMARY = os.path.join(os.path.expanduser('~'), 'Downloads', 'AccountSummary.csv')
+# --- AccountSummary.csv 'View all account details' columns (0-indexed) ---
+AS_TYPE, AS_NAME, AS_ACCTNO, AS_PRODUCT, AS_HOLDER = 0, 1, 2, 3, 4
+AS_PRICE, AS_QTY, AS_VALUE, AS_BOOKCOST, AS_GAIN = 7, 9, 10, 13, 14
+# Broker ticker -> the Investments-sheet ticker the chart/alerts are keyed on.
+AS_TICKER_ALIASES = {'AV.': 'AV', 'SPLT': 'PLAT', 'SPDM': 'PALL', 'BT.A': 'BT.A'}
+# Fund holdings that belong in the Investments table, not Income Funds (no ticker
+# in the broker name, so matched by name prefix) -> Investments ticker.
+AS_FUND_AS_INVESTMENT = {'WS GUINNESS GLOBAL ENERGY': 'GUINNESS'}
+
+
+def _as_num(s):
+    try:
+        return float(str(s).replace(',', '').replace('+', '').strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _fidelity_positions(path=ACCOUNT_SUMMARY):
+    """Open positions from the Fidelity AccountSummary export, one row per
+    holding-per-account (the 'View all account details' section — the section
+    above it is an aggregate across accounts and would double-count).
+
+    This is the authoritative list of what is actually HELD, and the only source
+    of Account / Wrapper / book cost. Returns [] if the export isn't present.
+    """
+    if not os.path.exists(path):
+        return []
+    import csv
+    rows = []
+    in_detail = False
+    with open(path, encoding='utf-8-sig', newline='') as fh:
+        for rec in csv.reader(fh):
+            if not rec:
+                continue
+            head = (rec[0] or '').strip()
+            if head.lower().startswith('view all account details'):
+                in_detail = True
+                continue
+            if not in_detail or head != 'Asset':
+                continue
+            name = (rec[AS_NAME] or '').strip()
+            if not name or name.lower() == 'cash':
+                continue
+            ticker = None
+            display = name
+            if name.endswith(')') and '(' in name:
+                ticker = name[name.rfind('(') + 1:-1].strip().upper()
+                display = name[:name.rfind('(')].split(',')[0].strip().title()
+            else:
+                up = name.upper()
+                for pref, tk in AS_FUND_AS_INVESTMENT.items():
+                    if up.startswith(pref):
+                        ticker = tk
+                        break
+                if ticker is None:
+                    continue   # an income fund — priced from the Income Funds sheet
+            ticker = AS_TICKER_ALIASES.get(ticker, ticker)
+            holder = (rec[AS_HOLDER] or '').strip().split()[0] if rec[AS_HOLDER] else None
+            qty = _as_num(rec[AS_QTY])
+            cost = _as_num(rec[AS_BOOKCOST])
+            rows.append({
+                'name': display, 'ticker': ticker,
+                'account': holder, 'wrapper': (rec[AS_PRODUCT] or '').strip() or None,
+                'quantity': qty,
+                'holdings': _as_num(rec[AS_VALUE]),
+                'book_cost': cost,
+                'buy_price': round(cost / qty * 100.0, 2) if (cost and qty) else None,
+                'pl_today': _as_num(rec[AS_GAIN]),
+                'broker_price': _as_num(rec[AS_PRICE]),
+            })
+    return rows
+
+
 def _tv_url(cell):
     """Extract the chart URL from a =HYPERLINK("url","label") formula cell."""
     if isinstance(cell, str) and cell.upper().startswith('=HYPERLINK('):
@@ -194,23 +268,50 @@ def build(workbook=WORKBOOK):
     # ---------------- Portfolio (holdings tables) ----------------
     inv = wb['Investments']
     invf = wbf['Investments']
+    # Index the Investments sheet by ticker — it owns the alert levels, Type and
+    # TradingView link, but NOT what is actually held (its Holdings column goes
+    # stale and misses positions, e.g. Centrica). The broker export owns holdings.
+    inv_by_ticker = {}
+    for r in range(4, inv.max_row + 1):
+        tk = inv.cell(r, I_TICKER).value
+        if tk:
+            inv_by_ticker.setdefault(str(tk).strip().upper(), r)
+
+    def _inv_row(ticker):
+        return inv_by_ticker.get(str(ticker).strip().upper()) if ticker else None
+
+    positions = _fidelity_positions()
+    if not positions:
+        # No broker export in Downloads — fall back to the workbook's own Holdings.
+        for r in range(4, inv.max_row + 1):
+            hv = _num(inv.cell(r, I_HOLDINGS).value)
+            if not inv.cell(r, I_NAME).value or not hv or hv <= 0:
+                continue
+            positions.append({
+                'name': inv.cell(r, I_NAME).value,
+                'ticker': inv.cell(r, I_TICKER).value,
+                'account': None, 'wrapper': None, 'quantity': None,
+                'holdings': hv, 'book_cost': None, 'buy_price': None,
+                'pl_today': None, 'broker_price': None,
+            })
+
     investments = []
     inv_value_total = 0.0
     short_term_value = long_term_value = 0.0
     alert_below = alert_near = alert_above = 0
-    for r in range(4, inv.max_row + 1):
-        holdings = _num(inv.cell(r, I_HOLDINGS).value)
-        name = inv.cell(r, I_NAME).value
-        if not name or not holdings or holdings <= 0:
-            continue  # skip macro reference rows (FTSE/NDX) and blanks
-        ticker = inv.cell(r, I_TICKER).value
-        price = _price_for(ticker, inv.cell(r, I_CURPRICE).value, latest)
-        low = _num(inv.cell(r, I_ALERT_LOW).value)
-        high = _num(inv.cell(r, I_ALERT_HIGH).value)
+    for pos in positions:
+        ticker = pos['ticker']
+        r = _inv_row(ticker)
+        holdings = pos['holdings'] or 0.0
+        name = inv.cell(r, I_NAME).value if r else pos['name']
+        price = (_price_for(ticker, inv.cell(r, I_CURPRICE).value if r else None, latest)
+                 or pos['broker_price'])
+        low = _num(inv.cell(r, I_ALERT_LOW).value) if r else None
+        high = _num(inv.cell(r, I_ALERT_HIGH).value) if r else None
         diff_low = ((price - low) / low * 100.0) if (price and low) else None
         gap_low = ((price - low) / price * 100.0) if (price and low) else None
         inv_value_total += holdings
-        itype = inv.cell(r, I_TYPE).value
+        itype = inv.cell(r, I_TYPE).value if r else None
         if isinstance(itype, str) and itype.strip().lower().startswith('long'):
             long_term_value += holdings
         else:
@@ -224,16 +325,23 @@ def build(workbook=WORKBOOK):
                 alert_above += 1
         investments.append({
             'name': name, 'ticker': ticker,
-            'type': inv.cell(r, I_TYPE).value,   # Short Term / Long Term
-            'account': None, 'wrapper': None,  # Phase 1.5: plumb from Fidelity holdings
+            'type': itype,                       # Short Term / Long Term
+            'account': pos['account'], 'wrapper': pos['wrapper'],
             'holdings': round(holdings, 2),
+            'quantity': pos['quantity'],
+            'buy_price': pos['buy_price'],       # pence, = book cost / quantity
+            'book_cost': pos['book_cost'],
+            'pl_today': pos['pl_today'],         # £ profit/loss if sold today
+            'pl_today_pct': (round(pos['pl_today'] / pos['book_cost'] * 100.0, 2)
+                             if (pos['pl_today'] is not None and pos['book_cost']) else None),
             'current_price': price,
             'gap_to_low_pct': round(gap_low, 2) if gap_low is not None else None,
-            'alert_low': low, 'alert_low_source': inv.cell(r, I_ALERT_LOW_SRC).value,
+            'alert_low': low, 'alert_low_source': inv.cell(r, I_ALERT_LOW_SRC).value if r else None,
             'diff_to_low_pct': round(diff_low, 2) if diff_low is not None else None,
             'alert_high': high,
-            'chart_url': _tv_url(invf.cell(r, I_TV).value),
+            'chart_url': _tv_url(invf.cell(r, I_TV).value) if r else None,
         })
+    investments.sort(key=lambda x: (-(x['holdings'] or 0)))
 
     # ---------------- Income Funds ----------------
     inf = wb['Income Funds']
