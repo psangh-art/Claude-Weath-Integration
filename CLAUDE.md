@@ -1323,6 +1323,53 @@ both servers start and every route answers (`/`, `/api/codebase`, `/api/intellig
 `/api/watchlist-live`, `/files`, `/products`), and `dashboard_data.py` reproduces
 identical figures.
 
+## spending_summary.py split into a `spending` package (2026-07-19)
+
+At 4,020 lines it was the largest file in the repo. The reading/categorising/
+pivoting half now lives in **`scripts/spending/`**; `spending_summary.py` (2,529
+lines) keeps the Excel writer and the CLI:
+
+| module | what's in it |
+|---|---|
+| `spending/constants.py` | CATEGORIES, ACCOUNT_OWNER/LABELS, FAMILY_ORDER, and the **pinned** figures (`ESTIMATES_AS_OF`, `EQUITY_DIVIDENDS_*`) — with the pinned-data-vs-derived-anchor comment that governs them |
+| `spending/anchors.py` | `MonthAnchors` / `resolve_anchors` — every month boundary, derived from the export date |
+| `spending/categorise.py` | `categorise_amex` / `categorise_barclays` — pure string rules, no I/O |
+| `spending/loaders.py` | the Amex/Barclays/Fidelity CSV readers, the pinned Jan–Apr tables, `load_history` |
+| `spending/holdings.py` | `build_holdings`, `apply_pending_holdings`, `build_acc_holdings` |
+| `spending/pivots.py` | the monthly pivots, `estimate_future_months`, `build_summary_data` |
+
+**The code was MOVED verbatim — no behaviour was touched.** Proof, and the method
+to repeat for any future change here: the workbook build is fully deterministic
+(two runs of the unchanged code produced a zero-line diff), so a cell-level dump of
+every sheet — value, number format, font/fill/alignment/border, merges, column
+widths, row heights, freeze panes, tab colour — is a valid regression gate.
+**Both code paths came out at a 0-line diff**: a fresh build (1,836 dump lines) and
+a rebuild over an existing workbook exercising `preserve_manual_sheets` (4,710 dump
+lines across all four tabs). 27/27 tests pass.
+
+Three **dead** functions were deleted in the same pass (zero references anywhere):
+`hdr_style`, `data_cell`, `build_fidelity_fund_pivot`.
+
+**`write_excel` was deliberately left alone** — it is 2,117 lines of the remaining
+2,529, and its sections are not independent: they share a mutable row cursor and
+back-patch each other's row numbers (e.g. 'Total Income and Accumulations' is
+written with formulas only once `tot_r` / `tot_acc_r` are known), on top of local
+helpers (`fml`, `F`, `P`) closed over throughout. Splitting it needs a context
+object threaded through every section — a separate, properly scoped job with the
+same dump-diff gate, not a side-effect of this one.
+
+**Import note:** the package is imported as `from spending.constants import …`,
+which works from any cwd because Python puts the *script's* directory on `sys.path`
+— the pipeline spawns `spending_summary.py` by absolute path from the repo root, and
+that was verified. Any new module that needs one of these values must import it from
+`spending.*`, not re-declare it.
+
+**Trap this created, now fixed:** moving the 18 one-offs into `scripts/oneoff/`
+broke five of them, because `sys.path.insert(0, dirname(__file__))` used to resolve
+to `scripts/` and now resolved to `oneoff/`. All five (including both scripts this
+file calls re-runnable) now insert `dirname(__file__)/..`. **Any further script
+moves must re-check that line.**
+
 ## Open items / things to verify on the next export run
 
 - Brent/Palladium/Copper charts were added by the user 2026-07-13 and the symbol

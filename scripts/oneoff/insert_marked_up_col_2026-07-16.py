@@ -35,7 +35,7 @@ from openpyxl.utils import get_column_letter, column_index_from_string
 from openpyxl.formula.tokenizer import Tokenizer
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')  # scripts/
 sys.path.insert(0, SCRIPT_DIR)
 from ticker_normalize import normalize
 from update_master_sheet import marked_up_flag

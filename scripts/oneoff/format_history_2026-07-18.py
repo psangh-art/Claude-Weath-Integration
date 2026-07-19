@@ -25,8 +25,8 @@ import openpyxl
 from openpyxl.styles import Font, Alignment
 from openpyxl.utils import get_column_letter
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from spending_summary import ACCOUNT_OWNER  # single source of the account->owner map
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))  # scripts/ (this file lives in scripts/oneoff/)
+from spending.constants import ACCOUNT_OWNER  # single source of the account->owner map
 
 BASE_FONT = "Arial"
 BASE_SIZE = 9

@@ -13,7 +13,7 @@ import os
 import shutil
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))  # scripts/ (this file lives in scripts/oneoff/)
 from config import purge_old_versions
 
 from pptx import Presentation
