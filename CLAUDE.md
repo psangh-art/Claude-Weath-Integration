@@ -934,6 +934,49 @@ Three user requests, all committed:
   NOT expect `window.close()` alone to remove a normal tab — the cover is the reliable
   part. Verified in-browser: opening a 2nd tab dropped the cover on the 1st.
 
+## Dashboard: income-fund positions, real dividend dates, Fidelity-accounts total (2026-07-19)
+
+- **Total Portfolio Value = the Wealth Summary's 'Fidelity accounts' block**, not
+  holdings + income funds (user decision 2026-07-19: "should align with google sheets,
+  wealth summary, line fidelity accounts"). `WS_FIDELITY_ROWS = WS_INVEST_ROWS +
+  WS_CASH_ROWS` (rows 5-13) now drives BOTH the headline metric and the Portfolio Value
+  Over Time series, so the number and its sparkline can never disagree. Pensions/SIPPs
+  sit in their own Wealth Summary blocks and are deliberately excluded — the figure went
+  £2.93M -> £1.94M as a result, which is the sheet's own total.
+- **Accounts widget (Overview, medium)** — `overview.accounts` lists each Fidelity
+  account row for the **last FULL month** (the current month is still accruing, so
+  comparing it to the previous month understates the increase) with value and the
+  month-on-month increase; the widget rewrites its own title to "Accounts — <month>".
+  Account/wrapper/number are parsed out of the sheet's `'  Investment ISA (Paul)
+  (SANX002282)'` label format. NOTE: most rows show a £0 increase because the Wealth
+  Summary carries the same figure across months for any account that hasn't been
+  re-imported — that's the sheet, not the widget.
+- **Portfolio → Income Funds is now per fund PER ACCOUNT** (`portfolio.income_positions`,
+  44 rows) with Account, Wrapper, P&L, Yield, Last Income, Ex-Div and Paid, plus a
+  **sticky total row that totals the FILTERED rows**. The sheet-level `income_funds`
+  roll-up is untouched — Overview's metrics, Relevant News and the Historic dividends
+  table all still read it, and rebuilding those off per-account rows would have changed
+  every headline number.
+  - **Dividend dates come from `TransactionHistory*.csv`, the only source of them.**
+    `_fund_income_events()` reads the 'Income Received' rows: Fidelity's **Order date IS
+    the ex-dividend date and Completion date the payment date**, keyed by (fund name,
+    account number). The export only covers ~30 days, so this is "the latest payment",
+    not a history — a holding with no row shows no dates rather than an inferred one
+    (23 of 44 have dates; the Acc units legitimately never pay cash).
+  - **Yield is derived from that payment** (`amount x 12 / holdings`, these funds
+    distribute monthly), NOT matched to the Income Funds sheet by name. A token-overlap
+    matcher was tried and REVERTED: the generic words ('high', 'yield', 'bond', 'inc',
+    'global') outnumber the distinguishing ones, so it paired AXA and IFSL Marlborough
+    with other managers' funds. Don't reintroduce name matching for these.
+- **Layout (user requests, same day):** Overview small-widget order is Total Portfolio
+  Value, Gain, Trading Profit, Monthly Dividend, Accumulative, Cash — with Portfolio
+  Value Over Time + Alert Status on the row beneath; Activity narrowed to `span:4` to
+  match Portfolio Value Over Time. **Saved layouts are keyed `dashboard:layout:v2:` —
+  bump that version whenever the DEFAULT order changes**, because `getOrder()` lets a
+  saved layout win for widgets it already lists, so an existing browser would otherwise
+  keep the old arrangement for ever. Long identity cells are capped (`td.cell-name`
+  260px, 190px in the sold table) with the full name on hover.
+
 ## Dashboard Portfolio holdings come from the BROKER export, not the workbook (2026-07-19)
 
 The Portfolio screen listed 5 positions off the Investments sheet's `Holdings (£)`

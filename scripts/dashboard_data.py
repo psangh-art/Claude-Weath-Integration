@@ -38,6 +38,11 @@ H_COST, H_PROCEEDS = 10, 12
 WS_MONTH_ROW = 3
 WS_INVEST_ROWS = [5, 6, 7, 8, 9, 12]     # Investment Account(s) + ISAs + Junior ISA
 WS_CASH_ROWS = [10, 11, 13]              # Fidelity Cash Accounts
+# The whole 'Fidelity accounts' block. Total Portfolio Value is this block's total,
+# so the dashboard agrees with the Wealth Summary tab and the Finance Google Sheet
+# (user decision 2026-07-19) — pensions/SIPPs sit in their own blocks below it and
+# are deliberately NOT in the portfolio figure.
+WS_FIDELITY_ROWS = WS_INVEST_ROWS + WS_CASH_ROWS
 WS_MONTHLY_INCREASE_ROW = 46            # 'Monthly Investment Increase' (literal)
 # --- Stocks of Interest section-table columns (A..Q) ---
 SOI_STOCK, SOI_TICKER, SOI_PATTERN, SOI_ALOW, SOI_AHIGH = 1, 2, 3, 5, 7
@@ -143,13 +148,16 @@ def _as_num(s):
         return None
 
 
-def _fidelity_positions(path=ACCOUNT_SUMMARY):
+def _fidelity_positions(path=ACCOUNT_SUMMARY, funds=False):
     """Open positions from the Fidelity AccountSummary export, one row per
     holding-per-account (the 'View all account details' section — the section
     above it is an aggregate across accounts and would double-count).
 
     This is the authoritative list of what is actually HELD, and the only source
     of Account / Wrapper / book cost. Returns [] if the export isn't present.
+
+    funds=False returns the equity/ETC/Investments-table holdings; funds=True
+    returns the income-fund holdings instead (same section, complementary split).
     """
     if not os.path.exists(path):
         return []
@@ -180,14 +188,15 @@ def _fidelity_positions(path=ACCOUNT_SUMMARY):
                     if up.startswith(pref):
                         ticker = tk
                         break
-                if ticker is None:
-                    continue   # an income fund — priced from the Income Funds sheet
-            ticker = AS_TICKER_ALIASES.get(ticker, ticker)
+            if funds != (ticker is None):
+                continue       # wrong side of the equity / income-fund split
+            ticker = AS_TICKER_ALIASES.get(ticker, ticker) if ticker else None
             holder = (rec[AS_HOLDER] or '').strip().split()[0] if rec[AS_HOLDER] else None
             qty = _as_num(rec[AS_QTY])
             cost = _as_num(rec[AS_BOOKCOST])
             rows.append({
                 'name': display, 'ticker': ticker,
+                'account_no': (rec[AS_ACCTNO] or '').strip() or None,
                 'account': holder, 'wrapper': (rec[AS_PRODUCT] or '').strip() or None,
                 'quantity': qty,
                 'holdings': _as_num(rec[AS_VALUE]),
@@ -197,6 +206,64 @@ def _fidelity_positions(path=ACCOUNT_SUMMARY):
                 'broker_price': _as_num(rec[AS_PRICE]),
             })
     return rows
+
+
+DOWNLOADS = os.path.join(os.path.expanduser('~'), 'Downloads')
+# --- TransactionHistory.csv columns (0-indexed, header 'Order date,...') ---
+TX_ORDER, TX_COMPLETE, TX_TYPE, TX_WRAPPER, TX_ACCTNO, TX_SOURCE, TX_AMOUNT = 0, 1, 2, 4, 5, 6, 7
+
+
+def _tx_date(s):
+    for fmt in ('%d %b %Y', '%d/%m/%Y', '%Y-%m-%d'):
+        try:
+            return datetime.datetime.strptime(str(s).strip(), fmt).date()
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _fund_income_events(downloads=DOWNLOADS):
+    """(fund name upper, account number) -> the most recent 'Income Received' the
+    Fidelity transaction export shows for that holding.
+
+    This is the ONLY source of real dividend dates for the income funds — the
+    workbook has none, and the funds aren't in Base Data (no ticker). Fidelity's
+    Order date IS the ex-dividend date and Completion date the payment date.
+    The export only covers the last ~30 days, so this is 'the latest payment',
+    not a history. Nothing is inferred: a fund with no row gets no dates.
+    """
+    import csv
+    events = {}
+    for fn in sorted(os.listdir(downloads)) if os.path.isdir(downloads) else []:
+        low = fn.lower()
+        if not (low.startswith('transactionhistory') or low.startswith('transactions')):
+            continue
+        if not low.endswith('.csv'):
+            continue
+        try:
+            with open(os.path.join(downloads, fn), encoding='utf-8-sig', newline='') as fh:
+                for rec in csv.reader(fh):
+                    if len(rec) <= TX_AMOUNT or (rec[TX_TYPE] or '').strip() != 'Income Received':
+                        continue
+                    src = (rec[TX_SOURCE] or '').strip()
+                    acct = (rec[TX_ACCTNO] or '').strip()
+                    if not src:
+                        continue
+                    paid = _tx_date(rec[TX_COMPLETE])
+                    key = (src.upper(), acct)
+                    prev = events.get(key)
+                    if prev and prev['paid_date'] and paid and prev['paid_date'] >= paid.isoformat():
+                        continue
+                    ex = _tx_date(rec[TX_ORDER])
+                    events[key] = {
+                        'amount': _as_num(rec[TX_AMOUNT]),
+                        'ex_div_date': ex.isoformat() if ex else None,
+                        'paid_date': paid.isoformat() if paid else None,
+                        'wrapper': (rec[TX_WRAPPER] or '').strip() or None,
+                    }
+        except OSError:
+            continue   # a file mid-download / locked by Excel — skip, never fail
+    return events
 
 
 # Chart symbols priced in USD (per ounce / barrel / MMBtu) rather than UK pence.
@@ -385,6 +452,42 @@ def build(workbook=WORKBOOK):
         })
     funds_annual_income = round(sum(f['annual_income'] for f in income_funds), 2)
 
+    # ---------------- Income fund POSITIONS (per fund, per account) ----------------
+    # income_funds above stays as the sheet's family-level roll-up (the Overview
+    # metrics, Relevant News and the Historic dividends table all read it). This is
+    # the Portfolio screen's per-account view: broker holdings + the real dividend
+    # dates from the transaction export.
+    income_events = _fund_income_events()
+    income_positions = []
+    for pos in _fidelity_positions(funds=True):
+        ev = income_events.get((pos['name'].upper(), pos['account_no'] or '')) or {}
+        income_positions.append({
+            'name': pos['name'],
+            'account': pos['account'], 'wrapper': pos['wrapper'],
+            'holdings': pos['holdings'], 'book_cost': pos['book_cost'],
+            'pl_today': pos['pl_today'],
+            'pl_today_pct': (round(pos['pl_today'] / pos['book_cost'] * 100.0, 2)
+                             if (pos['pl_today'] is not None and pos['book_cost']) else None),
+            # Yield is DERIVED from this holding's own last payment (these funds
+            # distribute monthly), not matched to the sheet by name — the fund names
+            # differ enough between broker and sheet that token matching paired AXA
+            # and IFSL with other managers' funds.
+            'div_yield_pct': (round(ev['amount'] * 12.0 / pos['holdings'] * 100.0, 2)
+                              if (ev.get('amount') and pos['holdings']) else None),
+            'last_income': ev.get('amount'),
+            'ex_div_date': ev.get('ex_div_date'),
+            'payment_date': ev.get('paid_date'),
+        })
+    income_positions.sort(key=lambda x: -(x['holdings'] or 0))
+    income_positions_total = {
+        'holdings': round(sum(p['holdings'] or 0 for p in income_positions), 2),
+        'book_cost': round(sum(p['book_cost'] or 0 for p in income_positions), 2),
+        'pl_today': round(sum(p['pl_today'] or 0 for p in income_positions), 2),
+        'last_income': round(sum(p['last_income'] or 0 for p in income_positions), 2),
+        'with_dates': sum(1 for p in income_positions if p['payment_date']),
+        'count': len(income_positions),
+    }
+
     # ---------------- Wealth Summary (monthly trend, cash, MoM gain) ----------------
     ws = wb['Wealth Summary']
     months = []
@@ -401,7 +504,7 @@ def build(workbook=WORKBOOK):
             yr, mo = int(parts[1]), _MON[parts[0]]
             if (yr, mo) > (now.year, now.month):
                 continue
-        invest_sum = sum(_num(ws.cell(row, c).value) or 0.0 for row in WS_INVEST_ROWS)
+        invest_sum = sum(_num(ws.cell(row, c).value) or 0.0 for row in WS_FIDELITY_ROWS)
         if invest_sum <= 0:
             continue  # drop empty / future months with no data
         months.append({'col': c, 'label': str(label), 'value': round(invest_sum, 2)})
@@ -415,7 +518,45 @@ def build(workbook=WORKBOOK):
     gain_last_month_pct = (round(gain_last_month / months[-2]['value'] * 100.0, 2)
                            if gain_last_month is not None and months[-2]['value'] else None)
 
-    portfolio_value = round(inv_value_total + funds_value_total, 2)
+    # Total Portfolio Value = the Wealth Summary's 'Fidelity accounts' block for the
+    # latest actual month — the same series the trend chart plots, so the headline and
+    # the sparkline can never disagree. (It is NOT holdings + income funds: that summed
+    # positions across pension accounts too and came out ~£1M higher than the sheet.)
+    portfolio_value = round(months[-1]['value'], 2) if months else round(
+        inv_value_total + funds_value_total, 2)
+
+    # ---------------- Fidelity accounts, last FULL month ----------------
+    # 'Last full month' = the month before the current one; today's month is still
+    # accruing, so comparing it to the previous month understates the increase.
+    import re as _re
+    accounts, accounts_month, accounts_prev_month = [], None, None
+    if len(months) >= 2:
+        full = months[-2] if str(months[-1]['label']).startswith(
+            now.strftime('%b')) else months[-1]
+        idx = months.index(full)
+        prev = months[idx - 1] if idx >= 1 else None
+        accounts_month = full['label']
+        accounts_prev_month = prev['label'] if prev else None
+        for row in WS_FIDELITY_ROWS:
+            label = ws.cell(row, 1).value
+            if not label:
+                continue
+            m = _re.match(r'^\s*(.*?)\s*\(([^()]*)\)\s*\(([^()]*)\)\s*$', str(label))
+            wrapper, holder, acct_no = (m.group(1), m.group(2), m.group(3)) if m else (
+                str(label).strip(), None, None)
+            val = _num(ws.cell(row, full['col']).value)
+            pval = _num(ws.cell(row, prev['col']).value) if prev else None
+            if val is None:
+                continue
+            accounts.append({
+                'account': holder, 'wrapper': wrapper, 'account_no': acct_no,
+                'value': round(val, 2),
+                'prev_value': round(pval, 2) if pval is not None else None,
+                'increase': round(val - pval, 2) if pval is not None else None,
+                'increase_pct': (round((val - pval) / pval * 100.0, 2)
+                                 if (pval not in (None, 0)) else None),
+            })
+        accounts.sort(key=lambda a: -(a['value'] or 0))
     # monthly_dividend is completed below, once Base Data dividend yields are read,
     # so it can include SHARE dividends (income + accumulation), not just income funds.
 
@@ -495,7 +636,10 @@ def build(workbook=WORKBOOK):
             'accumulation_income': {'value': share_accum_monthly,
                                     'caveat': 'Monthly reinvested income from accumulation funds '
                                               '(latest month of the Acc funds’ price-appreciation).'},
-            'portfolio_value': {'value': portfolio_value},
+            'portfolio_value': {'value': portfolio_value,
+                                'caveat': "Wealth Summary 'Fidelity accounts' total for "
+                                          + (months[-1]['label'] if months else 'the latest month')
+                                          + ' — matches the sheet and the Finance Google Sheet.'},
             'gain_last_month': {'value': gain_last_month, 'pct': gain_last_month_pct,
                                 'caveat': 'Month-on-month investment-account change (includes contributions).'},
             'trading_profit_2026': {'value': round(profit_2026, 2),
@@ -509,11 +653,17 @@ def build(workbook=WORKBOOK):
                                'caveat': 'Fidelity cash accounts only; uninvested account cash added in Phase 1.5.'},
         },
         'value_over_time': value_over_time,
+        'accounts': {'month': accounts_month, 'prev_month': accounts_prev_month,
+                     'rows': accounts,
+                     'total': round(sum(a['value'] or 0 for a in accounts), 2),
+                     'total_increase': round(sum(a['increase'] or 0 for a in accounts), 2)},
         'alert_status': {'below': alert_below, 'near': alert_near,
                          'above': alert_above, 'total': alert_below + alert_near + alert_above},
     }
     portfolio = {'generated_at': now.isoformat(timespec='seconds'),
                  'investments': investments, 'income_funds': income_funds,
+                 'income_positions': income_positions,
+                 'income_positions_total': income_positions_total,
                  'income_summary': {'year': 2026,
                                     'total_annual_income': funds_annual_income,
                                     'total_monthly_income': monthly_dividend,

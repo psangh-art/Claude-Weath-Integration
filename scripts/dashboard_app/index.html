@@ -291,6 +291,16 @@ thead th.sorted{color:var(--accent)}
 thead th .sort-ind{margin-left:3px;font-size:9px;opacity:.8}
 tbody td{padding:7px 10px;border-bottom:1px solid var(--line-soft);vertical-align:middle;white-space:nowrap}
 tbody tr:last-child td{border-bottom:none}
+/* Sticky total row: a long table scrolls under it so the totals stay visible. */
+tfoot td{position:sticky;bottom:0;background:var(--panel-2);border-top:1px solid var(--line);
+  padding:8px 10px;font-weight:700;white-space:nowrap;z-index:1}
+/* Long identity cells (fund / sold-investment names) are capped and ellipsised
+   so one verbose name can't push the numeric columns off screen. */
+td.cell-name{max-width:260px;overflow:hidden;text-overflow:ellipsis}
+/* Historic's sold-position names are the longest in the app ("ISHARES PHYSICAL
+   METALS PLC, PHYSICAL PALLADIUM ETC GBP ACC (SPDM)") and were crowding out the
+   dates and P&L — capped tighter here, full name on hover. */
+.widget[data-id="sold-table"] td.cell-name{max-width:190px}
 /* Reusable numeric-cell alignment (2026-07-17): £ values, %, P/E, prices,
    holdings — applied to both th and td so header labels line up over their
    column. Text columns (names/tickers/patterns/notes/dates) stay left. */
@@ -652,17 +662,6 @@ const SIZE_LABELS={S:'Small', M:'Medium', L:'Large', XL:'X-Large'};
 const WIDGET_DEFS={overview:[], portfolio:[], historic:[], watchlist:[], intelligence:[], design:[]};
 
 WIDGET_DEFS.overview.push({
-  id:'m-accum-income', title:'Accumulative Fund Income', size:'S', span:1,
-  mount(body){
-    body.classList.add('metric-body');
-    const m=DATA.overview.metrics.accumulation_income||{};
-    body.innerHTML='<div class="metric">'+
-      '<div class="metric-main"><div class="metric-value">'+fmtMoney(m.value,0)+'</div>'+
-      '<div class="metric-sub">Reinvested / mo'+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div>'+
-      '</div>';
-  }
-});
-WIDGET_DEFS.overview.push({
   id:'m-portfolio-value', title:'Total Portfolio Value', size:'S', span:1,
   mount(body){
     body.classList.add('metric-body');
@@ -705,6 +704,17 @@ WIDGET_DEFS.overview.push({
     body.innerHTML='<div class="metric">'+
       '<div class="metric-main"><div class="metric-value">'+fmtMoneyCompact(m.value)+'</div>'+
       '<div class="metric-sub">Income funds'+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div></div>';
+  }
+});
+WIDGET_DEFS.overview.push({
+  id:'m-accum-income', title:'Accumulative Fund Income', size:'S', span:1,
+  mount(body){
+    body.classList.add('metric-body');
+    const m=DATA.overview.metrics.accumulation_income||{};
+    body.innerHTML='<div class="metric">'+
+      '<div class="metric-main"><div class="metric-value">'+fmtMoney(m.value,0)+'</div>'+
+      '<div class="metric-sub">Reinvested / mo'+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div>'+
+      '</div>';
   }
 });
 WIDGET_DEFS.overview.push({
@@ -801,6 +811,34 @@ WIDGET_DEFS.overview.push({
   }
 });
 
+/* ----- Fidelity accounts, last FULL month (the current month is still accruing) ----- */
+WIDGET_DEFS.overview.push({
+  id:'accounts-month', title:'Accounts', size:'M', span:4,
+  mount(body,action,widgetEl){
+    const a=(DATA.overview.accounts)||{};
+    const rows=a.rows||[];
+    // The title carries the month so it's never ambiguous which period is shown.
+    if(widgetEl){
+      const t=widgetEl.querySelector('.widget-title');
+      if(t) t.textContent='Accounts — '+(a.month||'last full month');
+    }
+    if(!rows.length){ body.innerHTML='<div class="dim" style="padding:10px">No account data</div>'; return; }
+    const trs=rows.map(r=>'<tr>'+
+      '<td class="cell-name" title="'+escapeHtml((r.wrapper||'')+' '+(r.account_no||''))+'">'+escapeHtml(r.account||'—')+'</td>'+
+      '<td class="dim">'+escapeHtml(r.wrapper||'—')+'</td>'+
+      '<td class="money-flat num">'+fmtMoney(r.value,0)+'</td>'+
+      '<td class="num">'+deltaChip(r.increase,{kind:'money',decimals:0})+'</td>'+
+      '</tr>').join('');
+    const foot='<tr class="total-row"><td>Total</td><td class="dim">'+rows.length+' accounts</td>'+
+      '<td class="money-flat num">'+fmtMoney(a.total,0)+'</td>'+
+      '<td class="num">'+deltaChip(a.total_increase,{kind:'money',decimals:0})+'</td></tr>';
+    body.innerHTML='<div class="table-scroll"><table><thead><tr>'+
+      '<th>Account</th><th>Wrapper</th><th class="num">Value</th>'+
+      '<th class="num" title="Change vs '+escapeHtml(a.prev_month||'the previous month')+'">vs '+escapeHtml(a.prev_month||'prev')+'</th>'+
+      '</tr></thead><tbody>'+trs+'</tbody><tfoot>'+foot+'</tfoot></table></div>';
+  }
+});
+
 const ALLOC_COLORS=['var(--accent)','var(--success)','var(--warn)','var(--muted)','var(--danger)'];
 WIDGET_DEFS.overview.push({
   id:'targets', title:'Targets', size:'M', span:2,
@@ -856,7 +894,7 @@ WIDGET_DEFS.overview.push({
 });
 
 WIDGET_DEFS.overview.push({
-  id:'activity', title:'Activity', size:'L', span:12,
+  id:'activity', title:'Activity', size:'L', span:4,
   mount(body){
     const data=DATA.activity||{};
     const actions=(data.actions||[]).slice();
@@ -954,9 +992,14 @@ WIDGET_DEFS.portfolio.push({
     ];
     const incCols=[
       {key:'name', label:'Fund', sv:r=>(r.name||'').toLowerCase()},
+      {key:'account', label:'Account', sv:r=>r.account||''},
+      {key:'wrapper', label:'Wrapper', sv:r=>r.wrapper||''},
       {key:'holdings', label:'Holdings', sv:r=>r.holdings, num:true},
-      {key:'div_yield_pct', label:'Div Yield %', sv:r=>r.div_yield_pct, num:true},
-      {key:'monthly_income', label:'Monthly Income', sv:r=>r.monthly_income, num:true},
+      {key:'pl_today', label:'P&L', sv:r=>r.pl_today, num:true},
+      {key:'div_yield_pct', label:'Yield % (ann.)', sv:r=>r.div_yield_pct, num:true},
+      {key:'last_income', label:'Last Income', sv:r=>r.last_income, num:true},
+      {key:'ex_div_date', label:'Ex-Div', sv:r=>r.ex_div_date||''},
+      {key:'payment_date', label:'Paid', sv:r=>r.payment_date||''},
     ];
 
     function sortRows(rows,sortState,cols){
@@ -1023,20 +1066,37 @@ WIDGET_DEFS.portfolio.push({
     }
     function drawIncome(){
       const filter=UI.holdings.filter.trim().toLowerCase();
-      let rows=DATA.portfolio.income_funds||[];
-      if(filter) rows=rows.filter(r=>(r.name||'').toLowerCase().indexOf(filter)!==-1);
+      const all=DATA.portfolio.income_positions||[];
+      let rows=all;
+      if(filter) rows=rows.filter(r=>((r.name||'')+' '+(r.account||'')+' '+(r.wrapper||'')).toLowerCase().indexOf(filter)!==-1);
       rows=sortRows(rows,UI.holdings.incSort,incCols);
-      rowCount.textContent=rows.length+' of '+(DATA.portfolio.income_funds||[]).length;
+      rowCount.textContent=rows.length+' of '+all.length;
       const body_=rows.map(r=>{
         return '<tr>'+
-          '<td class="cell-name">'+escapeHtml(r.name)+'</td>'+
-          '<td class="money-flat num">'+fmtMoneyCompact(r.holdings)+'</td>'+
+          '<td class="cell-name" title="'+escapeHtml(r.name)+'">'+escapeHtml(r.name)+'</td>'+
+          '<td class="dim">'+escapeHtml(r.account||'—')+'</td>'+
+          '<td class="dim">'+escapeHtml(r.wrapper||'—')+'</td>'+
+          '<td class="money-flat num">'+fmtMoney(r.holdings,0)+'</td>'+
+          '<td class="num">'+deltaChip(r.pl_today,{kind:'money',decimals:0})+'</td>'+
           '<td class="mono num">'+fmtPct(r.div_yield_pct,2)+'</td>'+
-          '<td class="money-flat num">'+fmtMoney(r.monthly_income,2)+'</td>'+
+          '<td class="money-flat num">'+fmtMoney(r.last_income,2)+'</td>'+
+          '<td class="mono num">'+fmtDate(r.ex_div_date)+'</td>'+
+          '<td class="mono num">'+fmtDate(r.payment_date)+'</td>'+
           '</tr>';
       }).join('');
+      // Total row reflects the FILTERED rows, so filtering by account or fund
+      // gives that subset's income — not a fixed grand total that ignores it.
+      const tot=rows.reduce((a,r)=>({h:a.h+(r.holdings||0), p:a.p+(r.pl_today||0), i:a.i+(r.last_income||0)}),{h:0,p:0,i:0});
+      const paid=rows.filter(r=>r.payment_date).length;
+      const foot='<tr class="total-row"><td>Total</td><td colspan="2" class="dim">'+rows.length+' holdings</td>'+
+        '<td class="money-flat num">'+fmtMoney(tot.h,0)+'</td>'+
+        '<td class="num">'+deltaChip(tot.p,{kind:'money',decimals:0})+'</td>'+
+        '<td class="mono num">'+fmtPct(tot.h?tot.i*12/tot.h*100:null,2)+'</td>'+
+        '<td class="money-flat num">'+fmtMoney(tot.i,2)+'</td>'+
+        '<td colspan="2" class="dim">'+paid+' of '+rows.length+' paid in the last 30 days</td></tr>';
       scroll.innerHTML='<table><thead>'+headerRow(incCols,UI.holdings.incSort)+'</thead><tbody>'+
-        (body_||'<tr><td colspan="4" class="dim" style="text-align:center;padding:18px">No matching funds</td></tr>')+'</tbody></table>';
+        (body_||'<tr><td colspan="9" class="dim" style="text-align:center;padding:18px">No matching funds</td></tr>')+'</tbody>'+
+        (rows.length?'<tfoot>'+foot+'</tfoot>':'')+'</table>';
       wireHeaders(scroll.querySelector('thead'),incCols,UI.holdings.incSort,drawIncome);
     }
     function draw(){ input.value=UI.holdings.filter; UI.holdings.tab==='investments'?drawInvestments():drawIncome(); }
@@ -1104,7 +1164,7 @@ WIDGET_DEFS.historic.push({
       const trs=rows.map(r=>{
         const profitCls=r.profit>=0?'money-pos':'money-neg';
         return '<tr>'+
-          '<td class="cell-name">'+escapeHtml(r.name)+'</td>'+
+          '<td class="cell-name" title="'+escapeHtml(r.name)+'">'+escapeHtml(r.name)+'</td>'+
           '<td class="dim">'+escapeHtml(r.account||'—')+'</td>'+
           '<td class="dim">'+escapeHtml(r.wrapper||'—')+'</td>'+
           '<td class="mono">'+fmtDate(r.buy_date)+'</td>'+
@@ -1489,11 +1549,15 @@ const DEFAULT_ORDER={
 };
 
 /* ---------------------------- layout persistence ---------------------------- */
+// Bump the version when the DEFAULT order changes: a saved layout wins over the
+// default for widgets it already lists, so without a new key an existing browser
+// would keep the old arrangement for ever.
+const LAYOUT_KEY='dashboard:layout:v2:';
 function getOrder(screen){
   const ids=WIDGET_DEFS[screen].map(d=>d.id);
   let saved=null;
   try{
-    const raw=localStorage.getItem('dashboard:layout:'+screen);
+    const raw=localStorage.getItem(LAYOUT_KEY+screen);
     if(raw){ const arr=JSON.parse(raw); saved=arr.filter(id=>ids.indexOf(id)!==-1); }
   }catch(e){}
   const base=(saved&&saved.length)?saved:DEFAULT_ORDER[screen].slice();
@@ -1510,7 +1574,7 @@ function getOrder(screen){
   return base;
 }
 function saveOrder(screen,order){
-  localStorage.setItem('dashboard:layout:'+screen, JSON.stringify(order));
+  localStorage.setItem(LAYOUT_KEY+screen, JSON.stringify(order));
 }
 
 /* ---------------------------- render: rail ---------------------------- */
