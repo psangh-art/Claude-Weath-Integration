@@ -38,11 +38,15 @@ H_COST, H_PROCEEDS = 10, 12
 WS_MONTH_ROW = 3
 WS_INVEST_ROWS = [5, 6, 7, 8, 9, 12]     # Investment Account(s) + ISAs + Junior ISA
 WS_CASH_ROWS = [10, 11, 13]              # Fidelity Cash Accounts
-# The whole 'Fidelity accounts' block. Total Portfolio Value is this block's total,
-# so the dashboard agrees with the Wealth Summary tab and the Finance Google Sheet
-# (user decision 2026-07-19) — pensions/SIPPs sit in their own blocks below it and
-# are deliberately NOT in the portfolio figure.
-WS_FIDELITY_ROWS = WS_INVEST_ROWS + WS_CASH_ROWS
+# Total Portfolio Value / the value-over-time series read the Wealth Summary's own
+# **row 33 'Fidelity accounts'** line (user decision 2026-07-19) — the sheet's and the
+# Finance Google Sheet's headline Fidelity total. It spans the account block (rows
+# 5-13) PLUS the two Fidelity SIPPs, which sit up in the pension blocks: Paul's row 15
+# and Susan's row 25. The Accounts widget lists exactly those rows so its total ties
+# back to row 33 (verified: 1,938,320 + 1,823,862 = 3,762,182).
+WS_FIDELITY_TOTAL_ROW = 33
+WS_SIPP_ROWS = {15: 'Paul', 25: 'Susan'}     # row -> account holder (label has no name)
+WS_ACCOUNT_ROWS = WS_INVEST_ROWS + WS_CASH_ROWS + list(WS_SIPP_ROWS)
 WS_MONTHLY_INCREASE_ROW = 46            # 'Monthly Investment Increase' (literal)
 # --- Stocks of Interest section-table columns (A..Q) ---
 SOI_STOCK, SOI_TICKER, SOI_PATTERN, SOI_ALOW, SOI_AHIGH = 1, 2, 3, 5, 7
@@ -512,7 +516,7 @@ def build(workbook=WORKBOOK):
             yr, mo = int(parts[1]), _MON[parts[0]]
             if (yr, mo) > (now.year, now.month):
                 continue
-        invest_sum = sum(_num(ws.cell(row, c).value) or 0.0 for row in WS_FIDELITY_ROWS)
+        invest_sum = _num(ws.cell(WS_FIDELITY_TOTAL_ROW, c).value) or 0.0
         if invest_sum <= 0:
             continue  # drop empty / future months with no data
         months.append({'col': c, 'label': str(label), 'value': round(invest_sum, 2)})
@@ -545,13 +549,20 @@ def build(workbook=WORKBOOK):
         prev = months[idx - 1] if idx >= 1 else None
         accounts_month = full['label']
         accounts_prev_month = prev['label'] if prev else None
-        for row in WS_FIDELITY_ROWS:
+        for row in WS_ACCOUNT_ROWS:
             label = ws.cell(row, 1).value
             if not label:
                 continue
             m = _re.match(r'^\s*(.*?)\s*\(([^()]*)\)\s*\(([^()]*)\)\s*$', str(label))
-            wrapper, holder, acct_no = (m.group(1), m.group(2), m.group(3)) if m else (
-                str(label).strip(), None, None)
+            if m:
+                wrapper, holder, acct_no = m.group(1), m.group(2), m.group(3)
+            else:
+                # The SIPP rows are labelled '  SIPP Savings - Fidelity (2000001606)':
+                # one bracket, no holder name — that comes from the pension block header.
+                m1 = _re.match(r'^\s*(.*?)\s*\(([^()]*)\)\s*$', str(label))
+                wrapper = (m1.group(1) if m1 else str(label)).strip()
+                acct_no = m1.group(2) if m1 else None
+                holder = WS_SIPP_ROWS.get(row)
             val = _num(ws.cell(row, full['col']).value)
             pval = _num(ws.cell(row, prev['col']).value) if prev else None
             if val is None:

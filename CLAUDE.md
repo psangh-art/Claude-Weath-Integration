@@ -936,13 +936,15 @@ Three user requests, all committed:
 
 ## Dashboard: income-fund positions, real dividend dates, Fidelity-accounts total (2026-07-19)
 
-- **Total Portfolio Value = the Wealth Summary's 'Fidelity accounts' block**, not
-  holdings + income funds (user decision 2026-07-19: "should align with google sheets,
-  wealth summary, line fidelity accounts"). `WS_FIDELITY_ROWS = WS_INVEST_ROWS +
-  WS_CASH_ROWS` (rows 5-13) now drives BOTH the headline metric and the Portfolio Value
-  Over Time series, so the number and its sparkline can never disagree. Pensions/SIPPs
-  sit in their own Wealth Summary blocks and are deliberately excluded — the figure went
-  £2.93M -> £1.94M as a result, which is the sheet's own total.
+- **Total Portfolio Value and the Portfolio Value Over Time series read Wealth Summary
+  ROW 33, 'Fidelity accounts'** (user decision 2026-07-19), not holdings + income funds
+  and not the account block summed by hand — `WS_FIDELITY_TOTAL_ROW = 33` is the sheet's
+  own headline Fidelity line, so the dashboard, the sheet and the Finance Google Sheet
+  cannot drift apart. £3.76M for Jul 2026. Row 33 spans the account block (rows 5-13)
+  PLUS the two Fidelity SIPPs, which live up in the pension blocks (Paul row 15, Susan
+  row 25) — `WS_ACCOUNT_ROWS` includes them so the Accounts widget ties back to row 33
+  (1,938,320 + 1,823,862 = 3,762,182). Those SIPP labels carry no holder name
+  ('  SIPP Savings - Fidelity (2000001606)'), hence the `WS_SIPP_ROWS` row->holder map.
 - **Accounts widget (Overview, medium)** — `overview.accounts` lists each Fidelity
   account row for the **last FULL month** (the current month is still accruing, so
   comparing it to the previous month understates the increase) with value and the
