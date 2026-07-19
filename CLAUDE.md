@@ -1350,13 +1350,53 @@ lines across all four tabs). 27/27 tests pass.
 Three **dead** functions were deleted in the same pass (zero references anywhere):
 `hdr_style`, `data_cell`, `build_fidelity_fund_pivot`.
 
-**`write_excel` was deliberately left alone** — it is 2,117 lines of the remaining
-2,529, and its sections are not independent: they share a mutable row cursor and
-back-patch each other's row numbers (e.g. 'Total Income and Accumulations' is
-written with formulas only once `tot_r` / `tot_acc_r` are known), on top of local
-helpers (`fml`, `F`, `P`) closed over throughout. Splitting it needs a context
-object threaded through every section — a separate, properly scoped job with the
-same dump-diff gate, not a side-effect of this one.
+### write_excel split into phases (same day)
+
+`write_excel` was the remaining 2,115-line function; it is now **six phases** under
+`scripts/spending/sheet/`, and `spending_summary.py` is **467 lines** — the setup,
+the context, six calls, and `main`:
+
+| module | lines | phase |
+|---|---|---|
+| `sheet/style.py` | 146 | the palette — colours, `P`/`F`, the named fills/fonts, `fml`, `HIST_MAP`, and the two data-dependent factories `make_col_fill` / `make_val_font` |
+| `sheet/sheet_assets.py` | 646 | summary table, Fidelity accounts, both pension sets, assets, growth/total rows, calculations |
+| `sheet/sheet_spending.py` | 231 | Section 1 spend-by-category + reimbursements |
+| `sheet/sheet_income.py` | 483 | Sections 2 and 3 (income by account, accumulative holdings) |
+| `sheet/sheet_totals.py` | 202 | the cross-section totals that need row numbers from above |
+| `sheet/sheet_targets.py` | 478 | Investment Risk Metrics + Targets tables |
+| `sheet/sheet_finish.py` | 182 | widths, the split onto the Targets tab, note row, save |
+
+**How it was done, because the method is the safety argument.** The sections share a
+mutable row cursor and back-patch each other, so the split was driven by a
+**flow-sensitive read/write analysis** rather than by eye: for each candidate
+boundary, which names does the section read before binding (its inputs) and which
+does it bind that a later section reads before rebinding (its outputs). Every phase
+body was then **sliced verbatim as one contiguous region** of the original file
+(comments and formatting byte-exact) and the unpack/repack lines around it were
+GENERATED from that analysis. Interfaces came out at 5–11 in, 0–5 out.
+
+**Do not hand-maintain those `ctx.x = x` lines carelessly** — they are the phase
+contract. A new shared variable needs adding to both the producing phase's repack
+and the consuming phase's unpack, or it silently reverts to a stale value.
+
+Getting the analysis right mattered twice: a naive version counted nested-function
+parameters and comprehension variables as shared state (inventing `m` and `s`
+interfaces that don't exist), and counted leaked loop variables as real outputs.
+
+**Two move-hazards this surfaced, both fixed** — worth expecting on any future move:
+- `sheet_targets.py` computes the repo root from `__file__` to write
+  `data/spending_dividends.json` (which `dashboard_data.py` reads for the Monthly
+  Dividend figure). The file went from two levels below the root to four, so the
+  literal `dirname(dirname(...))` had to change — a wrong path here fails SILENTLY.
+- Moving a function moves its dependencies: `preserve_manual_sheets` and
+  `_resolve_cell_num` went with the phases that use them and needed `os`, `sys`,
+  `load_workbook` and `copy_cell_style` imports that the old module already had.
+  **Re-run an unresolved-name scan after every move**, not once at the end.
+
+Same gate as the module split, and it is the reason this was safe to do at all:
+**both code paths at a 0-line diff** — fresh build (1,836 dump lines) and the
+`preserve_manual_sheets` rebuild (4,710 lines, all four tabs) — plus 27/27 tests,
+every module importing, and a run from a foreign cwd.
 
 **Import note:** the package is imported as `from spending.constants import …`,
 which works from any cwd because Python puts the *script's* directory on `sys.path`
