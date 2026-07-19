@@ -113,6 +113,20 @@ svg{display:block}
 
 .content{padding:20px 26px 64px;flex:1}
 
+/* Codebase banner — Overview only. How big this application is and when it last
+   changed (user request 2026-07-19). Both figures come from /api/codebase, which
+   counts the source live, so the label can't go stale the way a typed-in one would. */
+.codebanner{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;margin-bottom:var(--gap);
+  padding:8px 14px;border:1px solid var(--line-soft);border-radius:11px;background:var(--panel);
+  font-size:11.5px;color:var(--muted)}
+.codebanner .cb-tag{font-size:9.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--accent);background:var(--accent-soft);border-radius:5px;padding:2px 6px}
+.codebanner b{color:var(--text);font-weight:650;font-variant-numeric:tabular-nums}
+.codebanner .cb-sep{color:var(--faint)}
+/* display:flex above beats the UA [hidden]{display:none} rule, so the banner
+   stayed visible on every screen — the same trap the top-bar .btn hit. */
+.codebanner[hidden]{display:none}
+
 /* ============================== GRID / WIDGETS ============================== */
 .grid{display:grid;grid-template-columns:repeat(24,1fr);grid-auto-rows:var(--row);gap:var(--gap);
   grid-auto-flow:row dense}
@@ -479,6 +493,7 @@ button.activity-chart-chip:disabled{opacity:.5;cursor:default}
       </div>
     </header>
     <div class="content">
+      <div class="codebanner" id="codeBanner" hidden></div>
       <div class="grid" id="grid"></div>
     </div>
   </div>
@@ -768,10 +783,16 @@ WIDGET_DEFS.overview.push({
   }
 });
 WIDGET_DEFS.overview.push({
-  id:'m-trading-profit', title:'2026 Trading Profit', size:'S', span:3,
-  mount(body){
+  id:'m-trading-profit', title:'Trading Profit', size:'S', span:3,
+  mount(body,action,widgetEl){
     body.classList.add('metric-body');
-    const m=DATA.overview.metrics.trading_profit_2026;
+    // The year comes from the DATA, not the title string — it used to be a literal
+    // '2026' in both, which would have gone stale on 1 Jan (2026-07-19).
+    const m=DATA.overview.metrics.trading_profit;
+    if(widgetEl && m.year){
+      const t=widgetEl.querySelector('.widget-title');
+      if(t) t.textContent=m.year+' Trading Profit';
+    }
     body.innerHTML='<div class="metric">'+
       '<div class="metric-main"><div class="metric-value" style="color:'+(m.value>=0?'var(--success)':'var(--danger)')+'">'+fmtMoneyCompact(m.value)+'</div>'+
       '<div class="metric-sub">'+fmtNum(m.sells)+' closed sells</div></div></div>';
@@ -1300,12 +1321,16 @@ WIDGET_DEFS.portfolio.push({
 
 /* ---------------------- Historic ---------------------- */
 WIDGET_DEFS.historic.push({
-  id:'summary-chips', title:'2026 Trading Summary', size:'S', span:24,
-  mount(body){
+  id:'summary-chips', title:'Trading Summary', size:'S', span:24,
+  mount(body,action,widgetEl){
     const s=DATA.historic.summary||{};
-    const profitColor=(s.total_profit_2026||0)>=0?'var(--success)':'var(--danger)';
+    if(widgetEl && s.year){
+      const t=widgetEl.querySelector('.widget-title');
+      if(t) t.textContent=s.year+' Trading Summary';
+    }
+    const profitColor=(s.total_profit||0)>=0?'var(--success)':'var(--danger)';
     body.innerHTML='<div class="stat-row">'+
-      '<div class="stat-chip"><span class="sc-label">Total 2026 Profit</span><span class="sc-value" style="color:'+profitColor+'">'+fmtMoney(s.total_profit_2026,2)+'</span></div>'+
+      '<div class="stat-chip"><span class="sc-label">Total '+escapeHtml(String(s.year||''))+' Profit</span><span class="sc-value" style="color:'+profitColor+'">'+fmtMoney(s.total_profit,2)+'</span></div>'+
       '<div class="stat-chip"><span class="sc-label">Win Rate</span><span class="sc-value">'+fmtPct(s.win_rate,1)+'</span></div>'+
       '<div class="stat-chip"><span class="sc-label">Closed Trades</span><span class="sc-value">'+fmtNum(s.count)+'</span></div>'+
       '</div>';
@@ -2179,8 +2204,40 @@ function setStatus(state){
   dot.className='status-dot '+(state==='ok'?'ok':state==='bad'?'bad':state==='pending'?'pending':'');
 }
 
+/* -------------------- render: codebase banner (Overview) -------------------- */
+// Fetched once per page load and cached: the server recomputes at most every 60s,
+// and re-walking the tree on every screen switch would be pointless work.
+let CODEBASE=null, codebaseAsked=false;
+function renderCodeBanner(){
+  const el=document.getElementById('codeBanner');
+  if(!el) return;
+  if(UI.screen!=='overview'){ el.hidden=true; return; }
+  if(!CODEBASE){
+    el.hidden=true;
+    if(!codebaseAsked){
+      codebaseAsked=true;
+      fetch('/api/codebase').then(r=>r.json()).then(d=>{ CODEBASE=d; renderCodeBanner(); })
+        .catch(()=>{ /* banner is informational — stay silent if the route is unavailable */ });
+    }
+    return;
+  }
+  const langs=Object.entries(CODEBASE.by_language||{})
+    .sort((a,b)=>b[1].lines-a[1].lines)
+    .map(([ext,v])=>escapeHtml(ext)+' '+fmtNum(v.lines))
+    .join(' · ');
+  el.innerHTML='<span class="cb-tag">Codebase</span>'+
+    '<span><b>'+fmtNum(CODEBASE.lines)+'</b> lines of code across <b>'+fmtNum(CODEBASE.files)+'</b> files</span>'+
+    '<span class="cb-sep">|</span>'+
+    '<span>Last updated <b>'+escapeHtml(fmtDate(String(CODEBASE.last_updated||'').slice(0,10)))+'</b></span>'+
+    (langs?'<span class="cb-sep">|</span><span title="Lines by file type">'+langs+'</span>':'');
+  el.title='Hand-written source only — dependencies, generated decks and run scratch excluded. '+
+    'Last updated = '+(CODEBASE.source||'last commit')+'.';
+  el.hidden=false;
+}
+
 /* ---------------------------- render: grid ---------------------------- */
 function renderGrid(){
+  renderCodeBanner();
   const grid=document.getElementById('grid');
   grid.classList.toggle('editing',UI.editMode);
   grid.innerHTML='';

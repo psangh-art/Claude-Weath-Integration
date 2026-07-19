@@ -311,7 +311,7 @@ things had to move together and MUST stay in sync on any future structural chang
 - **~5,600 in-sheet formulas + the cross-sheet VLOOKUPs** in History and 'Stocks of
   Interest' that point at Investments. openpyxl does NOT adjust formula references on
   insert, and no LibreOffice/Excel-COM engine is available here, so
-  `insert_marked_up_col_2026-07-16.py` (a one-off, already run) shifts them with the
+  `oneoff/insert_marked_up_col_2026-07-16.py` (a one-off, already run) shifts them with the
   formula Tokenizer — touching only real cell refs that resolve to Investments, never
   string literals (`googlefinance("INDEXFTSE:UKX")`, HYPERLINK urls), `'Base Data'!`
   refs, or a sheet's own refs. It also moved the merged title A1:W1→A1:X1, the
@@ -333,7 +333,7 @@ it (Arial 10 vs 9, no fill vs the green `FFC6EFCE`/grey `FFF2F2F2` pair, centred
 left/top). Fixed by `set_marked_up_flag()` in `update_master_sheet.py` — which styles
 column B atomically (value + Arial-9 font + green/grey fill + thin border + left/top)
 to MATCH column A 'Chart', the same way `set_chart_flag()` does — plus a one-off,
-`fix_marked_up_format_2026-07-16.py` (already run, backs the workbook up first), that
+`oneoff/fix_marked_up_format_2026-07-16.py` (already run, backs the workbook up first), that
 applied that style to all 355 existing rows and fixed the B2 header alignment. **Any
 future added/inserted column: mirror the adjacent column's font, fill, border and
 alignment in the writing code AND back-fill existing rows — matching the neighbour is
@@ -711,7 +711,7 @@ last gate before the workbook is imported into the Finance Google Sheet.
   `=HYPERLINK("…/chart/<chartId>/","📊 Layout")` (same pattern as Investments' col
   AJ). Below-alert block: column J, reproduced by the pipeline (chartId threaded
   through `update_master_sheet`'s matches). Section tables (hand-maintained): column
-  Q (P is 'Last Updated'), added by `add_tv_links_soi_2026-07-12.py`, gated on a
+  Q (P is 'Last Updated'), added by `oneoff/add_tv_links_soi_2026-07-12.py`, gated on a
   real-ticker regex so the FTSE-review-calendar / dividend-cover reference tables
   further down the sheet are left untouched. `ticker→chartId` is matched through
   `ticker_normalize`. Rows whose ticker has no captured chart get no link.
@@ -746,15 +746,25 @@ read this run (`lower`/`upper`), so a wrong level shows up wrong, which is the p
 
 ## Input-file consumption + preserved tabs (2026-07-12)
 
-- **Used input files are deleted after a fully successful app run** (user policy
-  2026-07-12): `consume_input_files.py` sends the consumed bank/broker exports —
-  and every other version of them in Downloads (` (N)` duplicates, `Delete `
-  copies) — to the **Recycle Bin** (never hard-deleted; that's the deliberate
-  safety floor). Families: activity.csv (Amex), data.csv (Barclays),
-  AccountSummary.csv, TransactionHistory*/transactions*.csv (Fidelity). The
-  master workbook is NEVER touched. Wired into `pipeline_app_server.js` after
-  all stages succeed; failed runs keep their inputs for the re-run.
-  `cleanup_downloads.py` itself is still rename-only.
+- **Used input files are ARCHIVED after a fully successful app run — the LAST
+  copy of each is kept** (user policy 2026-07-12, amended 2026-07-18, re-confirmed
+  2026-07-19). `consume_input_files.py` MOVES the newest export of each type into
+  **`~/Downloads/old_pipeline/`** under a canonical name, so exactly ONE version of
+  each is retained there: `activity.csv` (Amex), `data.csv` (Barclays),
+  `AccountSummary.csv`, `TransactionHistory.csv` (historic) and
+  `TransactionHistory_pending.csv` (pending) — the last two split by
+  `fidelity_file_classifier` content, not filename. A prior copy already in
+  old_pipeline is replaced, so history never accumulates. **Every OTHER version left
+  in Downloads** (the browser's ` (N)` duplicates, `Delete ` copies) goes to the
+  Recycle Bin. Nothing is ever hard-deleted — that's the deliberate safety floor;
+  the recycle call is `config.recycle_to_bin` (this file used to carry a second,
+  identical SHFileOperation implementation — removed 2026-07-19). The master
+  workbook is NEVER touched. Wired into `pipeline_app_server.js` after all stages
+  succeed; failed runs keep their inputs for the re-run. `cleanup_downloads.py`
+  itself is still rename-only.
+  - Note: the Amex family matches **`activity.csv` only**. An `activity.xlsx` sitting
+    in Downloads is neither read by `spending_summary.py` nor archived — export Amex
+    as CSV.
 - **`spending_summary.py` preserves manual tabs across rebuilds**: it recreates
   the workbook from scratch each run, which used to silently drop
   hand-maintained tabs — 'Payslip Summary' and 'Retirement Income Plan' were
@@ -762,7 +772,7 @@ read this run (`lower`/`upper`), so a wrong level shows up wrong, which is the p
   data as of that date). `preserve_manual_sheets()` now carries over any sheet
   in the existing file that the run didn't generate.
 - **Stats charts sit in a 3-across grid from the top**
-  (`arrange_stats_charts_2026-07-12.py`, one-off — re-run it if charts are
+  (`oneoff/arrange_stats_charts_2026-07-12.py`, one-off — re-run it if charts are
   added/moved). 'Chart Last Checked' (Investments col AK) is styled to match
   the other headers, enforced idempotently by `get_or_create_last_checked_col`.
 - Agents: **`test-analyst`** (end-to-end data-quality audits across every
@@ -776,7 +786,7 @@ read this run (`lower`/`upper`), so a wrong level shows up wrong, which is the p
   fixes every instance of a shared root cause with an A/B measurement, and
   flags genuinely new patterns for the user, 2026-07-17). The architecture
   deck's agents slide is refreshed on request by re-running
-  `add_agents_slide_2026-07-12.py` (re-runnable — replaces the slide).
+  `oneoff/add_agents_slide_2026-07-12.py` (re-runnable — replaces the slide).
 
 ## Investment Dashboard + output hygiene (2026-07-17)
 
@@ -812,9 +822,9 @@ A batch of dashboard/deck changes, all committed:
   downloads — **no slide renderer (LibreOffice) is available**, so there's no image
   gallery for pptx-only diagram decks.
 - **Architecture deck now reflects the Investment Dashboard.**
-  `add_investment_dashboard_slide_2026-07-17.py` inserts a dedicated readable slide
+  `oneoff/add_investment_dashboard_slide_2026-07-17.py` inserts a dedicated readable slide
   (after the flow diagram) with click-through links to `localhost:4600`; the Agents
-  slide (`add_agents_slide_2026-07-12.py`) now lists all 8 agents with a
+  slide (`oneoff/add_agents_slide_2026-07-12.py`) now lists all 8 agents with a
   count-adaptive row layout. AZN's Alert Low = the 12,218 horizontal support (the
   old stray-blue note was stale — resolved).
 
@@ -899,10 +909,10 @@ Three user requests, all committed:
   live source". Verified end-to-end in-browser: 5 LSE equities updated with real
   day-changes, Palladium correctly unsupported.
 - **Architecture deck old-version deletion.** Item #3 of the request. The newest
-  architecture editor (`add_investment_dashboard_slide_2026-07-17.py`) already called
+  architecture editor (`oneoff/add_investment_dashboard_slide_2026-07-17.py`) already called
   `purge_old_versions`, and the end-of-pipeline `purge_output_duplicates.py` sweeps the
   architecture deck too. Added the same `purge_old_versions(deck_path)` call to
-  `add_agents_slide_2026-07-12.py` (which CLAUDE.md says is re-run on request) for
+  `oneoff/add_agents_slide_2026-07-12.py` (which CLAUDE.md says is re-run on request) for
   consistency. Alert_Rules_Model (`build_rules_deck.py`) and Investment_Review_Deck
   (`build_review_deck.py`) already purged — confirmed, no change needed.
 
@@ -1193,7 +1203,7 @@ include payslip uploads in the pipeline — we'll load it via this new payslips 
 ## Dashboard batch (2026-07-19, same session)
 
 - **'Long Term' investment type renamed to 'Strategic'** (user request). One-off
-  `rename_type_strategic_2026-07-19.py` updated the Investments `Type` cell and any
+  `oneoff/rename_type_strategic_2026-07-19.py` updated the Investments `Type` cell and any
   data-validation dropdown offering the old wording; `dashboard_data` classifies on
   `'strategic'` but still accepts `'long term'` so an un-migrated sheet reads the same,
   and the Targets breakdown label is now 'Strategic'.
@@ -1250,6 +1260,69 @@ drives it and `GET /api/tradingview-status` reports reachability.
   so needs TradingView relaunched with the debug port, which would drop the user's
   running session, so it was left for them to confirm.
 
+## Codebase banner + consolidation pass (2026-07-19)
+
+- **Overview carries a live "Codebase" banner** (user request): lines of code, file
+  count, last-updated date and a per-language split, above the widget grid on the
+  Overview screen only. Both figures are COMPUTED, never typed — `scripts/codebase_stats.js`
+  (served at `/api/codebase`, 60s cache) walks the tree counting hand-written source
+  and takes "last updated" from the last **git commit**, not a file mtime (a mtime
+  changes when a generated file is rewritten or OneDrive touches something, which
+  would claim an update that never happened). Three things are excluded on purpose,
+  or the number measures the wrong thing: dependencies (`node_modules`), GENERATED
+  artefacts in the tree (`architecture.html` / `alert_rules.html` / `review_deck.html`
+  are rendered from the .pptx decks — 1.9 MB of machine output — plus
+  `package-lock.json`), and run scratch (`*_tmp.json`, `logs/`, `screenshots/`,
+  `data/`, `__pycache__`). Docs (`.md`) are out too: CLAUDE.md alone is thousands of
+  lines of prose. Reads ~19,300 lines / 73 files today.
+  - The banner is hidden off-Overview with the `hidden` attribute plus an explicit
+    **`.codebanner[hidden]{display:none}`** rule — `display:flex` beats the UA
+    `[hidden]` rule, the same trap the top-bar `.btn` hit (it showed on every screen
+    until that rule was added).
+
+- **The trading-profit YEAR is derived, not a literal.** `dashboard_data.py` pinned
+  `2026` in four places and the front end hardcoded it in two widget titles, so on
+  1 Jan the figure would have silently gone to £0 under a heading still saying 2026.
+  Now `profit_year` = the calendar year of the most recent completed sale (not
+  today's date — an early-January dashboard should still report the year that has
+  trades in it), carried in the JSON as `trading_profit.year` /
+  `historic.summary.year`, and both widgets rewrite their own title from it. Keys
+  renamed `trading_profit_2026`→`trading_profit`, `total_profit_2026`→`total_profit`.
+  Values unchanged (£38,255.54 / 31 sells, verified before and after).
+
+- **Duplication removed (same behaviour, one implementation each):**
+  - `scripts/server_util.js` — `serveFile`, the content-type map and `isAllowedAsset`
+    were duplicated across `pipeline_app_server.js` and `dashboard_server.js`, with a
+    comment in one saying "same rule as the other". That's exactly how a **security**
+    rule (the `/asset` proxy whitelist) gets tightened in one place and not the other.
+    Both now import it; the surviving `serveFile` is the streaming one.
+  - `scripts/yahoo.js` — the Intelligence widgets and the Watchlist "Live prices"
+    button each had their own copy of the Yahoo chart URL and the last/previous-close
+    extraction. One `fetchQuote(symbol, {range, interval})` + an `r2()` rounder now.
+  - `config.recycle_to_bin` — `consume_input_files.py` carried a second, identical
+    `SHFILEOPSTRUCTW` block.
+  - `xlsx_sheet_copy.copy_cell_style` + `offset_formula` — the six-line style-copy was
+    re-inlined in several writers, and `offset_formula` (re-anchor a row-relative
+    formula when a row moves — the recurring "formula still points at its old row"
+    bug) lived inside an archived one-off that `tests/` imported by module name.
+    Both are now in the shared module; `xlsx_sheet_copy.py` is "shared openpyxl
+    helpers", no longer just sheet copying.
+  - Unused imports dropped from `build_rules_deck.py`, `fidelity_file_classifier.py`,
+    `spending_summary.py`.
+
+- **`scripts/oneoff/` — the 18 dated, already-executed migration scripts moved out of
+  `scripts/`** (~1,800 lines), leaving the ~24 that actually run. Nothing in the
+  pipeline imported them; the only cross-references were documentation. `scripts/oneoff/README.md`
+  carries the rules — they are a RECORD, not a template (several target a workbook
+  layout that no longer exists, e.g. `oneoff/fix_relx_history_2026-07-10.py` still names the
+  pre-rename `'Stocks Buy Strategy'` sheet), and only the ones this file calls
+  re-runnable should ever be re-run, now as `python scripts/oneoff/<name>.py`.
+
+All verified after the pass: 27/27 tests pass, all 24 live Python modules import,
+both servers start and every route answers (`/`, `/api/codebase`, `/api/intelligence`,
+`/api/watchlist-live`, `/files`, `/products`), and `dashboard_data.py` reproduces
+identical figures.
+
 ## Open items / things to verify on the next export run
 
 - Brent/Palladium/Copper charts were added by the user 2026-07-13 and the symbol
@@ -1291,7 +1364,7 @@ drives it and `GET /api/tradingview-status` reports reachability.
   reference before considering the rename safe, and rewriting each one to
   `'Investments'!$C:$I`. **Any future sheet rename in this workbook must repeat this
   scan-and-rewrite step** — don't assume `ws.title = ...` is sufficient.
-  `scripts/fix_relx_history_2026-07-10.py` (a historical one-off, already executed)
+  `scripts/oneoff/fix_relx_history_2026-07-10.py` (a historical one-off, already executed)
   still contains the old hardcoded `'Stocks Buy Strategy'!` string in its source —
   left as-is since it's a dated record of a completed run, not something meant to be
   re-run; do not reuse it as a template without updating that reference first.

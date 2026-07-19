@@ -4,8 +4,8 @@ no Downloads files, no network. Run with:
     C:\\Users\\Paul\\AppData\\Local\\Python\\bin\\python.exe -m pytest tests/ -q
 
 Covers the four modules whose logic is pure enough to test without the live
-environment: ticker_normalize, the restructure script's offset_formula, the
-below-alert row builder, and the Fidelity export classifier.
+environment: ticker_normalize, xlsx_sheet_copy's offset_formula, the below-alert
+row builder, and the Fidelity export classifier.
 """
 import json
 import os
@@ -90,11 +90,9 @@ class TestMasterTickersMatch:
         assert not master_tickers_match('ADM', '')
 
 
-# ── offset_formula (Stocks of Interest restructure) ─────────────────────────
+# ── offset_formula (row-relative formula re-anchoring) ─────────────────────
 
-sys.path.insert(0, SCRIPTS)
-import importlib  # noqa: E402
-offset_formula = importlib.import_module('restructure_soi_stats_2026-07-11').offset_formula
+from xlsx_sheet_copy import offset_formula  # noqa: E402
 
 
 class TestOffsetFormula:

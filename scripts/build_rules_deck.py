@@ -18,9 +18,8 @@ import sys
 import json
 
 from pptx import Presentation
-from pptx.util import Inches, Pt
+from pptx.util import Inches
 from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
@@ -29,7 +28,7 @@ sys.path.insert(0, SCRIPT_DIR)
 # both decks must look like the same document.
 from build_review_deck import (add_text, add_picture_fitted, section_slide,
                                NAVY, RED, AMBER, GREEN, GREY, SLIDE_W, SLIDE_H)
-from config import CFG, downloads_dir, purge_old_versions
+from config import downloads_dir, purge_old_versions
 from channel_detect import ON_ALERT_TOL
 
 DEFAULT_RESULTS = os.path.join(os.path.dirname(SCRIPT_DIR), 'logs', 'channel_results_newrules.json')

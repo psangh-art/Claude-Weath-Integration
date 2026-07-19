@@ -21,7 +21,7 @@ import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-from xlsx_sheet_copy import copy_sheet_into
+from xlsx_sheet_copy import copy_sheet_into, copy_cell_style
 
 # Windows' default console codepage (cp1252) can't encode characters like
 # "→" used in console-only status prints below — reconfigure to UTF-8 so a
@@ -3113,7 +3113,6 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     GROUPS_ORDER = ['Shares', 'Income Funds', 'Non-Income Funds']
 
     # Build data: group → account → value
-    from collections import defaultdict as _dd
     metric_data = {g: {a: 0.0 for a, _ in METRIC_ACCS_ORDER} for g in GROUPS_ORDER}
     metric_data['_cash'] = {a: 0.0 for a, _ in METRIC_ACCS_ORDER}
 
@@ -3587,7 +3586,6 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
         ws_targets = wb.create_sheet("Targets")
         ws_targets.sheet_properties.tabColor = "E67E22"
 
-        from copy import copy as _copy
         dst_row = 1
         for sr in range(move_start, move_end + 1):
             for sc in range(1, ws.max_column + 1):
@@ -3596,15 +3594,7 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
                 dst_cell.value = src_cell.value
                 if src_cell.data_type == 'f':
                     dst_cell.data_type = 'f'
-                if src_cell.has_style:
-                    try:
-                        dst_cell.font          = _copy(src_cell.font)
-                        dst_cell.fill          = _copy(src_cell.fill)
-                        dst_cell.alignment     = _copy(src_cell.alignment)
-                        dst_cell.number_format = src_cell.number_format
-                        dst_cell.border        = _copy(src_cell.border)
-                    except Exception:
-                        pass
+                copy_cell_style(src_cell, dst_cell)
             if sr in ws.row_dimensions:
                 ws_targets.row_dimensions[dst_row].height = ws.row_dimensions[sr].height
             dst_row += 1

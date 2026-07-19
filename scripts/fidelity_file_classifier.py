@@ -21,7 +21,6 @@ import csv
 import io
 import json
 import re
-from datetime import datetime
 
 if sys.platform == "win32":
     try:

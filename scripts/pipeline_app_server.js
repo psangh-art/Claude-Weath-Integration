@@ -18,6 +18,7 @@ import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 import { downloadsDir, downloadsFile, pythonExe, financeSheetUrl, onedriveProductsDir, productWebLink, CFG } from './config.js';
+import { serveFile, isAllowedAsset as isAllowedAssetIn } from './server_util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DOWNLOADS = downloadsDir();
@@ -41,37 +42,10 @@ const FINANCE_SHEET_URL = financeSheetUrl();
 // PowerPoint/Excel Online can open them — ~/Downloads itself isn't synced.
 const ONEDRIVE_PRODUCTS_DIR = onedriveProductsDir();
 
-const CONTENT_TYPES = {
-  '.html': 'text/html; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-};
-
-function serveFile(res, filePath, { download } = {}) {
-  if (!fs.existsSync(filePath)) {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not found');
-    return;
-  }
-  const type = CONTENT_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
-  const headers = { 'Content-Type': type };
-  if (download) headers['Content-Disposition'] = `attachment; filename="${path.basename(filePath)}"`;
-  res.writeHead(200, headers);
-  fs.createReadStream(filePath).pipe(res);
-}
-
 // Only ever serve image files that live inside the repo (screenshots/) or the
 // user's Downloads — never an arbitrary path from the query string.
-function isAllowedAsset(abs) {
-  const resolved = path.resolve(abs);
-  const roots = [path.resolve(REPO_ROOT), path.resolve(DOWNLOADS)];
-  return roots.some((root) => resolved === root || resolved.startsWith(root + path.sep))
-    && /\.(png|jpe?g)$/i.test(resolved);
-}
+const ASSET_ROOTS = [REPO_ROOT, DOWNLOADS];
+const isAllowedAsset = (abs) => isAllowedAssetIn(abs, ASSET_ROOTS);
 
 // Mirrors whichever of the three built products currently exist in Downloads
 // into the OneDrive-synced products folder, overwriting in place (not

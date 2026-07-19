@@ -29,12 +29,15 @@ all stages succeed; without --apply it just prints what it would remove.
 
 Usage: python consume_input_files.py [downloads_dir] [--apply]
 """
-import ctypes
 import json
 import os
 import re
 import sys
 from datetime import datetime
+
+# Recycle-bin delete lives in config.py — one implementation of the SHFileOperation
+# call for the whole repo (this file used to carry a second, identical copy).
+from config import recycle_to_bin
 
 if sys.platform == "win32":
     try:
@@ -85,36 +88,6 @@ def record_ingestion(hits):
     os.makedirs(os.path.dirname(INGESTION_STATE), exist_ok=True)
     with open(INGESTION_STATE, 'w', encoding='utf-8') as f:
         json.dump(state, f, indent=2)
-
-FOF_SILENT = 0x0004
-FOF_NOCONFIRMATION = 0x0010
-FOF_ALLOWUNDO = 0x0040
-FOF_NOERRORUI = 0x0400
-FO_DELETE = 0x0003
-
-
-class SHFILEOPSTRUCTW(ctypes.Structure):
-    _fields_ = [
-        ('hwnd', ctypes.c_void_p),
-        ('wFunc', ctypes.c_uint),
-        ('pFrom', ctypes.c_wchar_p),
-        ('pTo', ctypes.c_wchar_p),
-        ('fFlags', ctypes.c_ushort),
-        ('fAnyOperationsAborted', ctypes.c_int),
-        ('hNameMappings', ctypes.c_void_p),
-        ('lpszProgressTitle', ctypes.c_wchar_p),
-    ]
-
-
-def recycle(paths):
-    """Send `paths` to the Recycle Bin in one operation. Returns 0 on success."""
-    src = '\0'.join(os.path.abspath(p) for p in paths) + '\0\0'
-    op = SHFILEOPSTRUCTW()
-    op.wFunc = FO_DELETE
-    op.pFrom = src
-    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
-    return ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
-
 
 def find_consumables(downloads_dir):
     hits = []
@@ -201,19 +174,20 @@ def main():
         dest = os.path.join(old_dir, CANON_NAME[fam])
         try:
             if os.path.exists(dest):        # keep only the last version — recycle the old one
-                recycle([dest])
+                recycle_to_bin([dest])
             os.replace(h['path'], dest)     # same-drive move; overwrites if recycle missed it
             moved += 1
         except OSError as e:
             print(f'  SKIPPED move of {h["name"]}: {e}', file=sys.stderr)
 
-    rc = recycle([h['path'] for h in to_recycle]) if to_recycle else 0
+    if to_recycle:
+        recycle_to_bin([h['path'] for h in to_recycle])
     remaining = [h['name'] for h in to_recycle if os.path.exists(h['path'])]
-    if rc == 0 and not remaining:
+    if not remaining:
         print(f'Kept {moved} latest input(s) in {OLD_DIR_NAME}/; '
               f'recycled {len(to_recycle)} duplicate(s).')
     else:
-        print(f'WARNING: recycle returned {rc}; still present: {remaining or "none"}',
+        print(f'WARNING: recycle left files behind; still present: {remaining}',
               file=sys.stderr)
         sys.exit(1)
 

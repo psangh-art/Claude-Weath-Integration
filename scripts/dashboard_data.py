@@ -903,7 +903,13 @@ def build(workbook=WORKBOOK):
     # ---------------- Historic (completed sales) ----------------
     hist = wb['History']
     sold = []
-    profit_2026 = 0.0
+    # The trading-profit year is DERIVED, never a literal (2026-07-19): it was
+    # pinned to 2026, so on 1 Jan the figure would silently have gone to £0 with a
+    # widget still captioned "2026". Taken from the calendar year of the most recent
+    # completed sale rather than today's date, so an early-January dashboard still
+    # reports the year that actually has trades in it instead of an empty one.
+    profit_year = None
+    profit_ytd = 0.0
     wins = 0
     for r in range(2, hist.max_row + 1):
         sell = hist.cell(r, H_SELL).value
@@ -915,11 +921,8 @@ def build(workbook=WORKBOOK):
         buy = hist.cell(r, H_BUY).value
         days = (sell - buy).days if isinstance(buy, datetime.datetime) else None
         pnl_pct = (profit / cost * 100.0) if (profit is not None and cost) else None
-        if profit is not None:
-            if sell.year == 2026:
-                profit_2026 += profit
-            if profit > 0:
-                wins += 1
+        if profit is not None and profit > 0:
+            wins += 1
         sold.append({
             'name': hist.cell(r, H_INV).value,
             'account': hist.cell(r, H_ACCT).value,
@@ -931,6 +934,11 @@ def build(workbook=WORKBOOK):
             'days_held': days,
         })
     win_rate = round(wins / len(sold) * 100.0, 1) if sold else None
+    if sold:
+        profit_year = max(int(s['sell_date'][:4]) for s in sold)
+        profit_ytd = sum(s['profit'] for s in sold
+                         if s['profit'] is not None and s['sell_date'][:4] == str(profit_year))
+    sells_in_year = sum(1 for s in sold if s['sell_date'][:4] == str(profit_year))
 
     # ---------------- Watchlist (Stocks of Interest, within 5% of alert low) ----------
     # Base Data (literal, from HL.co.uk) gives P/E + Div Yield by ticker — the section
@@ -1036,8 +1044,8 @@ def build(workbook=WORKBOOK):
                                               'forward in the Wealth Summary.' if gain_stale_months else ''))
                                           if gain_month_label else
                                           'Month-on-month investment-account change (includes contributions).'},
-            'trading_profit_2026': {'value': round(profit_2026, 2),
-                                    'sells': sum(1 for s in sold if s['sell_date'][:4] == '2026')},
+            'trading_profit': {'value': round(profit_ytd, 2), 'year': profit_year,
+                               'sells': sells_in_year},
             'monthly_dividend': {'value': monthly_dividend,
                                  'caveat': f'Income funds £{funds_monthly_income:,.0f}/mo + share income '
                                            f'£{share_income_monthly:,.0f}/mo + share accumulation '
@@ -1070,13 +1078,13 @@ def build(workbook=WORKBOOK):
                  'investments': investments, 'income_funds': income_funds,
                  'income_positions': income_positions,
                  'income_positions_total': income_positions_total,
-                 'income_summary': {'year': 2026,
+                 'income_summary': {'year': now.year,
                                     'total_annual_income': funds_annual_income,
                                     'total_monthly_income': monthly_dividend,
                                     'fund_count': len(income_funds)}}
     historic = {'generated_at': now.isoformat(timespec='seconds'),
                 'sold': sold,
-                'summary': {'total_profit_2026': round(profit_2026, 2),
+                'summary': {'total_profit': round(profit_ytd, 2), 'year': profit_year,
                             'count': len(sold), 'win_rate': win_rate}}
     watchlist_payload = {'generated_at': now.isoformat(timespec='seconds'),
                          'criterion': 'Within 5% of alert low (Stocks of Interest — at lower boundary)',
@@ -1258,7 +1266,8 @@ if __name__ == '__main__':
     print('Wrote dashboard JSON ->', OUT_DIR)
     print(f"  Portfolio value : £{ov['portfolio_value']['value']:,.0f}")
     print(f"  Gain last month : £{(ov['gain_last_month']['value'] or 0):,.0f}")
-    print(f"  2026 sells profit: £{ov['trading_profit_2026']['value']:,.0f} ({ov['trading_profit_2026']['sells']} sells)")
+    print(f"  {ov['trading_profit']['year']} sells profit: £{ov['trading_profit']['value']:,.0f} "
+          f"({ov['trading_profit']['sells']} sells)")
     print(f"  Monthly dividend: £{ov['monthly_dividend']['value']:,.0f}")
     print(f"  Cash available  : £{ov['cash_available']['value']:,.0f}")
     print(f"  Holdings: {len(d['portfolio']['investments'])} investments, {len(d['portfolio']['income_funds'])} income funds")

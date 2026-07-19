@@ -13,6 +13,9 @@ import { fileURLToPath } from 'url';
 import os from 'os';
 import { productWebLink, CFG } from './config.js';
 import { openChart, tvAvailable } from './tv_open.js';
+import { codebaseStats } from './codebase_stats.js';
+import { serveFile, isAllowedAsset as isAllowedAssetIn } from './server_util.js';
+import { fetchQuote, r2 } from './yahoo.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -52,18 +55,8 @@ const ensureAlertRulesHtml = () => ensureDeckHtml(ALERTRULES_PPTX, ALERTRULES_HT
 
 // Whitelist for the /asset image proxy the review-deck gallery uses: only images
 // inside the repo or Downloads (same rule as pipeline_app_server.js).
-function isAllowedAsset(abs) {
-  const resolved = path.resolve(abs);
-  const roots = [path.resolve(REPO_ROOT), path.resolve(path.join(os.homedir(), 'Downloads'))];
-  return roots.some(root => resolved === root || resolved.startsWith(root + path.sep))
-    && /\.(png|jpe?g)$/i.test(resolved);
-}
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
-};
+const ASSET_ROOTS = [REPO_ROOT, path.join(os.homedir(), 'Downloads')];
+const isAllowedAsset = (abs) => isAllowedAssetIn(abs, ASSET_ROOTS);
 
 // ---- Pipeline app (Investment Production Centre, port 4590) ---------------
 // The dashboard's "Pipeline" nav link opens the build screen that runs the
@@ -144,46 +137,18 @@ const INTEL_INDICES = Array.isArray(CFG.intelligenceIndices) ? CFG.intelligenceI
 const INTEL_TTL_MS = 5 * 60 * 1000;      // serve cache for 5 min unless forced
 let intelCache = { at: 0, payload: null };
 
-async function fetchJson(url, ms) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
-  try {
-    const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return await r.json();
-  } finally {
-    clearTimeout(t);
-  }
-}
-
 async function fetchIndex(idx) {
-  const url = 'https://query1.finance.yahoo.com/v8/finance/chart/'
-            + encodeURIComponent(idx.symbol) + '?range=1mo&interval=1d';
   const base = { key: idx.key, label: idx.label, symbol: idx.symbol, currency: idx.currency || null };
   try {
-    const j = await fetchJson(url, 8000);
-    const result = j && j.chart && j.chart.result && j.chart.result[0];
-    if (!result) return { ...base, error: 'no data (check symbol)' };
-    const meta = result.meta || {};
-    const closes = (((result.indicators || {}).quote || [])[0] || {}).close || [];
-    const series = closes.filter(x => typeof x === 'number').slice(-30);
-    const last = typeof meta.regularMarketPrice === 'number' ? meta.regularMarketPrice
-               : (series.length ? series[series.length - 1] : null);
-    const prev = typeof meta.chartPreviousClose === 'number' ? meta.chartPreviousClose
-               : (typeof meta.previousClose === 'number' ? meta.previousClose : null);
-    if (last == null) return { ...base, error: 'no data (check symbol)' };
-    const change = (prev != null) ? last - prev : null;
-    const change_pct = (prev) ? (change / prev) * 100 : null;
-    const ts = (result.timestamp && result.timestamp.length)
-             ? new Date(result.timestamp[result.timestamp.length - 1] * 1000).toISOString().slice(0, 10)
-             : null;
+    // 1mo/1d gives the 30-point close series the sparkline draws.
+    const q = await fetchQuote(idx.symbol, { range: '1mo', interval: '1d' });
     return {
       ...base,
-      value: Math.round(last * 100) / 100,
-      change: change == null ? null : Math.round(change * 100) / 100,
-      change_pct: change_pct == null ? null : Math.round(change_pct * 100) / 100,
-      as_of: ts,
-      series: series.length >= 2 ? series : [],
+      value: r2(q.price),
+      change: r2(q.change),
+      change_pct: r2(q.change_pct),
+      as_of: q.as_of,
+      series: q.series.length >= 2 ? q.series : [],
     };
   } catch (e) {
     return { ...base, error: String(e.message || e) };
@@ -219,20 +184,6 @@ function yahooSymbolFor(ticker) {
   return t.replace(/\./g, '-') + '.L';          // default: LSE equity in pence
 }
 
-async function fetchQuote(symbol) {
-  const url = 'https://query1.finance.yahoo.com/v8/finance/chart/'
-            + encodeURIComponent(symbol) + '?range=5d&interval=1d';
-  const j = await fetchJson(url, 8000);
-  const result = j && j.chart && j.chart.result && j.chart.result[0];
-  if (!result) throw new Error('no data (check symbol)');
-  const meta = result.meta || {};
-  const last = typeof meta.regularMarketPrice === 'number' ? meta.regularMarketPrice : null;
-  const prev = typeof meta.chartPreviousClose === 'number' ? meta.chartPreviousClose
-             : (typeof meta.previousClose === 'number' ? meta.previousClose : null);
-  if (last == null) throw new Error('no price');
-  return { price: last, prev, currency: meta.currency || null };
-}
-
 async function getWatchlistLive() {
   let tickers = [];
   try {
@@ -248,26 +199,13 @@ async function getWatchlistLive() {
     if (!sym) { prices[t] = { error: 'no live source' }; return; }
     try {
       const q = await fetchQuote(sym);
-      const change = (q.prev != null) ? q.price - q.prev : null;
-      prices[t] = {
-        price: Math.round(q.price * 100) / 100,
-        change: change == null ? null : Math.round(change * 100) / 100,
-        change_pct: (q.prev) ? Math.round((change / q.prev * 100) * 100) / 100 : null,
-        currency: q.currency, symbol: sym,
-      };
+      prices[t] = { price: r2(q.price), change: r2(q.change), change_pct: r2(q.change_pct),
+                    currency: q.currency, symbol: sym };
     } catch (e) {
       prices[t] = { error: String(e.message || e), symbol: sym };
     }
   }));
   return { at: new Date().toISOString(), prices };
-}
-
-function serveFile(res, file) {
-  fs.readFile(file, (e, buf) => {
-    if (e) { res.writeHead(404); res.end('Not found'); return; }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream' });
-    res.end(buf);
-  });
 }
 
 const server = http.createServer((req, res) => {
@@ -382,6 +320,15 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ available: up }));
     });
+    return;
+  }
+
+  // Size + last-updated date of this application's own source, for the Overview
+  // banner (user request 2026-07-19). Computed live (60s cache in codebase_stats)
+  // so the figure can never drift from the code the way a hardcoded one would.
+  if (pathname === '/api/codebase') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(codebaseStats()));
     return;
   }
 

@@ -21,11 +21,14 @@ references 'Stocks of Interest' by name (scanned all formula cells first).
 Usage: python restructure_soi_stats_2026-07-11.py <in.xlsx> <out.xlsx>
 (run against a copy first; only point at the live file once the copy verifies)
 """
+import os
 import sys
-import re
 from copy import copy
 
 import openpyxl
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from xlsx_sheet_copy import offset_formula  # noqa: E402  (shared helper, was defined here)
 
 # Rows 1..RESERVED_BLOCK are owned by the below-alert table (title, note, blank,
 # header, up to MAX_DATA_ROWS data rows, trailing blank). add_below_alert_sheet.py
@@ -39,20 +42,6 @@ if sys.platform == "win32":
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
-
-
-def offset_formula(formula, offset):
-    """Add `offset` to the row number of every unquoted, unqualified A1-style
-    reference. Text inside double-quoted string literals is left untouched, as
-    are absolute-column-only ranges ($C:$I) and bare numeric arguments."""
-    parts = formula.split('"')
-    for i in range(0, len(parts), 2):  # even indexes are outside quotes
-        parts[i] = re.sub(
-            r"(?<![A-Za-z0-9:$!])([A-Z]{1,3})(\d{1,5})",
-            lambda m: m.group(1) + str(int(m.group(2)) + offset),
-            parts[i],
-        )
-    return '"'.join(parts)
 
 
 def copy_cell(src, dst):
