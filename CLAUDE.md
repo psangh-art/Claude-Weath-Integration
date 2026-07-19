@@ -1148,6 +1148,76 @@ back-ramp shifts to end at the real snapshot month, and the Targets SIPP/ISA row
 out byte-identical (they now read the July column, which holds what the May column
 used to).
 
+## Payslips screen + pension allowance (2026-07-19)
+
+A **Payslips** screen was added to the Investment Dashboard, and payslip loading was
+deliberately kept OUT of the pipeline (user decision 2026-07-19: "we don't need to
+include payslip uploads in the pipeline — we'll load it via this new payslips screen").
+
+- **Data**: `dashboard_data.build_payslips()` reads the workbook's hand-maintained
+  `Payslip Summary` tab (band rows and TOTAL rows are skipped — they're formulas and
+  read as None locally, the same constraint as everything else in that file) and emits
+  `payslips.json`: every row, per-tax-year totals, and the allowance block below.
+- **Upload**: the screen's button POSTs the PDF as a raw body to
+  `/api/payslips/upload` (no multipart parser — `dashboard_server.js` has no deps),
+  which runs `scripts/payslip_ingest.py` and, on success, regenerates the dashboard
+  data so the row appears at once. `?dry=1` exercises the whole path without writing.
+  `payslip_ingest.py` keeps extraction and writing separate ON PURPOSE: a payslip whose
+  layout it doesn't recognise raises `PayslipParseError` and the UI shows why, rather
+  than writing a guessed number into a live financial sheet. Field labels live in
+  `FIELD_LABELS` so a new payroll layout is a one-line addition; `--dump` prints the
+  PDF text to find the right labels. A new row copies the styling of the row above it
+  (the "match the neighbour" rule), backs the workbook up, and the source PDF is
+  archived to `data/payslips/`. **An image-only/scanned PDF is rejected with a clear
+  message** — there is no OCR in this path.
+- **Pension annual allowance panel, at the top of the screen** (user request). Shows
+  what's left this tax year and **which month contributions must stop**.
+  `dashboard_data.pension_allowance()` consumes carry-forward HMRC's way — the year's
+  own allowance first, then unused allowance from the previous three years OLDEST
+  FIRST, walking the years in order so each year's carry-forward reflects what later
+  years already ate. Current read: £60,000 + £13,263 carried from 2023/24 = £73,263
+  available, £12,789 used, **£60,474 left, stop after Feb 2027**.
+  - **THIS IS ARITHMETIC ON PAUL'S OWN PAYSLIPS, NOT TAX ADVICE**, and the three things
+    it cannot know are listed on the card rather than buried: the **taper** (adjusted
+    income over £260k, which covers all income and can't be read off a payslip), the
+    **MPAA**, and **contributions paid outside payroll** (a personal payment into the
+    SIPP is an input to the same allowance). Any one of them changes the answer.
+  - A pay month with no payslip uploaded is still counted at the current rate and
+    flagged `est` — dropping it would understate the year's input and overstate what's
+    left. That's why June appears in the projection.
+- The pipeline top-bar buttons (`Run <date>`, `Refresh`) are **hidden on Payslips**
+  via `NO_PIPELINE_ACTIONS` — nothing on that screen comes from a pipeline run.
+  Note they are hidden with `style.display`, not the `hidden` attribute: `.btn` sets
+  `display:inline-flex`, which beats the UA `[hidden]{display:none}` rule.
+
+## Dashboard batch (2026-07-19, same session)
+
+- **'Long Term' investment type renamed to 'Strategic'** (user request). One-off
+  `rename_type_strategic_2026-07-19.py` updated the Investments `Type` cell and any
+  data-validation dropdown offering the old wording; `dashboard_data` classifies on
+  `'strategic'` but still accepts `'long term'` so an un-migrated sheet reads the same,
+  and the Targets breakdown label is now 'Strategic'.
+- **Gain vs Last Month now measures the last month with FRESH data, and names it in
+  the widget title** ("Gain — May 2026"). Two conditions, both needed: the month must
+  be COMPLETE (the current one is still accruing — July read +£193) *and* it must have
+  MOVED. The Wealth Summary carries the previous figure forward for any account not
+  re-imported, so June sat at May's exact total and a June-vs-May reading was **£0** —
+  just as misleading. The real answer is **May vs Apr, +£48,856**, and the caveat says
+  how many months since carry the same figure forward.
+- **Total Income** small metric on Overview, right of Accumulative Fund Income:
+  monthly dividend + accumulative fund income (£26.1k/mo, £313.1k/yr) — the two cards
+  to its left added up, so the split stays visible.
+- **Accounts widget has a name filter** (holder, wrapper or account number; the account
+  number is only in the row tooltip, so filtering on it is the quickest way to find
+  one). **The total follows the filter** — a total ignoring it would sit under a short
+  list and read as their sum.
+- **Widget height scale gained a step.** There was nothing between L (6 rows, 344px)
+  and XL (16 rows, 944px), so "make Activity twice as tall" had no token to land on.
+  **XL is now 12 rows and the old 16-row XL became XXL**, which keeps the tokens
+  ascending and leaves Holdings / Sold Positions / the Payslips table at their existing
+  height. Activity went L → XL, exactly the requested doubling. `LAYOUT_KEY` bumped to
+  `v4` for the Total Income card.
+
 ## Open items / things to verify on the next export run
 
 - Brent/Palladium/Copper charts were added by the user 2026-07-13 and the symbol

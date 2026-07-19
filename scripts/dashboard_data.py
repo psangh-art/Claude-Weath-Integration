@@ -28,7 +28,7 @@ OUT_DIR = os.path.join(SCRIPT_DIR, 'dashboard_app', 'data')
 I_NAME, I_TICKER, I_HOLDINGS, I_CURPRICE = 3, 4, 5, 10
 I_ALERT_LOW, I_ALERT_LOW_SRC, I_ALERT_HIGH = 13, 14, 16
 I_TV = 37
-I_TYPE = 39   # 'Type' — Short Term / Long Term (added 2026-07-17)
+I_TYPE = 39   # 'Type' — Short Term / Strategic (renamed from 'Long Term' 2026-07-19)
 # --- Income Funds columns (header row 4, data from row 5) ---
 F_NAME, F_CURVAL, F_DIVYLD, F_MONTHLY_REV, F_ANNUAL_REV = 1, 3, 6, 9, 10
 # --- History columns (header row 1) ---
@@ -387,6 +387,236 @@ def _read_soi_band(soi, soif, band_substring, base, latest, changes=None):
     return rows
 
 
+# --- Payslip Summary: one row per pay date, banded by tax year -----------------
+# Layout (header row 3, data from row 4): tax-year band rows carry only a label in
+# column A ('  Tax Year 2025/26'), and each band ends with a 'TOTAL <year>' row we
+# recompute rather than read (those totals are formulas, so they read as None here —
+# same constraint as everything else in this file).
+PS_SHEET = 'Payslip Summary'
+PS_HEADER_ROW = 3
+PS_COLS = [
+    ('pay_date',      1), ('tax_year',    2), ('gross',       3),
+    ('pension_ee',    4), ('pension_er',  5), ('pension_total', 6),
+    ('bonus',         7), ('taxable_pay', 8), ('paye',        9),
+    ('ni',           10), ('deductions', 11), ('net',        12),
+]
+PS_MONEY = [k for k, _ in PS_COLS if k not in ('pay_date', 'tax_year')]
+
+
+def _ps_date(v):
+    """Pay date as an ISO string. The sheet mixes real dates and dd/mm/yyyy text."""
+    if isinstance(v, datetime.datetime):
+        return v.date().isoformat()
+    if isinstance(v, datetime.date):
+        return v.isoformat()
+    s = str(v or '').strip()
+    for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d/%m/%y'):
+        try:
+            return datetime.datetime.strptime(s, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+# --- Pension annual allowance ------------------------------------------------
+# The Payslips screen shows how much annual allowance is left and, from the current
+# contribution rate, the month contributions would have to stop to stay inside it.
+#
+# THIS IS ARITHMETIC ON PAUL'S OWN PAYSLIP FIGURES, NOT TAX ADVICE. Three things it
+# cannot know and therefore states as assumptions on the screen:
+#   * The TAPER. Adjusted income over £260,000 cuts the allowance by £1 for every £2
+#     over, down to £10,000 — and adjusted income covers ALL income, not just this
+#     employment, so it can't be derived from payslips.
+#   * The MPAA. Flexibly accessing a defined-contribution pension drops the annual
+#     allowance to £10,000 and removes carry-forward entirely.
+#   * OTHER pension inputs. Only contributions on these payslips are counted; a
+#     personal contribution straight into the SIPP, or an AVC paid outside payroll,
+#     is an input to the same allowance and would eat into the same figure.
+# Both the allowance and the taper are overridable from the screen so the figure can
+# be corrected without a code change.
+ANNUAL_ALLOWANCE_DEFAULT = 60000        # 2023/24 onward (was £40,000 to 2022/23)
+ANNUAL_ALLOWANCE_BY_YEAR = {
+    '2020/21': 40000, '2021/22': 40000, '2022/23': 40000,
+}
+CARRY_FORWARD_YEARS = 3                 # unused allowance survives three tax years
+
+
+def _allowance_for(tax_year):
+    return ANNUAL_ALLOWANCE_BY_YEAR.get(tax_year, ANNUAL_ALLOWANCE_DEFAULT)
+
+
+def _tax_year_start(tax_year):
+    return int(str(tax_year).split('/')[0])
+
+
+def _tax_year_months(tax_year):
+    """The twelve pay months of a UK tax year, April-first, as (year, month)."""
+    start = _tax_year_start(tax_year)
+    return [((start + (0 if m >= 4 else 1)), m)
+            for m in list(range(4, 13)) + list(range(1, 4))]
+
+
+def pension_allowance(year_totals, rows, today=None):
+    """Remaining allowance for the current tax year, and when to stop contributing.
+
+    year_totals: {tax_year: pension input for that year}
+    Carry-forward is consumed OLDEST FIRST, after the year's own allowance — HMRC's
+    order, and it matters: using the current year first is what leaves the oldest
+    unused amount available to expire.
+    """
+    today = today or datetime.date.today()
+    years = sorted(year_totals)
+    if not years:
+        return None
+
+    # Walk the years oldest -> newest so each year's carry-forward reflects what
+    # later years have already consumed.
+    unused = {}
+    for y in years:
+        aa = _allowance_for(y)
+        need = year_totals.get(y) or 0
+        own = min(need, aa)
+        unused[y] = aa - own
+        need -= own
+        if need > 0:
+            start = _tax_year_start(y)
+            for back in range(CARRY_FORWARD_YEARS, 0, -1):     # oldest first
+                prev = f'{start - back}/{str(start - back + 1)[2:]}'
+                if prev not in unused or need <= 0:
+                    continue
+                take = min(need, unused[prev])
+                unused[prev] -= take
+                need -= take
+
+    current = _tax_year_of(today.isoformat())
+    aa = _allowance_for(current)
+    start = _tax_year_start(current)
+    carry = []
+    for back in range(CARRY_FORWARD_YEARS, 0, -1):
+        prev = f'{start - back}/{str(start - back + 1)[2:]}'
+        if prev in unused:
+            carry.append({'tax_year': prev, 'unused': round(unused[prev], 2),
+                          'expires_after': f'{start - back + CARRY_FORWARD_YEARS}/'
+                                           f'{str(start - back + CARRY_FORWARD_YEARS + 1)[2:]}'})
+    carry_total = round(sum(c['unused'] for c in carry), 2)
+    used = round(year_totals.get(current) or 0, 2)
+    available = round(aa + carry_total, 2)
+    remaining = round(available - used, 2)
+
+    # Contribution rate: the most recent payslip in the current tax year, which is
+    # what the next one will look like unless the rate is changed.
+    cur_rows = [r for r in rows if r.get('tax_year') == current and r.get('pension_total')]
+    cur_rows.sort(key=lambda r: r['pay_date'])
+    monthly = cur_rows[-1]['pension_total'] if cur_rows else None
+
+    # Which pay months are still to come this tax year, and where the money runs out.
+    # Every pay month of this tax year with no payslip recorded yet. A month that has
+    # already PASSED but has no payslip still counts — it was almost certainly paid and
+    # simply hasn't been uploaded, and dropping it would understate the year's input
+    # and overstate what's left.
+    paid_months = {tuple(int(x) for x in r['pay_date'].split('-')[:2]) for r in cur_rows}
+    this_month = (today.year, today.month)
+    upcoming = [(y, m) for (y, m) in _tax_year_months(current) if (y, m) not in paid_months]
+    schedule, running, stop_after = [], used, None
+    if monthly:
+        for (y, m) in upcoming:
+            projected = round(running + monthly, 2)
+            over = projected > available
+            schedule.append({'year': y, 'month': m,
+                             'label': datetime.date(y, m, 1).strftime('%b %Y'),
+                             'contribution': monthly,
+                             'cumulative': projected, 'over': over,
+                             'unrecorded': (y, m) < this_month})
+            if over and stop_after is None:
+                # The LAST affordable month is the one before this — stop after it.
+                stop_after = schedule[-2]['label'] if len(schedule) > 1 else 'already over'
+            running = projected
+
+    return {
+        'tax_year': current,
+        'annual_allowance': aa,
+        'carry_forward': carry,
+        'carry_forward_total': carry_total,
+        'available': available,
+        'used': used,
+        'remaining': remaining,
+        'over': remaining < 0,
+        'monthly_contribution': monthly,
+        'months_affordable': (int(remaining // monthly) if monthly and remaining > 0 else 0),
+        'stop_after': stop_after,
+        'schedule': schedule,
+        'payslips_recorded': len(cur_rows),
+        'months_unrecorded': sum(1 for s in schedule if s['unrecorded']),
+        'assumptions': [
+            f'Standard annual allowance of {aa:,.0f} — NOT tapered. Adjusted income over '
+            '260,000 reduces it by 1 for every 2 over, down to 10,000, and adjusted income '
+            'covers all income so it cannot be read off a payslip.',
+            'No money purchase annual allowance (MPAA). Flexibly accessing a DC pension '
+            'cuts the allowance to 10,000 and removes carry-forward.',
+            'Only pension input on these payslips is counted (employee + employer). A '
+            'personal contribution paid straight into the SIPP, or an AVC outside payroll, '
+            'is an input to the same allowance and is not visible here.',
+            'Carry-forward is taken oldest first, after the current year own allowance.',
+        ],
+    }
+
+
+def build_payslips(workbook=WORKBOOK):
+    """Every payslip row, plus per-tax-year totals for the screen's filter.
+
+    Rows come from the workbook's hand-maintained Payslip Summary tab; new ones are
+    appended by the dashboard's own upload route, NOT by the pipeline (user decision
+    2026-07-19 — payslips are loaded from the Payslips screen).
+    """
+    rows = []
+    if os.path.exists(workbook):
+        wb = openpyxl.load_workbook(workbook, read_only=True, data_only=True)
+        if PS_SHEET in wb.sheetnames:
+            ws = wb[PS_SHEET]
+            for r in ws.iter_rows(min_row=PS_HEADER_ROW + 1, values_only=True):
+                cell = lambda i: r[i - 1] if len(r) >= i else None
+                date = _ps_date(cell(1))
+                if not date:
+                    continue      # band label ('  Tax Year 2025/26') or TOTAL row
+                row = {k: (_num(cell(i)) if k in PS_MONEY else cell(i))
+                       for k, i in PS_COLS}
+                row['pay_date'] = date
+                row['tax_year'] = str(row['tax_year'] or '').strip() or _tax_year_of(date)
+                # Deductions is a formula in the sheet, so derive it
+                if not row['deductions']:
+                    row['deductions'] = round((row['paye'] or 0) + (row['ni'] or 0)
+                                              + (row['pension_ee'] or 0), 2)
+                rows.append(row)
+        wb.close()
+
+    rows.sort(key=lambda x: x['pay_date'], reverse=True)
+
+    years = {}
+    for row in rows:
+        acc = years.setdefault(row['tax_year'], {'tax_year': row['tax_year'], 'payslips': 0})
+        acc['payslips'] += 1
+        for k in PS_MONEY:
+            acc[k] = round(acc.get(k, 0) + (row[k] or 0), 2)
+
+    order = sorted(years, reverse=True)
+    totals = {y: years[y].get('pension_total') or 0 for y in years}
+    return {
+        'generated_at': datetime.datetime.now().isoformat(timespec='seconds'),
+        'rows': rows,
+        'tax_years': [years[y] for y in order],
+        'current_tax_year': order[0] if order else None,
+        'columns': [k for k, _ in PS_COLS],
+        'allowance': pension_allowance(totals, rows),
+    }
+
+
+def _tax_year_of(iso_date):
+    """UK tax year containing a date — 6 April to 5 April."""
+    d = datetime.date.fromisoformat(iso_date)
+    start = d.year if (d.month, d.day) >= (4, 6) else d.year - 1
+    return f'{start}/{str(start + 1)[2:]}'
+
+
 def build(workbook=WORKBOOK):
     wb = openpyxl.load_workbook(workbook, data_only=True)
     wbf = openpyxl.load_workbook(workbook, data_only=False)  # for HYPERLINK formulas
@@ -426,7 +656,7 @@ def build(workbook=WORKBOOK):
 
     investments = []
     inv_value_total = 0.0
-    short_term_value = long_term_value = 0.0
+    short_term_value = strategic_value = 0.0
     alert_below = alert_near = alert_above = 0
     for pos in positions:
         ticker = pos['ticker']
@@ -441,8 +671,10 @@ def build(workbook=WORKBOOK):
         gap_low = ((price - low) / price * 100.0) if (price and low) else None
         inv_value_total += holdings
         itype = inv.cell(r, I_TYPE).value if r else None
-        if isinstance(itype, str) and itype.strip().lower().startswith('long'):
-            long_term_value += holdings
+        # 'Strategic' replaced 'Long Term' (user request 2026-07-19). The old wording is
+        # still matched so a sheet that hasn't been migrated classifies the same way.
+        if isinstance(itype, str) and itype.strip().lower() in ('strategic', 'long term'):
+            strategic_value += holdings
         else:
             short_term_value += holdings
         if diff_low is not None:
@@ -454,7 +686,7 @@ def build(workbook=WORKBOOK):
                 alert_above += 1
         investments.append({
             'name': name, 'ticker': ticker,
-            'type': itype,                       # Short Term / Long Term
+            'type': itype,                       # Short Term / Strategic
             'account': pos['account'], 'wrapper': pos['wrapper'],
             'holdings': round(holdings, 2),
             'quantity': pos['quantity'],
@@ -570,9 +802,40 @@ def build(workbook=WORKBOOK):
         cash_source = 'Wealth Summary cash-account rows (broker export not in Downloads)'
     # Month-over-month change in the investable total (transparent, and consistent
     # with the trend chart). Includes contributions — flagged in the metric caveat.
-    gain_last_month = round(months[-1]['value'] - months[-2]['value'], 2) if len(months) >= 2 else None
-    gain_last_month_pct = (round(gain_last_month / months[-2]['value'] * 100.0, 2)
-                           if gain_last_month is not None and months[-2]['value'] else None)
+    #
+    # Measured over the last COMPLETE month, not the current one (user request
+    # 2026-07-19): the current month is still accruing and, in the Wealth Summary,
+    # often just carries the previous figure forward — which showed as a +£193 'gain'
+    # for July while June had actually moved £15,882. Same 'last full month' rule the
+    # Accounts widget uses, and the month is named on the widget so it is never
+    # ambiguous which period the figure covers.
+    # 'Has all the data' has to mean more than 'is not the current month'. The Wealth
+    # Summary CARRIES THE PREVIOUS FIGURE FORWARD for any account that hasn't been
+    # re-imported, so June sat at May's exact total and a June-vs-May reading was £0 —
+    # just as misleading as July's +£193. The last month with real data is therefore
+    # the last one whose value actually MOVED; everything after it is a copy.
+    # Two conditions, both needed: the month must be COMPLETE (the current one is
+    # still accruing) and it must have MOVED (anything flat is a carried-forward copy).
+    def _is_current(m):
+        parts = str(m['label']).split()
+        return (len(parts) == 2 and _MON.get(parts[0]) == now.month
+                and parts[1] == str(now.year))
+    last_complete = len(months) - 1
+    while last_complete > 0 and _is_current(months[last_complete]):
+        last_complete -= 1
+    gain_idx = None
+    for i in range(last_complete, 0, -1):
+        if months[i]['value'] != months[i - 1]['value']:
+            gain_idx = i
+            break
+    gain_last_month = gain_last_month_pct = gain_month_label = gain_prev_label = None
+    if gain_idx is not None:
+        cur, prev_m = months[gain_idx], months[gain_idx - 1]
+        gain_last_month = round(cur['value'] - prev_m['value'], 2)
+        gain_last_month_pct = (round(gain_last_month / prev_m['value'] * 100.0, 2)
+                               if prev_m['value'] else None)
+        gain_month_label, gain_prev_label = cur['label'], prev_m['label']
+    gain_stale_months = (last_complete - gain_idx) if gain_idx is not None else 0
 
     # Total Portfolio Value = the Wealth Summary's 'Fidelity accounts' block for the
     # latest actual month — the same series the trend chart plots, so the headline and
@@ -751,13 +1014,31 @@ def build(workbook=WORKBOOK):
                                           + (months[-1]['label'] if months else 'the latest month')
                                           + ' — matches the sheet and the Finance Google Sheet.'},
             'gain_last_month': {'value': gain_last_month, 'pct': gain_last_month_pct,
-                                'caveat': 'Month-on-month investment-account change (includes contributions).'},
+                                'month': gain_month_label, 'prev_month': gain_prev_label,
+                                'stale_months': gain_stale_months,
+                                'caveat': (f'{gain_month_label} vs {gain_prev_label} — the most recent month '
+                                           'with fresh data. Investment-account change, includes contributions.'
+                                           + (f' The {gain_stale_months} month(s) since carry the same figure '
+                                              'forward in the Wealth Summary.' if gain_stale_months else ''))
+                                          if gain_month_label else
+                                          'Month-on-month investment-account change (includes contributions).'},
             'trading_profit_2026': {'value': round(profit_2026, 2),
                                     'sells': sum(1 for s in sold if s['sell_date'][:4] == '2026')},
             'monthly_dividend': {'value': monthly_dividend,
                                  'caveat': f'Income funds £{funds_monthly_income:,.0f}/mo + share income '
                                            f'£{share_income_monthly:,.0f}/mo + share accumulation '
                                            f'£{share_accum_monthly:,.0f}/mo.'},
+            # Total income (user request 2026-07-19): everything the portfolio pays
+            # out or reinvests in a month — the same three parts as Monthly Dividend
+            # plus the Accumulative fund income, so the two metrics beside it add up
+            # to this one and the split stays visible.
+            'total_income': {'value': round(monthly_dividend + share_accum_monthly, 2),
+                             'monthly_dividend': monthly_dividend,
+                             'accumulative': share_accum_monthly,
+                             'annual': round((monthly_dividend + share_accum_monthly) * 12, 2),
+                             'caveat': (f'Monthly dividend £{monthly_dividend:,.0f} + accumulative fund '
+                                        f'income £{share_accum_monthly:,.0f} — income paid out plus income '
+                                        'reinvested inside the Acc funds.')},
             'cash_available': {'value': round(cash_available, 2),
                                'pct_of_portfolio': round(cash_available / portfolio_value * 100.0, 2) if portfolio_value else None,
                                'rows': cash_rows, 'caveat': cash_source + '.'},
@@ -795,7 +1076,7 @@ def build(workbook=WORKBOOK):
         'allocation': [
             {'label': 'Income Funds', 'value': round(funds_value_total, 2)},
             {'label': 'Short-Term (Shares)', 'value': round(short_term_value, 2)},
-            {'label': 'Long-Term', 'value': round(long_term_value, 2)},
+            {'label': 'Strategic', 'value': round(strategic_value, 2)},
             {'label': 'Cash', 'value': round(cash_available, 2)},
         ],
     }
@@ -927,7 +1208,7 @@ def build(workbook=WORKBOOK):
 
     return {'overview': overview, 'portfolio': portfolio, 'historic': historic,
             'watchlist': watchlist_payload, 'targets': targets, 'news': news_payload,
-            'activity': activity}
+            'activity': activity, 'payslips': build_payslips(workbook)}
 
 
 def write(out_dir=OUT_DIR, workbook=WORKBOOK):
@@ -951,3 +1232,6 @@ if __name__ == '__main__':
     print(f"  Holdings: {len(d['portfolio']['investments'])} investments, {len(d['portfolio']['income_funds'])} income funds")
     print(f"  Historic sales  : {d['historic']['summary']['count']} (win rate {d['historic']['summary']['win_rate']}%)")
     print(f"  Alert status    : {d['overview']['alert_status']}")
+    ps = d['payslips']
+    print(f"  Payslips        : {len(ps['rows'])} across {len(ps['tax_years'])} tax years "
+          f"(current {ps['current_tax_year']})")

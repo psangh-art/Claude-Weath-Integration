@@ -352,6 +352,43 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Payslip upload (Payslips screen's "Upload payslip" button). Deliberately NOT a
+  // pipeline step — payslips are loaded from this screen (user decision 2026-07-19).
+  // The PDF arrives as a raw body (no multipart parser: this server has no deps),
+  // lands in a temp file, and payslip_ingest.py does the reading and the sheet write.
+  // A payslip it can't read fails loudly rather than writing a guessed number into a
+  // live financial sheet, and the response carries what it managed to extract.
+  if (pathname === '/api/payslips/upload' && req.method === 'POST') {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > 20 * 1024 * 1024) { req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      const tmp = path.join(os.tmpdir(), `payslip_${Date.now()}.pdf`);
+      try {
+        fs.writeFileSync(tmp, Buffer.concat(chunks));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+        return;
+      }
+      const dry = url.searchParams.get('dry') === '1' ? ['--dry-run'] : [];
+      const out = spawnSync(PYTHON, [path.join(__dirname, 'payslip_ingest.py'), tmp, ...dry],
+        { encoding: 'utf-8', cwd: REPO_ROOT, env: { ...process.env, PYTHONUTF8: '1' } });
+      try { fs.unlinkSync(tmp); } catch { /* temp file, ignore */ }
+      let payload;
+      try { payload = JSON.parse(out.stdout || out.stderr || '{}'); }
+      catch { payload = { ok: false, error: (out.stderr || out.stdout || 'payslip_ingest.py produced no output').slice(-600) }; }
+      if (payload.ok && !dry.length) regenerate('payslip upload');
+      res.writeHead(payload.ok ? 200 : 422, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(payload));
+    });
+    return;
+  }
+
   // Review-deck IN-APP GALLERY (user request 2026-07-17): serve the image
   // gallery build_review_deck.py emits (scripts/pipeline_app/review_deck.html),
   // rewriting its relative "asset?p=" image srcs to the absolute "/asset?p="

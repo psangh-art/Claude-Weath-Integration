@@ -123,7 +123,8 @@ svg{display:block}
 .widget[data-size="S"]{grid-row:span 3}
 .widget[data-size="M"]{grid-row:span 4}
 .widget[data-size="L"]{grid-row:span 6}
-.widget[data-size="XL"]{grid-row:span 16}
+.widget[data-size="XL"]{grid-row:span 12}
+.widget[data-size="XXL"]{grid-row:span 16}
 .grid.editing .widget{border-style:dashed;border-color:color-mix(in oklab,var(--accent) 40%,var(--line))}
 .widget.dragging{opacity:.4}
 .widget-head{display:flex;align-items:center;gap:8px;padding:10px 13px;border-bottom:1px solid var(--line-soft);
@@ -353,6 +354,37 @@ tbody tr:hover{background:var(--panel-2)}
 .chip-btn.primary:hover{filter:brightness(1.06)}
 .wl-live{display:inline-flex;align-items:center;gap:6px}
 .wl-live svg{width:13px;height:13px}
+/* Payslips header controls. The svg sizing is not optional: an ICONS glyph with no
+   width/height fills its whole flex line (the Upload button rendered as a giant
+   document shape without it), same reason .wl-live svg is sized above. */
+.ps-upload{display:inline-flex;align-items:center;gap:6px}
+.ps-upload svg{width:13px;height:13px;flex:none}
+.ps-year{padding:5px 8px;min-width:130px}
+.ps-stamp{font-size:11px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Pension allowance card (Payslips screen) */
+.aw-grid{display:grid;grid-template-columns:minmax(220px,1fr) minmax(240px,1.1fr) minmax(260px,1.2fr);
+  gap:18px;align-items:start;min-height:0;overflow:auto}
+.aw-remaining{font-size:30px;font-weight:700;letter-spacing:-.5px;color:var(--success)}
+.aw-remaining.is-over{color:var(--danger)}
+.aw-remaining-label{font-size:11.5px;color:var(--muted);margin-top:2px}
+.aw-bar{height:6px;border-radius:3px;background:var(--panel-3);margin:10px 0 6px;overflow:hidden}
+.aw-bar span{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2))}
+.aw-used{font-size:11px}
+.aw-stop{margin-top:10px;font-size:12px;line-height:1.45;padding:8px 10px;border-radius:7px;
+  background:var(--panel-2);border:1px solid var(--line)}
+.aw-stop.ok{color:var(--success)}
+.aw-stop.warn{color:#f0b429}
+.aw-stop.danger{color:var(--danger)}
+.aw-breakdown table,.aw-sched table{width:100%}
+.aw-sched{max-height:200px;overflow:auto}
+.aw-sched tr.sched-over td{color:var(--danger)}
+.pill-over{font-size:10px;font-weight:700;padding:1px 6px;border-radius:9px;
+  background:rgba(239,68,68,.16);color:var(--danger)}
+.money-flat.neg{color:var(--danger)}
+.aw-assume{margin-top:10px;font-size:11.5px;color:var(--muted)}
+.aw-assume summary{cursor:pointer}
+.aw-assume ul{margin:8px 0 0 16px;line-height:1.5}
+@media (max-width:1100px){.aw-grid{grid-template-columns:1fr}}
 .wl-live:disabled{opacity:.6;cursor:default}
 .wl-live.spinning svg{animation:spin 1s linear infinite}
 .wl-live-stamp{font-size:11px;white-space:nowrap}
@@ -663,6 +695,8 @@ const UI={
   sold:{sort:{key:'sell_date',dir:'desc'}, filter:''},
   dividends:{sort:{key:'name',dir:'asc'}, filter:''},
   watchlist:{sort:{key:'proximity_pct',dir:'asc'}, filter:''},
+  payslips:{taxYear:'', sort:{key:'pay_date',dir:'desc'}},
+  accounts:{filter:''},
 };
 
 const NAV_ITEMS=[
@@ -670,6 +704,7 @@ const NAV_ITEMS=[
   {id:'portfolio', label:'Portfolio', icon:ICONS.briefcase, enabled:true},
   {id:'historic', label:'Historic', icon:ICONS.clock, enabled:true},
   {id:'watchlist', label:'Watchlist', icon:ICONS.star, enabled:true},
+  {id:'payslips', label:'Payslips', icon:ICONS.doc, enabled:true},
   {id:'intelligence', label:'Intelligence', icon:ICONS.pulse, enabled:true},
   {id:'design', label:'Design', icon:ICONS.sliders, enabled:true},
   {id:'reports', label:'Reports', icon:ICONS.doc, enabled:false},
@@ -686,10 +721,10 @@ const EXTERNAL_LINKS=[
   {id:'ext-pipeline', label:'Pipeline', icon:ICONS.flow, href:'/pipeline'},
 ];
 
-const SIZE_LABELS={S:'Small', M:'Medium', L:'Large', XL:'X-Large'};
+const SIZE_LABELS={S:'Small', M:'Medium', L:'Large', XL:'X-Large', XXL:'XX-Large'};
 
 /* ---------------------------- widget definitions ---------------------------- */
-const WIDGET_DEFS={overview:[], portfolio:[], historic:[], watchlist:[], intelligence:[], design:[]};
+const WIDGET_DEFS={overview:[], portfolio:[], historic:[], watchlist:[], payslips:[], intelligence:[], design:[]};
 
 WIDGET_DEFS.overview.push({
   id:'m-portfolio-value', title:'Total Portfolio Value', size:'S', span:3,
@@ -707,12 +742,20 @@ WIDGET_DEFS.overview.push({
 });
 WIDGET_DEFS.overview.push({
   id:'m-gain-month', title:'Gain vs Last Month', size:'S', span:3,
-  mount(body){
+  mount(body,action,widgetEl){
     body.classList.add('metric-body');
     const m=DATA.overview.metrics.gain_last_month;
+    // The measured month goes in the TITLE (user request 2026-07-19) — the figure is
+    // for the last month with fresh data, which is not necessarily last month, so
+    // leaving it unnamed invited exactly the misreading this change fixes.
+    if(widgetEl && m.month){
+      const t=widgetEl.querySelector('.widget-title');
+      if(t) t.textContent='Gain — '+m.month;
+    }
+    const sub=m.month?('vs '+(m.prev_month||'the previous month')):'Month-on-month';
     body.innerHTML='<div class="metric">'+
       '<div class="metric-main"><div class="metric-value">'+deltaChip(m.value,{kind:'money',decimals:0})+'</div>'+
-      '<div class="metric-sub">Month-on-month'+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div>'+
+      '<div class="metric-sub">'+escapeHtml(sub)+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div>'+
       '</div>';
   }
 });
@@ -745,6 +788,22 @@ WIDGET_DEFS.overview.push({
       '<div class="metric-main"><div class="metric-value">'+fmtMoney(m.value,0)+'</div>'+
       '<div class="metric-sub">Reinvested / mo'+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div>'+
       '</div>';
+  }
+});
+// Total income (user request 2026-07-19): the two metrics to its left added up —
+// income paid out (Monthly Dividend) plus income reinvested inside the Acc funds
+// (Accumulative Fund Income). Sits directly right of Accumulative in the row.
+WIDGET_DEFS.overview.push({
+  id:'m-total-income', title:'Total Income', size:'S', span:3,
+  mount(body){
+    body.classList.add('metric-body');
+    const m=DATA.overview.metrics.total_income||{};
+    body.innerHTML='<div class="metric">'+
+      '<div class="metric-main"><div class="metric-value" title="'+escapeHtml(
+        'Paid out: '+fmtMoney(m.monthly_dividend,0)+'/mo\nReinvested: '+fmtMoney(m.accumulative,0)+'/mo')+'">'+
+        fmtMoneyCompact(m.value)+'</div>'+
+      '<div class="metric-sub">'+fmtMoneyCompact(m.annual)+' / yr'+
+        (m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div></div>';
   }
 });
 WIDGET_DEFS.overview.push({
@@ -833,13 +892,34 @@ WIDGET_DEFS.overview.push({
   id:'accounts-month', title:'Accounts', size:'M', span:6,
   mount(body,action,widgetEl){
     const a=(DATA.overview.accounts)||{};
-    const rows=a.rows||[];
+    const allRows=a.rows||[];
     // The title carries the month so it's never ambiguous which period is shown.
     if(widgetEl){
       const t=widgetEl.querySelector('.widget-title');
       if(t) t.textContent='Accounts — '+(a.month||'last full month');
     }
-    if(!rows.length){ body.innerHTML='<div class="dim" style="padding:10px">No account data</div>'; return; }
+    if(!allRows.length){ body.innerHTML='<div class="dim" style="padding:10px">No account data</div>'; return; }
+
+    // Name filter (user request 2026-07-19). Matches the holder, the wrapper and the
+    // account number — the account number is only in the row's tooltip, so filtering
+    // on it is the fastest way to find one specific account.
+    action.innerHTML='<input class="search-input acct-filter" type="text" placeholder="Filter…" '+
+      'value="'+escapeHtml(UI.accounts.filter)+'"/><span class="row-count"></span>';
+    const input=action.querySelector('.acct-filter');
+    const rowCount=action.querySelector('.row-count');
+    input.addEventListener('input',()=>{ UI.accounts.filter=input.value; draw(); });
+
+    function draw(){
+    const q=UI.accounts.filter.trim().toLowerCase();
+    const rows=q?allRows.filter(r=>
+      (r.account||'').toLowerCase().indexOf(q)!==-1||
+      (r.wrapper||'').toLowerCase().indexOf(q)!==-1||
+      (r.account_no||'').toLowerCase().indexOf(q)!==-1):allRows;
+    rowCount.textContent=rows.length+' of '+allRows.length;
+    // The total follows the FILTER: a total that ignored the filter would sit under a
+    // short list of accounts and read as their sum.
+    const total=q?rows.reduce((t,r)=>t+(r.value||0),0):a.total;
+    const totalInc=q?rows.reduce((t,r)=>t+(r.increase||0),0):a.total_increase;
     const trs=rows.map(r=>'<tr>'+
       '<td class="cell-name" title="'+escapeHtml((r.wrapper||'')+' '+(r.account_no||''))+'">'+escapeHtml(r.account||'—')+'</td>'+
       '<td class="dim">'+escapeHtml(r.wrapper||'—')+'</td>'+
@@ -847,12 +927,16 @@ WIDGET_DEFS.overview.push({
       '<td class="num">'+deltaChip(r.increase,{kind:'money',decimals:0})+'</td>'+
       '</tr>').join('');
     const foot='<tr class="total-row"><td>Total</td><td class="dim">'+rows.length+' accounts</td>'+
-      '<td class="money-flat num">'+fmtMoney(a.total,0)+'</td>'+
-      '<td class="num">'+deltaChip(a.total_increase,{kind:'money',decimals:0})+'</td></tr>';
+      '<td class="money-flat num">'+fmtMoney(total,0)+'</td>'+
+      '<td class="num">'+deltaChip(totalInc,{kind:'money',decimals:0})+'</td></tr>';
     body.innerHTML='<div class="table-scroll"><table><thead><tr>'+
       '<th>Account</th><th>Wrapper</th><th class="num">Value</th>'+
       '<th class="num" title="Change vs '+escapeHtml(a.prev_month||'the previous month')+'">vs '+escapeHtml(a.prev_month||'prev')+'</th>'+
-      '</tr></thead><tbody>'+trs+'</tbody><tfoot>'+foot+'</tfoot></table></div>';
+      '</tr></thead><tbody>'+
+      (trs||'<tr><td colspan="4" class="empty">No account matches that.</td></tr>')+
+      '</tbody><tfoot>'+foot+'</tfoot></table></div>';
+    }
+    draw();
   }
 });
 
@@ -959,7 +1043,7 @@ WIDGET_DEFS.overview.push({
 });
 
 WIDGET_DEFS.overview.push({
-  id:'activity', title:'Activity', size:'L', span:12,
+  id:'activity', title:'Activity', size:'XL', span:12,
   mount(body){
     const data=DATA.activity||{};
     const actions=(data.actions||[]).slice();
@@ -1021,7 +1105,7 @@ WIDGET_DEFS.overview.push({
 
 /* ---------------------- Portfolio: holdings table ---------------------- */
 WIDGET_DEFS.portfolio.push({
-  id:'holdings-table', title:'Holdings', size:'XL', span:24,
+  id:'holdings-table', title:'Holdings', size:'XXL', span:24,
   mount(body,action){
     action.innerHTML='<div class="tabs">'+
       '<button class="tab" data-tab="investments">Investments</button>'+
@@ -1183,7 +1267,7 @@ WIDGET_DEFS.historic.push({
   }
 });
 WIDGET_DEFS.historic.push({
-  id:'sold-table', title:'Sold Positions', size:'XL', span:24,
+  id:'sold-table', title:'Sold Positions', size:'XXL', span:24,
   mount(body,action){
     action.innerHTML='<input class="search-input" type="text" placeholder="Filter…" value="'+escapeHtml(UI.sold.filter)+'"/><span class="row-count"></span>';
     const input=action.querySelector('.search-input');
@@ -1530,6 +1614,230 @@ function mountIndexWidget(body,action,key){
     '<div class="intel-spark">'+dailySparkline(d.series,{width:200,height:44})+'</div>'+
     '<div class="intel-meta">'+escapeHtml((d.currency?d.currency+' · ':'')+'as of '+(d.as_of||'—'))+'</div>';
 }
+/* ---------------------------- payslips ---------------------------- */
+// Payslips are loaded HERE, not by the pipeline (user decision 2026-07-19). The rows
+// come from the workbook's 'Payslip Summary' tab via dashboard_data.build_payslips;
+// the Upload button POSTs a PDF to /api/payslips/upload, which runs payslip_ingest.py
+// and, on success, regenerates the dashboard data so the new row appears immediately.
+
+// Pension annual allowance (user request 2026-07-19). Sits at the TOP of the
+// Payslips screen: what's left this tax year, and the month contributions would
+// have to stop at the current rate. Every figure is arithmetic on Paul's own
+// payslips — the assumptions it cannot verify (taper, MPAA, contributions paid
+// outside payroll) are listed on the card, not buried, because any one of them
+// changes the answer.
+WIDGET_DEFS.payslips.push({
+  id:'payslips-allowance', title:'Pension Annual Allowance', size:'L', span:24,
+  mount(body,action,widgetEl){
+    const a=(DATA.payslips&&DATA.payslips.allowance)||null;
+    if(!a){ body.innerHTML='<div class="empty">No payslips to calculate an allowance from.</div>'; return; }
+    if(widgetEl){
+      const t=widgetEl.querySelector('.widget-title');
+      if(t) t.textContent='Pension Annual Allowance — '+a.tax_year;
+    }
+
+    const over=a.remaining<0;
+    const pctUsed=Math.max(0,Math.min(100,a.available?(a.used/a.available*100):0));
+    const carryRows=(a.carry_forward||[]).filter(c=>c.unused>0);
+
+    // When to stop. stop_after null with a projection means the year's contributions
+    // all fit; null with no projection means there is no rate to project from.
+    let stopLine, stopClass;
+    if(over){
+      stopLine='Already over by '+fmtMoney(Math.abs(a.remaining),0)+' — contributions this year have exceeded the allowance.';
+      stopClass='danger';
+    }else if(!a.monthly_contribution){
+      stopLine='No contribution on the latest payslip, so there is nothing to project.';
+      stopClass='dim';
+    }else if(a.stop_after){
+      stopLine='Stop after '+a.stop_after+' — the next contribution after that would take you over.';
+      stopClass='warn';
+    }else{
+      stopLine='Every remaining month of '+a.tax_year+' fits inside the allowance at '+fmtMoney(a.monthly_contribution,0)+'/mo.';
+      stopClass='ok';
+    }
+
+    const sched=(a.schedule||[]).map(m=>
+      '<tr class="'+(m.over?'sched-over':'')+'">'+
+        '<td class="mono">'+escapeHtml(m.label)+(m.unrecorded?' <span class="dim" title="No payslip uploaded for this month yet — counted at the current rate">est</span>':'')+'</td>'+
+        '<td class="num money-flat">'+fmtMoney(m.contribution,0)+'</td>'+
+        '<td class="num money-flat">'+fmtMoney(m.cumulative,0)+'</td>'+
+        '<td class="num">'+(m.over?'<span class="pill-over">over</span>':'')+'</td>'+
+      '</tr>').join('');
+
+    body.innerHTML=
+      '<div class="aw-grid">'+
+        '<div class="aw-headline">'+
+          '<div class="aw-remaining '+(over?'is-over':'')+'">'+fmtMoney(a.remaining,0)+'</div>'+
+          '<div class="aw-remaining-label">remaining of '+fmtMoney(a.available,0)+' available</div>'+
+          '<div class="aw-bar"><span style="width:'+pctUsed.toFixed(1)+'%"></span></div>'+
+          '<div class="aw-used dim">'+fmtMoney(a.used,0)+' used across '+a.payslips_recorded+' payslip(s)'+
+            (a.months_unrecorded?(' · '+a.months_unrecorded+' month(s) not yet uploaded'):'')+'</div>'+
+          '<div class="aw-stop '+stopClass+'">'+escapeHtml(stopLine)+'</div>'+
+        '</div>'+
+        '<div class="aw-breakdown">'+
+          '<table class="tbl"><tbody>'+
+            '<tr><td>Annual allowance '+escapeHtml(a.tax_year)+'</td><td class="num money-flat">'+fmtMoney(a.annual_allowance,0)+'</td></tr>'+
+            carryRows.map(c=>'<tr><td class="dim">Carry-forward from '+escapeHtml(c.tax_year)+
+              ' <span class="dim" title="Unused allowance is lost after three tax years">(expires after '+escapeHtml(c.expires_after)+')</span></td>'+
+              '<td class="num money-flat">'+fmtMoney(c.unused,0)+'</td></tr>').join('')+
+            (carryRows.length?'':'<tr><td class="dim">Carry-forward available</td><td class="num money-flat">'+fmtMoney(0,0)+'</td></tr>')+
+            '<tr class="total-row"><td>Available</td><td class="num money-flat">'+fmtMoney(a.available,0)+'</td></tr>'+
+            '<tr><td class="dim">Used so far</td><td class="num money-flat">'+fmtMoney(a.used,0)+'</td></tr>'+
+            '<tr class="total-row"><td>Remaining</td><td class="num money-flat'+(over?' neg':'')+'">'+fmtMoney(a.remaining,0)+'</td></tr>'+
+          '</tbody></table>'+
+        '</div>'+
+        '<div class="aw-sched">'+
+          '<table class="tbl"><thead><tr><th>Month</th><th class="num">Contribution</th><th class="num">Cumulative</th><th></th></tr></thead>'+
+          '<tbody>'+(sched||'<tr><td colspan="4" class="empty">No further pay months this tax year.</td></tr>')+'</tbody></table>'+
+        '</div>'+
+      '</div>'+
+      '<details class="aw-assume"><summary>What this calculation assumes '+
+        '<span class="dim">— check these before acting on the figure</span></summary><ul>'+
+        (a.assumptions||[]).map(x=>'<li>'+escapeHtml(x)+'</li>').join('')+
+        '<li>This is arithmetic on your own payslip figures, not tax advice. Confirm anything '+
+        'you act on with your accountant.</li>'+
+      '</ul></details>';
+  }
+});
+
+WIDGET_DEFS.payslips.push({
+  id:'payslips-summary', title:'Tax Year Summary', size:'M', span:24,
+  mount(body){
+    const years=(DATA.payslips && DATA.payslips.tax_years)||[];
+    if(!years.length){ body.innerHTML='<div class="empty">No payslips on the sheet yet.</div>'; return; }
+    const sel=UI.payslips.taxYear;
+    const shown=sel?years.filter(y=>y.tax_year===sel):years;
+    body.innerHTML='<div class="table-scroll"><table class="tbl"><thead><tr>'+
+      ['Tax Year','Payslips','Gross','Pension (EE)','Pension (ER)','Total Pension','Bonus','PAYE','NI','Net']
+        .map((h,i)=>'<th'+(i>0?' class="num"':'')+'>'+h+'</th>').join('')+
+      '</tr></thead><tbody>'+
+      shown.map(y=>'<tr>'+
+        '<td class="mono">'+escapeHtml(y.tax_year)+'</td>'+
+        '<td class="num">'+y.payslips+'</td>'+
+        ['gross','pension_ee','pension_er','pension_total','bonus','paye','ni','net']
+          .map(k=>'<td class="num money-flat">'+fmtMoney(y[k],0)+'</td>').join('')+
+      '</tr>').join('')+
+      '</tbody></table></div>';
+  }
+});
+
+WIDGET_DEFS.payslips.push({
+  id:'payslips-table', title:'Payslips', size:'XXL', span:24,
+  mount(body,action){
+    const all=(DATA.payslips && DATA.payslips.rows)||[];
+    const years=Array.from(new Set(all.map(r=>r.tax_year))).sort().reverse();
+    if(UI.payslips.taxYear && years.indexOf(UI.payslips.taxYear)===-1) UI.payslips.taxYear='';
+
+    action.innerHTML=
+      '<select class="ps-year search-input" title="Filter by tax year">'+
+        '<option value="">All tax years</option>'+
+        years.map(y=>'<option value="'+escapeHtml(y)+'"'+(UI.payslips.taxYear===y?' selected':'')+'>'+escapeHtml(y)+'</option>').join('')+
+      '</select>'+
+      '<button class="chip-btn ps-upload" title="Upload a payslip PDF and add it to the sheet">'+ICONS.doc+'<span>Upload payslip</span></button>'+
+      '<input class="ps-file" type="file" accept="application/pdf" hidden/>'+
+      '<span class="ps-stamp dim"></span><span class="row-count"></span>';
+
+    const yearSel=action.querySelector('.ps-year');
+    const btn=action.querySelector('.ps-upload');
+    const file=action.querySelector('.ps-file');
+    const stamp=action.querySelector('.ps-stamp');
+    const rowCount=action.querySelector('.row-count');
+
+    yearSel.addEventListener('change',()=>{ UI.payslips.taxYear=yearSel.value; draw(); refreshSummary(); });
+    btn.addEventListener('click',()=>file.click());
+    file.addEventListener('change',async()=>{
+      const f=file.files&&file.files[0];
+      if(!f) return;
+      btn.disabled=true; stamp.textContent='Reading '+f.name+'…'; stamp.title='';
+      try{
+        const res=await fetch('/api/payslips/upload',{method:'POST',body:f});
+        const out=await res.json();
+        if(out.ok){
+          stamp.textContent='Added '+((out.fields&&out.fields.pay_date)||'')+' ('+(out.tax_year||'')+')';
+          stamp.title='Written to row '+out.row+'. The dashboard is refreshing.';
+        }else{
+          stamp.textContent='Could not read that payslip';
+          stamp.title=out.error||'unknown error';
+          alert('Could not read that payslip:\n\n'+(out.error||'unknown error'));
+        }
+      }catch(e){
+        stamp.textContent='Upload failed';
+        stamp.title=String((e&&e.message)||e);
+      }finally{
+        btn.disabled=false; file.value='';
+      }
+    });
+
+    body.innerHTML='<div class="table-scroll"></div>';
+    const scroll=body.querySelector('.table-scroll');
+
+    const cols=[
+      {key:'pay_date', label:'Pay Date', sv:r=>r.pay_date||''},
+      {key:'tax_year', label:'Tax Year', sv:r=>r.tax_year||''},
+      {key:'gross', label:'Gross', sv:r=>r.gross, num:true},
+      {key:'pension_ee', label:'Pension (EE)', sv:r=>r.pension_ee, num:true},
+      {key:'pension_er', label:'Pension (ER)', sv:r=>r.pension_er, num:true},
+      {key:'pension_total', label:'Total Pension', sv:r=>r.pension_total, num:true},
+      {key:'bonus', label:'Bonus / Other', sv:r=>r.bonus, num:true},
+      {key:'paye', label:'PAYE Tax', sv:r=>r.paye, num:true},
+      {key:'ni', label:'NI (EE)', sv:r=>r.ni, num:true},
+      {key:'deductions', label:'Deductions', sv:r=>r.deductions, num:true},
+      {key:'net', label:'Net Pay', sv:r=>r.net, num:true},
+    ];
+
+    function headerRow(){
+      return '<tr>'+cols.map(c=>{
+        const sorted=c.key===UI.payslips.sort.key;
+        const ind=sorted?(UI.payslips.sort.dir==='asc'?'▲':'▼'):'';
+        const cls=[sorted?'sorted':'', c.num?'num':''].filter(Boolean).join(' ');
+        return '<th data-key="'+c.key+'" class="'+cls+'">'+escapeHtml(c.label)+(ind?' <span class="sort-ind">'+ind+'</span>':'')+'</th>';
+      }).join('')+'</tr>';
+    }
+
+    // The summary widget above is filtered by the same tax-year select, so redraw it
+    // whenever the filter moves.
+    function refreshSummary(){
+      const w=document.querySelector('[data-id="payslips-summary"] .widget-body');
+      const sum=WIDGET_DEFS.payslips.find(d=>d.id==='payslips-summary');
+      if(w&&sum) sum.mount(w);
+    }
+
+    function draw(){
+      let rows=all;
+      if(UI.payslips.taxYear) rows=rows.filter(r=>r.tax_year===UI.payslips.taxYear);
+      const col=cols.find(c=>c.key===UI.payslips.sort.key)||cols[0];
+      const dir=UI.payslips.sort.dir;
+      rows=rows.slice().sort((a,b)=>{
+        let av=col.sv(a), bv=col.sv(b);
+        if(av==null&&bv==null) return 0;
+        if(av==null) return 1;
+        if(bv==null) return -1;
+        if(typeof av==='string') return dir==='asc'?av.localeCompare(bv):bv.localeCompare(av);
+        return dir==='asc'?av-bv:bv-av;
+      });
+      rowCount.textContent=rows.length+' of '+all.length;
+      const trs=rows.map(r=>'<tr>'+
+        '<td class="mono">'+escapeHtml(r.pay_date||'')+'</td>'+
+        '<td class="mono">'+escapeHtml(r.tax_year||'—')+'</td>'+
+        cols.slice(2).map(c=>'<td class="num money-flat">'+fmtMoney(r[c.key],0)+'</td>').join('')+
+      '</tr>').join('');
+      scroll.innerHTML='<table class="tbl"><thead>'+headerRow()+'</thead><tbody>'+
+        (trs||'<tr><td colspan="'+cols.length+'" class="empty">No payslips for this tax year.</td></tr>')+
+        '</tbody></table>';
+      scroll.querySelectorAll('th[data-key]').forEach(th=>{
+        th.addEventListener('click',()=>{
+          const k=th.dataset.key;
+          if(UI.payslips.sort.key===k) UI.payslips.sort.dir=UI.payslips.sort.dir==='asc'?'desc':'asc';
+          else { UI.payslips.sort.key=k; UI.payslips.sort.dir=cols.find(c=>c.key===k).num?'desc':'asc'; }
+          draw();
+        });
+      });
+    }
+    draw();
+  }
+});
+
 [['ftse','FTSE 100'],['dax','DAX'],['stoxx50','Euro STOXX 50'],['spx','S&P 500'],['nasdaq','Nasdaq'],['dow','Dow Jones']]
   .forEach(([key,label])=>{
     WIDGET_DEFS.intelligence.push({
@@ -1665,6 +1973,7 @@ const DEFAULT_ORDER={
   portfolio: WIDGET_DEFS.portfolio.map(w=>w.id),
   historic: WIDGET_DEFS.historic.map(w=>w.id),
   watchlist: WIDGET_DEFS.watchlist.map(w=>w.id),
+  payslips: WIDGET_DEFS.payslips.map(w=>w.id),
   intelligence: WIDGET_DEFS.intelligence.map(w=>w.id),
   design: WIDGET_DEFS.design.map(w=>w.id),
 };
@@ -1673,7 +1982,9 @@ const DEFAULT_ORDER={
 // Bump the version when the DEFAULT order changes: a saved layout wins over the
 // default for widgets it already lists, so without a new key an existing browser
 // would keep the old arrangement for ever.
-const LAYOUT_KEY='dashboard:layout:v3:';
+// v4 (2026-07-19): Total Income added to the Overview row, so a saved v3 layout
+// would have pinned the old six-card order and never shown it.
+const LAYOUT_KEY='dashboard:layout:v4:';
 // Per-widget HEIGHT (size) and WIDTH (span) overrides, set on the Design screen so
 // resizing doesn't need a code change (user request 2026-07-19). Shape: {id:{size,span}}.
 const SIZE_KEY='dashboard:sizes:v1';
@@ -1775,9 +2086,21 @@ function syncThemeButton(){
 
 /* ---------------------------- render: topbar ---------------------------- */
 const GRID_COLS=24;   // 24ths, so a Small can be 1.5 twelfths (3/24)
-const SCREEN_TITLES={overview:'Overview', portfolio:'Portfolio', historic:'Historic', watchlist:'Watchlist', intelligence:'Intelligence', design:'Design'};
+const SCREEN_TITLES={overview:'Overview', portfolio:'Portfolio', historic:'Historic', watchlist:'Watchlist', payslips:'Payslips', intelligence:'Intelligence', design:'Design'};
+// Screens whose content does NOT come from a pipeline run hide the pipeline
+// top-bar buttons: on Payslips they were misleading (user request 2026-07-19) —
+// payslips are loaded from that screen's own Upload button, and neither 'Run' nor
+// 'Refresh' has anything to do with them.
+const NO_PIPELINE_ACTIONS=new Set(['payslips']);
 function renderTopbar(){
   document.getElementById('screenTitle').textContent=SCREEN_TITLES[UI.screen]||UI.screen;
+  const hidePipeline=NO_PIPELINE_ACTIONS.has(UI.screen);
+  // style.display, not [hidden]: .btn sets display:inline-flex, which wins over the
+  // [hidden] { display:none } UA rule and left Refresh on screen.
+  const pipeWrap=document.querySelector('.pipe-status-wrap');
+  if(pipeWrap) pipeWrap.style.display=hidePipeline?'none':'';
+  const refreshBtn0=document.getElementById('refreshBtn');
+  if(refreshBtn0) refreshBtn0.style.display=hidePipeline?'none':'';
   const editBtn=document.getElementById('editBtn');
   editBtn.classList.toggle('active',UI.editMode);
   editBtn.querySelector('span').textContent=UI.editMode?'Done editing':'Edit layout';
@@ -1890,7 +2213,7 @@ function renderGrid(){
 /* ---------------------------- data loading + SSE ---------------------------- */
 async function loadAll(){
   const bust='?_='+Date.now();
-  const [overview,portfolio,historic,watchlist,targets,news,activity]=await Promise.all([
+  const [overview,portfolio,historic,watchlist,targets,news,activity,payslips]=await Promise.all([
     fetch('data/overview.json'+bust).then(r=>r.json()),
     fetch('data/portfolio.json'+bust).then(r=>r.json()),
     fetch('data/historic.json'+bust).then(r=>r.json()),
@@ -1898,9 +2221,10 @@ async function loadAll(){
     fetch('data/targets.json'+bust).then(r=>r.json()),
     fetch('data/news.json'+bust).then(r=>r.json()),
     fetch('data/activity.json'+bust).then(r=>r.json()),
+    fetch('data/payslips.json'+bust).then(r=>r.json()).catch(()=>({rows:[],tax_years:[]})),
   ]);
   DATA.overview=overview; DATA.portfolio=portfolio; DATA.historic=historic; DATA.watchlist=watchlist;
-  DATA.targets=targets; DATA.news=news; DATA.activity=activity;
+  DATA.targets=targets; DATA.news=news; DATA.activity=activity; DATA.payslips=payslips;
 }
 
 function wireTopbarActions(){
