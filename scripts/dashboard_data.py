@@ -199,6 +199,18 @@ def _fidelity_positions(path=ACCOUNT_SUMMARY):
     return rows
 
 
+# Chart symbols priced in USD (per ounce / barrel / MMBtu) rather than UK pence.
+# Every LSE equity and ETC the pipeline captures is quoted in pence, so pence is
+# the default and only these are the exception — the dashboard labels the unit
+# rather than putting a misleading '£' in front of a pence figure.
+USD_PRICED_TICKERS = {'PLAT', 'PALL', 'GOLD', 'SILVER', 'COPP', 'NATGAS', 'UKOIL', 'BRENT'}
+
+
+def _price_unit(ticker):
+    tk = str(ticker).strip().upper() if ticker else ''
+    return '$' if tk in USD_PRICED_TICKERS else 'p'
+
+
 def _tv_url(cell):
     """Extract the chart URL from a =HYPERLINK("url","label") formula cell."""
     if isinstance(cell, str) and cell.upper().startswith('=HYPERLINK('):
@@ -243,6 +255,7 @@ def _read_soi_band(soi, soif, band_substring, base, latest, changes=None):
             'pattern': soi.cell(r, SOI_PATTERN).value,
             'proximity_pct': round(prox, 2) if prox is not None else None,
             'alert_low': low, 'current': price, 'alert_high': high,
+            'price_unit': _price_unit(ticker),
             'change': chg.get('change'), 'change_pct': chg.get('change_pct'),
             'upside_pct': round(upside, 2) if upside is not None else None,
             'pe': bd_row.get('pe'), 'div_yield_pct': bd_row.get('div_yield_pct'),
@@ -335,6 +348,7 @@ def build(workbook=WORKBOOK):
             'pl_today_pct': (round(pos['pl_today'] / pos['book_cost'] * 100.0, 2)
                              if (pos['pl_today'] is not None and pos['book_cost']) else None),
             'current_price': price,
+            'price_unit': _price_unit(ticker),   # unit of current_price/alert levels
             'gap_to_low_pct': round(gap_low, 2) if gap_low is not None else None,
             'alert_low': low, 'alert_low_source': inv.cell(r, I_ALERT_LOW_SRC).value if r else None,
             'diff_to_low_pct': round(diff_low, 2) if diff_low is not None else None,

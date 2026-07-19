@@ -428,6 +428,14 @@ function fmtMoneyCompact(n){
   if(abs>=1000) return '£'+(n/1000).toFixed(1)+'k';
   return fmtMoney(n,0);
 }
+// Chart/alert prices are quoted in the SYMBOL's own unit — UK pence for every
+// equity and ETC, USD for the commodity symbols — NOT pounds. Rendering them with
+// a '£' made 3614.56p read as £3,614.56, so the unit is labelled instead.
+function fmtPrice(n,unit){
+  if(n==null||isNaN(n)) return '—';
+  const v=Number(n).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});
+  return unit==='$' ? '$'+v : v+'p';
+}
 function fmtPct(n,decimals){
   if(decimals==null) decimals=1;
   if(n==null||isNaN(n)) return '—';
@@ -998,14 +1006,14 @@ WIDGET_DEFS.portfolio.push({
           '<td class="dim">'+escapeHtml(r.account||'—')+'</td>'+
           '<td class="dim">'+escapeHtml(r.wrapper||'—')+'</td>'+
           '<td class="money-flat num">'+fmtMoney(r.holdings,0)+'</td>'+
-          '<td class="money-flat num">'+fmtMoney(r.buy_price,2)+'</td>'+
-          '<td class="money-flat num">'+fmtMoney(r.current_price,2)+'</td>'+
+          '<td class="money-flat num">'+fmtPrice(r.buy_price,'p')+'</td>'+
+          '<td class="money-flat num">'+fmtPrice(r.current_price,r.price_unit)+'</td>'+
           '<td class="num">'+deltaChip(r.pl_today,{kind:'money',decimals:0})+'</td>'+
           '<td>'+zonebar(r.gap_to_low_pct)+'</td>'+
-          '<td class="money-flat num">'+fmtMoney(r.alert_low,2)+'</td>'+
+          '<td class="money-flat num">'+fmtPrice(r.alert_low,r.price_unit)+'</td>'+
           '<td>'+sourceBadge(r.alert_low_source)+'</td>'+
           '<td class="num">'+proximityChip(r.diff_to_low_pct)+'</td>'+
-          '<td class="money-flat num">'+fmtMoney(r.alert_high,2)+'</td>'+
+          '<td class="money-flat num">'+fmtPrice(r.alert_high,r.price_unit)+'</td>'+
           '<td>'+(r.chart_url?'<a class="chart-link" href="'+escapeHtml(r.chart_url)+'" target="_blank" rel="noopener" title="Open TradingView chart">📊</a>':'<span class="dim">—</span>')+'</td>'+
           '</tr>';
       }).join('');
@@ -1314,10 +1322,10 @@ WIDGET_DEFS.watchlist.push({
           '<td>'+truncCell(r.pattern,150)+'</td>'+
           '<td class="num">'+watchlistProximityChip(r.proximity_pct)+'</td>'+
           '<td>'+zonebar(gapPct)+'</td>'+
-          '<td class="money-flat num">'+fmtMoney(r.alert_low,2)+'</td>'+
-          '<td class="money-flat num">'+fmtMoney(r.current,2)+'</td>'+
+          '<td class="money-flat num">'+fmtPrice(r.alert_low,r.price_unit)+'</td>'+
+          '<td class="money-flat num">'+fmtPrice(r.current,r.price_unit)+'</td>'+
           '<td class="num" title="'+(r.change==null?'':('Day change: '+(r.change>0?'+':'')+r.change))+'">'+deltaChip(r.change_pct,{kind:'pct',decimals:2})+'</td>'+
-          '<td class="money-flat num">'+fmtMoney(r.alert_high,2)+'</td>'+
+          '<td class="money-flat num">'+fmtPrice(r.alert_high,r.price_unit)+'</td>'+
           '<td class="mono num">'+fmtPct(r.upside_pct,2)+'</td>'+
           '<td class="mono num">'+(r.pe==null?'—':Number(r.pe).toFixed(1))+'</td>'+
           '<td class="mono num">'+fmtPct(r.div_yield_pct,2)+'</td>'+
