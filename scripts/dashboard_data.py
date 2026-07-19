@@ -491,11 +491,21 @@ def pension_allowance(year_totals, rows, today=None):
     current = _tax_year_of(today.isoformat())
     aa = _allowance_for(current)
     start = _tax_year_start(current)
+    # Each prior year is carried with its FULL working — allowance, what was actually
+    # contributed, and what survives — so the panel can show how the carry-forward
+    # figure was arrived at rather than asserting it (user request 2026-07-19).
     carry = []
     for back in range(CARRY_FORWARD_YEARS, 0, -1):
         prev = f'{start - back}/{str(start - back + 1)[2:]}'
         if prev in unused:
-            carry.append({'tax_year': prev, 'unused': round(unused[prev], 2),
+            prev_aa = _allowance_for(prev)
+            prev_used = round(year_totals.get(prev) or 0, 2)
+            carry.append({'tax_year': prev,
+                          'allowance': prev_aa,
+                          'contributed': prev_used,
+                          'headroom': round(prev_aa - prev_used, 2),
+                          'unused': round(unused[prev], 2),
+                          'consumed_by_later_years': round(max(0.0, (prev_aa - prev_used) - unused[prev]), 2),
                           'expires_after': f'{start - back + CARRY_FORWARD_YEARS}/'
                                            f'{str(start - back + CARRY_FORWARD_YEARS + 1)[2:]}'})
     carry_total = round(sum(c['unused'] for c in carry), 2)
@@ -545,6 +555,10 @@ def pension_allowance(year_totals, rows, today=None):
         'months_affordable': (int(remaining // monthly) if monthly and remaining > 0 else 0),
         'stop_after': stop_after,
         'schedule': schedule,
+        'history': [{'tax_year': y, 'allowance': _allowance_for(y),
+                     'contributed': round(year_totals.get(y) or 0, 2),
+                     'over_allowance': round(max(0.0, (year_totals.get(y) or 0) - _allowance_for(y)), 2)}
+                    for y in years],
         'payslips_recorded': len(cur_rows),
         'months_unrecorded': sum(1 for s in schedule if s['unrecorded']),
         'assumptions': [
@@ -1166,6 +1180,22 @@ def build(workbook=WORKBOOK):
         url = _tv_url(invf.cell(r, I_TV).value)
         if tkr and url:
             tv_by_ticker[str(tkr).strip().upper()] = url
+    # ticker -> the SAVED LAYOUT it was captured in. The Activity widget opens the
+    # layout in TradingView Desktop (user request 2026-07-19), which needs the chart
+    # url slug; the capture manifest is the only place that mapping exists.
+    layout_by_ticker = {}
+    lm_path = os.path.join(SCRIPT_DIR, 'layout_manifest_tmp.json')
+    if os.path.exists(lm_path):
+        try:
+            for e in json.load(open(lm_path, encoding='utf-8')):
+                t = str(e.get('ticker') or '').strip().upper()
+                if t and e.get('chartId'):
+                    layout_by_ticker[t] = {'chart_id': e['chartId'],
+                                           'layout': e.get('name'),
+                                           'layout_id': e.get('id')}
+        except (ValueError, OSError):
+            pass
+
     unmarked, inherited = [], []
     cr_path = os.path.join(SCRIPT_DIR, 'channel_results_tmp.json')
     if os.path.exists(cr_path):
@@ -1173,7 +1203,9 @@ def build(workbook=WORKBOOK):
             reason = (rr.get('reason') or '').lower()
             t = rr.get('ticker')
             if 'no channel or trend line found near price' in reason:
-                unmarked.append({'ticker': t, 'chart_url': tv_by_ticker.get(str(t).strip().upper())})
+                key = str(t).strip().upper()
+                unmarked.append({'ticker': t, 'chart_url': tv_by_ticker.get(key),
+                                 **layout_by_ticker.get(key, {})})
             elif 'axis' in reason:
                 inherited.append(t)
     below_tickers = [w['ticker'] for w in watchlist if (w.get('proximity_pct') is not None and w['proximity_pct'] <= 0)]

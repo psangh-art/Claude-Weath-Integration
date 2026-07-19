@@ -1218,6 +1218,38 @@ include payslip uploads in the pipeline — we'll load it via this new payslips 
   height. Activity went L → XL, exactly the requested doubling. `LAYOUT_KEY` bumped to
   `v4` for the Total Income card.
 
+## 'Charts to mark up' opens the layout in TradingView Desktop (2026-07-19)
+
+The list moved from the **Activity** widget to **Chart Statistics** (user request) —
+that widget is about what the detection run found, and its '149 not marked up' figure
+is exactly what the list enumerates. Chart Statistics went `M`→`L` and its body
+scrolls; the status line sits ABOVE the chip list because the list scrolls inside the
+widget and a message underneath it was off-screen exactly when it mattered.
+
+**Clicking a ticker now drives the running TradingView Desktop to that chart's SAVED
+LAYOUT** rather than opening a browser tab — the point is to land on the layout ready
+to DRAW on, which a browser tab can't do. `scripts/tv_open.js` is the only dashboard
+code that talks to TradingView; `POST /api/open-chart {chart_id, ticker, layout}`
+drives it and `GET /api/tradingview-status` reports reachability.
+
+- **It obeys the two standing TradingView rules** (see the top of this file):
+  `ensureAutosaveDisabled()` runs FIRST — auto-save silently persists whatever view
+  state it finds back into the saved layout, which once overwrote every hand-zoomed
+  chart — and there is **NO view reset/refit of any kind**; the saved layout is the
+  view to show. Navigation is a plain `window.location.assign` to the layout's chart
+  URL plus the unsaved-changes dismissal, the same approach `layoutSwitch()` uses,
+  because `loadChartFromServer(id)` silently no-ops on a numeric layout id.
+- **ticker → layout comes from `layout_manifest_tmp.json`** (`{id, chartId, name,
+  ticker}` per captured pane) — the only place that mapping exists. `dashboard_data`
+  attaches `chart_id` / `layout` / `layout_id` to each `charts_to_markup` entry; all
+  108 currently resolve. A ticker with no captured layout keeps the browser link.
+- **TradingView Desktop must be running with `--remote-debugging-port=9222`.** It is
+  NOT by default — the app can be open (it was, PID 4044) with the port closed. The
+  route returns a 503 and a plain-English message saying exactly that rather than
+  hanging or throwing. **The happy path has not been exercised end to end yet**: doing
+  so needs TradingView relaunched with the debug port, which would drop the user's
+  running session, so it was left for them to confirm.
+
 ## Open items / things to verify on the next export run
 
 - Brent/Palladium/Copper charts were added by the user 2026-07-13 and the symbol

@@ -144,7 +144,10 @@ svg{display:block}
 .widget-body{flex:1;min-height:0;padding:12px 14px 13px;display:flex;flex-direction:column}
 
 .grid-spacer{grid-column:span var(--span,1);grid-row:span 3;pointer-events:none}
-.cs-body{display:flex;flex-direction:column;gap:8px;height:100%;min-height:0}
+.cs-body{display:flex;flex-direction:column;gap:8px;min-height:0;flex:0 0 auto}
+/* Chart Statistics now carries the expandable 'Charts to mark up' list beneath
+   its stats block, so the body scrolls instead of the stats owning the height. */
+.widget[data-id="chart-stats"] .widget-body{overflow:auto}
 .cs-head{display:flex;gap:18px;flex-shrink:0}
 .cs-big{font-family:var(--mono);font-size:17px;font-weight:750;line-height:1.05}
 .cs-sub{font-size:9.5px;color:var(--muted);margin-top:2px}
@@ -384,6 +387,11 @@ tbody tr:hover{background:var(--panel-2)}
 .aw-assume{margin-top:10px;font-size:11.5px;color:var(--muted)}
 .aw-assume summary{cursor:pointer}
 .aw-assume ul{margin:8px 0 0 16px;line-height:1.5}
+.aw-hist{margin-top:8px;max-width:640px}
+.activity-charts-msg{padding:6px 10px;font-size:11.5px;line-height:1.45}
+.activity-charts-msg.is-err{color:var(--danger)}
+button.activity-chart-chip{font:inherit;cursor:pointer}
+button.activity-chart-chip:disabled{opacity:.5;cursor:default}
 @media (max-width:1100px){.aw-grid{grid-template-columns:1fr}}
 .wl-live:disabled{opacity:.6;cursor:default}
 .wl-live.spinning svg{animation:spin 1s linear infinite}
@@ -943,7 +951,7 @@ WIDGET_DEFS.overview.push({
 
 /* ----- Chart statistics: how the last detection run read the drawn charts ----- */
 WIDGET_DEFS.overview.push({
-  id:'chart-stats', title:'Chart Statistics', size:'M', span:6,
+  id:'chart-stats', title:'Chart Statistics', size:'L', span:6,
   mount(body){
     const c=DATA.overview.chart_stats;
     if(!c){ body.innerHTML='<div class="dim" style="padding:12px">No detection run found</div>'; return; }
@@ -968,6 +976,65 @@ WIDGET_DEFS.overview.push({
       '<div class="cs-sub">gave alert levels</div></div></div>'+
       '<div class="cs-bar">'+bar+'</div>'+
       '<div class="cs-legend">'+legend+'</div></div>';
+
+    // Charts to mark up — moved here from the Activity widget (user request
+    // 2026-07-19): this is the widget about what the detection run found, and the
+    // 'N not marked up' figure above is exactly what this list enumerates.
+    // Clicking a ticker opens its SAVED LAYOUT in TradingView Desktop so it's there
+    // ready to draw on; a browser tab can't do that. Tickers with no captured layout
+    // keep the browser link.
+    const charts=((DATA.activity||{}).charts_to_markup)||[];
+    if(!charts.length) return;
+    const chartsHtml=charts.map((c,i)=>{
+      if(c.chart_id) return '<button class="activity-chart-chip" data-chart="'+i+'" '+
+        'title="Open '+escapeHtml(c.layout||'this layout')+' in TradingView Desktop">📊 '+escapeHtml(c.ticker||'—')+'</button>';
+      if(c.chart_url) return '<a class="activity-chart-chip" href="'+escapeHtml(c.chart_url)+'" target="_blank" rel="noopener" title="No captured layout for this ticker — opens TradingView in the browser">📊 '+escapeHtml(c.ticker||'—')+'</a>';
+      return '<span class="activity-chart-chip"><span class="dim-ticker">'+escapeHtml(c.ticker||'—')+'</span></span>';
+    }).join('');
+
+    const wrap=document.createElement('div');
+    wrap.className='activity-charts';
+    wrap.innerHTML='<button class="activity-charts-toggle" aria-expanded="false">'+
+      '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>'+
+      'Charts to mark up ('+charts.length+')</button>'+
+      // Status sits ABOVE the chip list: the list scrolls inside the widget, so a
+      // message underneath it was off-screen exactly when it mattered.
+      '<div class="activity-charts-msg dim" hidden></div>'+
+      '<div class="activity-charts-list"></div>';
+    body.appendChild(wrap);
+    wrap.querySelector('.activity-charts-list').innerHTML=chartsHtml;
+
+    const msg=wrap.querySelector('.activity-charts-msg');
+    function say(text,isErr){
+      msg.hidden=!text;
+      msg.textContent=text||'';
+      msg.classList.toggle('is-err',!!isErr);
+    }
+    wrap.querySelectorAll('[data-chart]').forEach(btn=>{
+      btn.addEventListener('click',async()=>{
+        const c=charts[Number(btn.dataset.chart)];
+        if(!c) return;
+        btn.disabled=true;
+        say('Opening '+(c.layout||c.ticker)+' in TradingView…');
+        try{
+          const r=await fetch('/api/open-chart',{method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({chart_id:c.chart_id, ticker:c.ticker, layout:c.layout})});
+          const out=await r.json();
+          if(out.ok) say(c.ticker+' → '+(c.layout||'layout')+' is open in TradingView Desktop.');
+          else say(out.error||'Could not open the chart.',true);
+        }catch(e){
+          say(String((e&&e.message)||e),true);
+        }finally{
+          btn.disabled=false;
+        }
+      });
+    });
+    const toggle=wrap.querySelector('.activity-charts-toggle');
+    toggle.addEventListener('click',()=>{
+      const open=wrap.querySelector('.activity-charts-list').classList.toggle('open');
+      toggle.setAttribute('aria-expanded', open?'true':'false');
+    });
   }
 });
 WIDGET_DEFS.overview.push({
@@ -1071,35 +1138,13 @@ WIDGET_DEFS.overview.push({
         '</div>';
     }).join('');
 
-    const charts=data.charts_to_markup||[];
-    const chartsHtml=charts.map(c=>{
-      if(c.chart_url) return '<a class="activity-chart-chip" href="'+escapeHtml(c.chart_url)+'" target="_blank" rel="noopener" title="Open TradingView chart">📊 '+escapeHtml(c.ticker||'—')+'</a>';
-      return '<span class="activity-chart-chip"><span class="dim-ticker">'+escapeHtml(c.ticker||'—')+'</span></span>';
-    }).join('');
-
     body.innerHTML='<div class="activity-body">'+
       '<div class="activity-list">'+(rows||'<div class="dim" style="padding:14px;text-align:center">Nothing outstanding</div>')+'</div>'+
-      (charts.length?(
-        '<div class="activity-charts">'+
-        '<button class="activity-charts-toggle" id="actChartsToggle" aria-expanded="false">'+
-        '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>'+
-        'Charts to mark up ('+charts.length+')</button>'+
-        '<div class="activity-charts-list" id="actChartsList">'+chartsHtml+'</div>'+
-        '</div>'
-      ):'')+
       '</div>';
 
     body.querySelectorAll('[data-goto]').forEach(btn=>{
       btn.addEventListener('click',()=>switchScreen(btn.dataset.goto));
     });
-    const toggle=body.querySelector('#actChartsToggle');
-    if(toggle){
-      toggle.addEventListener('click',()=>{
-        const list=body.querySelector('#actChartsList');
-        const open=list.classList.toggle('open');
-        toggle.setAttribute('aria-expanded', open?'true':'false');
-      });
-    }
   }
 });
 
@@ -1679,7 +1724,9 @@ WIDGET_DEFS.payslips.push({
           '<table class="tbl"><tbody>'+
             '<tr><td>Annual allowance '+escapeHtml(a.tax_year)+'</td><td class="num money-flat">'+fmtMoney(a.annual_allowance,0)+'</td></tr>'+
             carryRows.map(c=>'<tr><td class="dim">Carry-forward from '+escapeHtml(c.tax_year)+
-              ' <span class="dim" title="Unused allowance is lost after three tax years">(expires after '+escapeHtml(c.expires_after)+')</span></td>'+
+              ' <span class="dim" title="Allowance '+fmtMoney(c.allowance,0)+' − contributed '+fmtMoney(c.contributed,0)+
+              (c.consumed_by_later_years?(' − '+fmtMoney(c.consumed_by_later_years,0)+' already used by a later year'):'')+
+              '. Unused allowance is lost after three tax years.">(expires after '+escapeHtml(c.expires_after)+')</span></td>'+
               '<td class="num money-flat">'+fmtMoney(c.unused,0)+'</td></tr>').join('')+
             (carryRows.length?'':'<tr><td class="dim">Carry-forward available</td><td class="num money-flat">'+fmtMoney(0,0)+'</td></tr>')+
             '<tr class="total-row"><td>Available</td><td class="num money-flat">'+fmtMoney(a.available,0)+'</td></tr>'+
@@ -1692,6 +1739,22 @@ WIDGET_DEFS.payslips.push({
           '<tbody>'+(sched||'<tr><td colspan="4" class="empty">No further pay months this tax year.</td></tr>')+'</tbody></table>'+
         '</div>'+
       '</div>'+
+      '<details class="aw-assume"><summary>Previous years — allowance vs contributions'+
+        ' <span class="dim">(this is what the carry-forward above is derived from)</span></summary>'+
+        '<table class="tbl aw-hist"><thead><tr><th>Tax Year</th><th class="num">Allowance</th>'+
+        '<th class="num">Contributed</th><th class="num">Headroom</th><th class="num">Still available</th></tr></thead><tbody>'+
+        (a.history||[]).slice().reverse().map(h=>{
+          const c=(a.carry_forward||[]).find(x=>x.tax_year===h.tax_year);
+          const head=h.allowance-h.contributed;
+          return '<tr>'+
+            '<td class="mono">'+escapeHtml(h.tax_year)+(h.tax_year===a.tax_year?' <span class="dim">(current)</span>':'')+'</td>'+
+            '<td class="num money-flat">'+fmtMoney(h.allowance,0)+'</td>'+
+            '<td class="num money-flat">'+fmtMoney(h.contributed,0)+'</td>'+
+            '<td class="num money-flat'+(head<0?' neg':'')+'">'+fmtMoney(head,0)+'</td>'+
+            '<td class="num money-flat">'+(c?fmtMoney(c.unused,0):'<span class="dim">—</span>')+'</td>'+
+          '</tr>';
+        }).join('')+
+        '</tbody></table></details>'+
       '<details class="aw-assume"><summary>What this calculation assumes '+
         '<span class="dim">— check these before acting on the figure</span></summary><ul>'+
         (a.assumptions||[]).map(x=>'<li>'+escapeHtml(x)+'</li>').join('')+

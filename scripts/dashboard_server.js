@@ -12,6 +12,7 @@ import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import os from 'os';
 import { productWebLink, CFG } from './config.js';
+import { openChart, tvAvailable } from './tv_open.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -348,6 +349,38 @@ const server = http.createServer((req, res) => {
     }).catch(e => {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: String(e.message || e), prices: {} }));
+    });
+    return;
+  }
+
+  // Open a chart's SAVED LAYOUT in TradingView Desktop (Activity widget's
+  // "Charts to mark up" list, user request 2026-07-19). The point is to land on the
+  // layout ready to DRAW on, which a browser tab can't do — so this drives the
+  // desktop app over CDP instead of returning a link. If the app isn't running with
+  // the debugging port open, the response says exactly that.
+  if (pathname === '/api/open-chart' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; if (body.length > 8192) req.destroy(); });
+    req.on('end', async () => {
+      let payload = {};
+      try { payload = JSON.parse(body || '{}'); } catch { /* fall through to the guard */ }
+      const result = await openChart({
+        chartId: payload.chart_id,
+        symbol: payload.symbol || (payload.ticker ? `LSE:${payload.ticker}` : null),
+        layout: payload.layout,
+      });
+      res.writeHead(result.ok ? 200 : 503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    });
+    return;
+  }
+
+  // Is TradingView Desktop reachable? Lets the UI show the chips as actionable or
+  // not before the user clicks one.
+  if (pathname === '/api/tradingview-status') {
+    tvAvailable().then(up => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ available: up }));
     });
     return;
   }
