@@ -143,6 +143,17 @@ svg{display:block}
 .widget-body{flex:1;min-height:0;padding:12px 14px 13px;display:flex;flex-direction:column}
 
 .grid-spacer{grid-column:span var(--span,1);grid-row:span 3;pointer-events:none}
+.cs-body{display:flex;flex-direction:column;gap:8px;height:100%;min-height:0}
+.cs-head{display:flex;gap:18px;flex-shrink:0}
+.cs-big{font-family:var(--mono);font-size:17px;font-weight:750;line-height:1.05}
+.cs-sub{font-size:9.5px;color:var(--muted);margin-top:2px}
+.cs-bar{display:flex;height:9px;border-radius:5px;overflow:hidden;background:var(--panel-3);flex-shrink:0}
+.cs-seg{display:block;height:100%}
+.cs-legend{display:grid;grid-template-columns:1fr 1fr;gap:2px 14px;overflow:auto;min-height:0}
+.cs-item{display:flex;align-items:center;gap:6px;font-size:10.5px}
+.cs-label{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+.cs-count{font-family:var(--mono);font-weight:700}
+.cs-pct{font-family:var(--mono);color:var(--muted);width:30px}
 .news-item{padding:5px 0;border-bottom:1px solid var(--line-soft)}
 .news-item:last-child{border-bottom:none}
 .news-item.is-past .news-chip-date{opacity:.55}
@@ -845,6 +856,36 @@ WIDGET_DEFS.overview.push({
   }
 });
 
+
+/* ----- Chart statistics: how the last detection run read the drawn charts ----- */
+WIDGET_DEFS.overview.push({
+  id:'chart-stats', title:'Chart Statistics', size:'M', span:6,
+  mount(body){
+    const c=DATA.overview.chart_stats;
+    if(!c){ body.innerHTML='<div class="dim" style="padding:12px">No detection run found</div>'; return; }
+    const PAL={'Parallel channel':'var(--accent)','Trend lines only':'#f0b429','Wedge':'#a78bfa',
+      'Breakout / breakdown':'#38bdf8','On the line':'var(--success)','Single boundary':'#64748b',
+      'No lines drawn':'var(--danger)','Not read (axis)':'#fb923c'};
+    const total=c.total||1;
+    // One stacked bar of every pattern, then a legend — reads as "what did the
+    // 340 captured charts actually contain" at a glance.
+    const bar=(c.patterns||[]).map(p=>'<span class="cs-seg" style="width:'+(p.count/total*100)+'%;background:'+
+      (PAL[p.label]||'var(--muted)')+'" title="'+escapeHtml(p.label)+': '+p.count+'"></span>').join('');
+    const legend=(c.patterns||[]).map(p=>'<div class="cs-item"><span class="legend-dot" style="background:'+
+      (PAL[p.label]||'var(--muted)')+'"></span><span class="cs-label">'+escapeHtml(p.label)+'</span>'+
+      '<span class="cs-count num">'+fmtNum(p.count)+'</span>'+
+      '<span class="cs-pct num">'+fmtPct(p.count/total*100,0)+'</span></div>').join('');
+    body.innerHTML='<div class="cs-body">'+
+      '<div class="cs-head"><div><div class="cs-big">'+fmtNum(c.total)+'</div>'+
+      '<div class="cs-sub">charts captured</div></div>'+
+      '<div><div class="cs-big">'+fmtPct(c.marked_up_pct,0)+'</div>'+
+      '<div class="cs-sub">marked up ('+fmtNum(c.unmarked)+' not)</div></div>'+
+      '<div><div class="cs-big">'+fmtNum(c.with_levels)+'</div>'+
+      '<div class="cs-sub">gave alert levels</div></div></div>'+
+      '<div class="cs-bar">'+bar+'</div>'+
+      '<div class="cs-legend">'+legend+'</div></div>';
+  }
+});
 WIDGET_DEFS.overview.push({
   id:'alert-status', title:'Alert Status', size:'M', span:6,
   mount(body){

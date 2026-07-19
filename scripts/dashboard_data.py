@@ -692,6 +692,53 @@ def build(workbook=WORKBOOK):
     # ladder. The other bands stay out.
     watchlist = _read_soi_band(soi, soif, SOI_WATCHLIST_BAND, base, latest, changes)
 
+    # ---------------- Chart statistics ----------------
+    # How the OCR/detection run went, from the same channel_results_tmp.json the
+    # Activity items read. 'Marked up' mirrors update_master_sheet.marked_up_flag:
+    # a detected pattern OR an axis failure means drawings ARE present.
+    chart_stats = None
+    _cr_path = os.path.join(SCRIPT_DIR, 'channel_results_tmp.json')
+    if os.path.exists(_cr_path):
+        recs = json.load(open(_cr_path, encoding='utf-8'))
+        groups = {'Parallel channel': 0, 'Trend lines only': 0, 'Wedge': 0,
+                  'Breakout / breakdown': 0, 'On the line': 0, 'Single boundary': 0,
+                  'No lines drawn': 0, 'Not read (axis)': 0}
+        levels = axis_fail = undrawn = 0
+        for r in recs:
+            pat = (r.get('pattern') or '').lower()
+            reason = (r.get('reason') or '').lower()
+            if r.get('lower') is not None or r.get('upper') is not None:
+                levels += 1
+            if 'wedge' in pat:
+                groups['Wedge'] += 1
+            elif 'inside channel' in pat:
+                groups['Parallel channel'] += 1
+            elif 'broken out' in pat or 'broken down' in pat:
+                groups['Breakout / breakdown'] += 1
+            elif 'on a drawn line' in pat:
+                groups['On the line'] += 1
+            elif 'single blue boundary' in pat:
+                groups['Single boundary'] += 1
+            elif 'trend lines only' in pat:
+                groups['Trend lines only'] += 1
+            elif 'axis' in reason:
+                groups['Not read (axis)'] += 1
+                axis_fail += 1
+            else:
+                groups['No lines drawn'] += 1
+                undrawn += 1
+        total = len(recs)
+        marked = total - undrawn
+        chart_stats = {
+            'total': total, 'marked_up': marked, 'unmarked': undrawn,
+            'marked_up_pct': round(marked / total * 100.0, 1) if total else None,
+            'with_levels': levels,
+            'with_levels_pct': round(levels / total * 100.0, 1) if total else None,
+            'axis_failed': axis_fail,
+            'patterns': [{'label': k, 'count': v} for k, v in
+                         sorted(groups.items(), key=lambda kv: -kv[1]) if v],
+        }
+
     overview = {
         'generated_at': now.isoformat(timespec='seconds'),
         'currency': 'GBP',
@@ -720,6 +767,7 @@ def build(workbook=WORKBOOK):
                      'rows': accounts,
                      'total': round(sum(a['value'] or 0 for a in accounts), 2),
                      'total_increase': round(sum(a['increase'] or 0 for a in accounts), 2)},
+        'chart_stats': chart_stats,
         'alert_status': {'below': alert_below, 'near': alert_near,
                          'above': alert_above, 'total': alert_below + alert_near + alert_above},
     }

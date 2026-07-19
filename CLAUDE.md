@@ -987,6 +987,12 @@ Three user requests, all committed:
   into cash on 30 Jun 2026 (ex-div 24 Jun), across 6 holdings"), and Acc units say the
   income is reinvested rather than paid out. Equity rows are grouped BY TICKER — the
   same stock in three accounts is one dividend event (Aviva was listed three times).
+- **Chart Statistics widget (Overview, medium)** — `overview.chart_stats`, built from
+  the same `channel_results_tmp.json` the Activity items read: charts captured, % marked
+  up, how many yielded alert levels, and a stacked bar + legend of the pattern mix.
+  'Marked up' mirrors `update_master_sheet.marked_up_flag` (a detected pattern OR an axis
+  failure means drawings are present), so the two never disagree. Latest run: 340 charts,
+  56% marked up, 181 with levels.
 - **Cash Available reads the BROKER export, not the Wealth Summary (2026-07-19).** It
   showed £79 — the Wealth Summary's three standalone Cash Account rows — while the real
   figure is **£384,106**, because most of the cash sits INSIDE each ISA/SIPP.
