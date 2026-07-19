@@ -976,6 +976,15 @@ Three user requests, all committed:
     matcher was tried and REVERTED: the generic words ('high', 'yield', 'bond', 'inc',
     'global') outnumber the distinguishing ones, so it paired AXA and IFSL Marlborough
     with other managers' funds. Don't reintroduce name matching for these.
+- **Overview rows are banded by size (user request 2026-07-19):** row 1 = the six
+  Small metric cards, rows 2-3 = the Mediums (Portfolio Value Over Time + Accounts at
+  span 6; Alert Status / Targets / Relevant News at span 4), row 4 = Activity. A run of
+  half-width Smalls leaves the row part-full, so `renderGrid()` appends an inert
+  `.grid-spacer` to consume the leftover columns. **Forcing `grid-column-start` on the
+  first Medium does NOT work** — CSS grid will still place a later auto item back into
+  the gap (Accounts jumped up beside the Smalls), and because `.widget` uses
+  `grid-column: span var(--span)`, setting only the start collapses the item to one
+  column. The spacer is the reliable mechanism.
 - **Layout (user requests, same day):** Overview small-widget order is Total Portfolio
   Value, Gain, Trading Profit, Monthly Dividend, Accumulative, Cash — with Portfolio
   Value Over Time + Alert Status on the row beneath; Activity narrowed to `span:4` to

@@ -142,6 +142,7 @@ svg{display:block}
 .widget-remove:hover{background:var(--danger-soft);border-color:color-mix(in oklab,var(--danger) 40%,var(--line));color:var(--danger)}
 .widget-body{flex:1;min-height:0;padding:12px 14px 13px;display:flex;flex-direction:column}
 
+.grid-spacer{grid-column:span var(--span,1);grid-row:span 1;pointer-events:none}
 .ghost-tile{grid-column:span var(--span,3);grid-row:span 1;border:1.5px dashed var(--line);border-radius:14px;
   display:flex;align-items:center;justify-content:center;padding:10px;min-height:104px}
 .ghost-tile[data-size="M"]{grid-row:span 2}
@@ -735,7 +736,7 @@ WIDGET_DEFS.overview.push({
 });
 
 WIDGET_DEFS.overview.push({
-  id:'value-over-time', title:'Portfolio Value Over Time', size:'M', span:4,
+  id:'value-over-time', title:'Portfolio Value Over Time', size:'M', span:6,
   mount(body,action){
     const frames=['3M','6M','YTD','1Y','ALL'];
     action.innerHTML='<div class="seg">'+frames.map(f=>'<button data-tf="'+f+'" class="'+(UI.chart.timeframe===f?'active':'')+'">'+f+'</button>').join('')+'</div>';
@@ -797,23 +798,8 @@ WIDGET_DEFS.overview.push({
     draw();
   }
 });
-
 WIDGET_DEFS.overview.push({
-  id:'alert-status', title:'Alert Status', size:'M', span:2,
-  mount(body){
-    const a=DATA.overview.alert_status||{below:0,near:0,above:0,total:0};
-    const segs=[{value:a.below,color:'var(--danger)',label:'Below alert low'},
-                {value:a.near,color:'var(--warn)',label:'Near alert low'},
-                {value:a.above,color:'var(--success)',label:'Above alert low'}];
-    const ring=ringSVG(segs,{size:118,thickness:16,centerLine1:fmtNum(a.total),centerLine2:'tickers'});
-    const legend=segs.map(s=>'<div class="legend-item"><span class="legend-dot" style="background:'+s.color+'"></span>'+s.label+'<b>'+fmtNum(s.value)+'</b></div>').join('');
-    body.innerHTML='<div class="ring-wrap">'+ring+'<div class="ring-legend">'+legend+'</div></div>';
-  }
-});
-
-/* ----- Fidelity accounts, last FULL month (the current month is still accruing) ----- */
-WIDGET_DEFS.overview.push({
-  id:'accounts-month', title:'Accounts', size:'M', span:4,
+  id:'accounts-month', title:'Accounts', size:'M', span:6,
   mount(body,action,widgetEl){
     const a=(DATA.overview.accounts)||{};
     const rows=a.rows||[];
@@ -839,9 +825,24 @@ WIDGET_DEFS.overview.push({
   }
 });
 
+WIDGET_DEFS.overview.push({
+  id:'alert-status', title:'Alert Status', size:'M', span:4,
+  mount(body){
+    const a=DATA.overview.alert_status||{below:0,near:0,above:0,total:0};
+    const segs=[{value:a.below,color:'var(--danger)',label:'Below alert low'},
+                {value:a.near,color:'var(--warn)',label:'Near alert low'},
+                {value:a.above,color:'var(--success)',label:'Above alert low'}];
+    const ring=ringSVG(segs,{size:118,thickness:16,centerLine1:fmtNum(a.total),centerLine2:'tickers'});
+    const legend=segs.map(s=>'<div class="legend-item"><span class="legend-dot" style="background:'+s.color+'"></span>'+s.label+'<b>'+fmtNum(s.value)+'</b></div>').join('');
+    body.innerHTML='<div class="ring-wrap">'+ring+'<div class="ring-legend">'+legend+'</div></div>';
+  }
+});
+
+/* ----- Fidelity accounts, last FULL month (the current month is still accruing) ----- */
+
 const ALLOC_COLORS=['var(--accent)','var(--success)','var(--warn)','var(--muted)','var(--danger)'];
 WIDGET_DEFS.overview.push({
-  id:'targets', title:'Targets', size:'M', span:2,
+  id:'targets', title:'Targets', size:'M', span:4,
   mount(body){
     const t=DATA.targets||{};
     const income=t.income_per_month, annual=t.annual_income, total=t.total||0;
@@ -866,7 +867,7 @@ WIDGET_DEFS.overview.push({
 });
 
 WIDGET_DEFS.overview.push({
-  id:'news', title:'Relevant News', size:'M', span:2,
+  id:'news', title:'Relevant News', size:'M', span:4,
   mount(body){
     const rows=(DATA.news && DATA.news.rows)||[];
     if(!rows.length){
@@ -894,7 +895,7 @@ WIDGET_DEFS.overview.push({
 });
 
 WIDGET_DEFS.overview.push({
-  id:'activity', title:'Activity', size:'L', span:4,
+  id:'activity', title:'Activity', size:'L', span:6,
   mount(body){
     const data=DATA.activity||{};
     const actions=(data.actions||[]).slice();
@@ -1552,7 +1553,7 @@ const DEFAULT_ORDER={
 // Bump the version when the DEFAULT order changes: a saved layout wins over the
 // default for widgets it already lists, so without a new key an existing browser
 // would keep the old arrangement for ever.
-const LAYOUT_KEY='dashboard:layout:v2:';
+const LAYOUT_KEY='dashboard:layout:v3:';
 function getOrder(screen){
   const ids=WIDGET_DEFS[screen].map(d=>d.id);
   let saved=null;
@@ -1641,6 +1642,7 @@ function syncThemeButton(){
 })();
 
 /* ---------------------------- render: topbar ---------------------------- */
+const GRID_COLS=12;
 const SCREEN_TITLES={overview:'Overview', portfolio:'Portfolio', historic:'Historic', watchlist:'Watchlist', intelligence:'Intelligence', design:'Design'};
 function renderTopbar(){
   document.getElementById('screenTitle').textContent=SCREEN_TITLES[UI.screen]||UI.screen;
@@ -1670,14 +1672,29 @@ function renderGrid(){
   }
   const defs=WIDGET_DEFS[UI.screen];
   const order=getOrder(UI.screen);
+  // The small metric cards are half-width, so a run of them can leave the row
+  // part-full and the next (medium) widget flows up beside them. Pad the leftover
+  // columns with an inert spacer so each size band starts its own row — forcing a
+  // grid-column-start on the medium instead does NOT work: grid can place a later
+  // auto item back into the gap (2026-07-19).
+  let prevSize=null, smallCols=0;
   order.forEach(id=>{
     const def=defs.find(d=>d.id===id);
     if(!def) return;
+    if(def.size==='S'){ smallCols=(smallCols+Number(def.span||1))%GRID_COLS; }
+    else if(prevSize==='S' && smallCols>0){
+      const pad=document.createElement('div');
+      pad.className='grid-spacer';
+      pad.style.setProperty('--span',GRID_COLS-smallCols);
+      grid.appendChild(pad);
+      smallCols=0;
+    }
     const el=document.createElement('section');
     el.className='widget';
     el.dataset.id=id;
     el.dataset.size=def.size;
     el.style.setProperty('--span',def.span);
+    prevSize=def.size;
     if(UI.editMode) el.setAttribute('draggable','true');
     el.innerHTML='<header class="widget-head">'+
       (UI.editMode?'<span class="drag-handle" title="Drag to reorder">⠿⠿</span>':'')+
