@@ -976,6 +976,10 @@ Three user requests, all committed:
     matcher was tried and REVERTED: the generic words ('high', 'yield', 'bond', 'inc',
     'global') outnumber the distinguishing ones, so it paired AXA and IFSL Marlborough
     with other managers' funds. Don't reintroduce name matching for these.
+- **The grid is 24 columns, not 12 (2026-07-19).** The user asked for Smalls at 1.5
+  columns and Mediums at 3 — grid spans are integers, so the track count doubled and
+  every span with it. Widths in 24ths: Small 3, Medium 6, Large 12, XL 24. Talk about
+  widths in the user's twelfths (1.5 / 3 / 6 / 12) but write them doubled in `span`.
 - **Overview rows are banded by size (user request 2026-07-19):** row 1 = the six
   Small metric cards, rows 2-3 = the Mediums (Portfolio Value Over Time + Accounts at
   span 6; Alert Status / Targets / Relevant News at span 4), row 4 = Activity. A run of
