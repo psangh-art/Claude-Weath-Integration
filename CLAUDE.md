@@ -987,10 +987,23 @@ Three user requests, all committed:
   into cash on 30 Jun 2026 (ex-div 24 Jun), across 6 holdings"), and Acc units say the
   income is reinvested rather than paid out. Equity rows are grouped BY TICKER — the
   same stock in three accounts is one dividend event (Aviva was listed three times).
+- **Cash Available reads the BROKER export, not the Wealth Summary (2026-07-19).** It
+  showed £79 — the Wealth Summary's three standalone Cash Account rows — while the real
+  figure is **£384,106**, because most of the cash sits INSIDE each ISA/SIPP.
+  `_fidelity_cash()` sums the 'Cash available' column (index 12) on each ACCOUNT row of
+  AccountSummary's detail section, family holders only (the broker's own £384,647 total
+  includes the relatives' £541). The metric carries the per-account breakdown as `rows`
+  (tooltip on the figure) and falls back to the Wealth Summary rows if the export is
+  missing.
+- **Row unit is 44px, not 104px (2026-07-19).** The user asked for Small +50% height.
+  Heights are grid-row spans, so the unit shrank and every span scaled: S 3 (164px),
+  M 4 (224px), L 6 (344px), XL 16 (944px) — M/L/XL are byte-identical to before, only
+  S changed. `height(n) = 44n + 16(n-1)`; keep that formula in mind before changing
+  `--row` again.
 - **The Design screen RESIZES widgets — stop editing spans in code (user request
   2026-07-19).** Every row now has a Height (S/M/L/XL) and a Width (in twelfths:
-  1 / 1.5 / 2 / 3 / 4 / 6 / 12) dropdown alongside its order number; Apply saves the
-  lot. Overrides live in `localStorage['dashboard:sizes:v1']` as `{id:{size,span}}` and
+  1 / 1.5 / 2 / 3 / 4 / 6 / 12) dropdown alongside its order number, plus ▲/▼ move buttons; **everything saves
+  the moment it changes — there is no Apply button** (user request 2026-07-19). Overrides live in `localStorage['dashboard:sizes:v1']` as `{id:{size,span}}` and
   `renderGrid` reads them through `sizeOf()`/`spanOf()`. **Only values that DIFFER from
   the code default are stored**, so a later default change still reaches any widget the
   user never resized — and 'Reset all to default' clears both the order and the sizes.

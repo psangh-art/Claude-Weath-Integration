@@ -17,7 +17,7 @@
   --warn:#e0a83d; --warn-soft:rgba(224,168,61,.16);
   --danger:#f2555a; --danger-soft:rgba(242,85,90,.15);
   --shadow:0 10px 28px rgba(0,0,0,.38);
-  --row:104px; --gap:16px;
+  --row:44px; --gap:16px;
   --mono:ui-monospace,"SF Mono",SFMono-Regular,"Cascadia Mono",Consolas,monospace;
   --sans:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
 }
@@ -120,10 +120,10 @@ svg{display:block}
   box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;min-width:0;
   animation:widgetIn .3s cubic-bezier(.3,.7,.4,1) both}
 @keyframes widgetIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-.widget[data-size="S"]{grid-row:span 1}
-.widget[data-size="M"]{grid-row:span 2}
-.widget[data-size="L"]{grid-row:span 3}
-.widget[data-size="XL"]{grid-row:span 8}
+.widget[data-size="S"]{grid-row:span 3}
+.widget[data-size="M"]{grid-row:span 4}
+.widget[data-size="L"]{grid-row:span 6}
+.widget[data-size="XL"]{grid-row:span 16}
 .grid.editing .widget{border-style:dashed;border-color:color-mix(in oklab,var(--accent) 40%,var(--line))}
 .widget.dragging{opacity:.4}
 .widget-head{display:flex;align-items:center;gap:8px;padding:10px 13px;border-bottom:1px solid var(--line-soft);
@@ -142,15 +142,15 @@ svg{display:block}
 .widget-remove:hover{background:var(--danger-soft);border-color:color-mix(in oklab,var(--danger) 40%,var(--line));color:var(--danger)}
 .widget-body{flex:1;min-height:0;padding:12px 14px 13px;display:flex;flex-direction:column}
 
-.grid-spacer{grid-column:span var(--span,1);grid-row:span 1;pointer-events:none}
+.grid-spacer{grid-column:span var(--span,1);grid-row:span 3;pointer-events:none}
 .news-item{padding:5px 0;border-bottom:1px solid var(--line-soft)}
 .news-item:last-child{border-bottom:none}
 .news-item.is-past .news-chip-date{opacity:.55}
 .news-desc{font-size:10.5px;line-height:1.35;color:var(--muted);margin:2px 0 0 4px;white-space:normal}
-.ghost-tile{grid-column:span var(--span,6);grid-row:span 1;border:1.5px dashed var(--line);border-radius:14px;
+.ghost-tile{grid-column:span var(--span,6);grid-row:span 3;border:1.5px dashed var(--line);border-radius:14px;
   display:flex;align-items:center;justify-content:center;padding:10px;min-height:104px}
-.ghost-tile[data-size="M"]{grid-row:span 2}
-.ghost-tile[data-size="L"]{grid-row:span 3}
+.ghost-tile[data-size="M"]{grid-row:span 4}
+.ghost-tile[data-size="L"]{grid-row:span 6}
 .ghost-tile button{display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:none;
   color:var(--faint);cursor:pointer;font-size:11.5px;font-weight:600;text-align:center;padding:6px}
 .ghost-tile button:hover{color:var(--accent)}
@@ -369,6 +369,11 @@ tbody tr:hover{background:var(--panel-2)}
 .design-name{flex:1;font-size:13px;font-weight:600;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .design-size{font-size:10px;text-transform:uppercase;letter-spacing:.045em;font-weight:700;padding:3px 9px;
   border-radius:6px;background:var(--panel-3);color:var(--muted);flex-shrink:0}
+.design-move{display:flex;gap:3px;flex-shrink:0}
+.design-move button{background:var(--panel-3);border:1px solid var(--line);border-radius:6px;color:var(--muted);
+  font-size:10px;line-height:1;padding:5px 7px;cursor:pointer}
+.design-move button:hover{color:var(--accent);border-color:var(--accent)}
+.design-head .design-move{width:52px}
 .design-size,.design-width{flex-shrink:0}
 .design-size select,.design-width select{background:var(--panel-3);border:1px solid var(--line);
   border-radius:6px;color:var(--text);font-size:11.5px;font-weight:600;padding:4px 6px;min-width:82px}
@@ -741,8 +746,10 @@ WIDGET_DEFS.overview.push({
     // so the % moves into the sub line where it stays legible.
     const ring=ringSVG([{value:pct,color:'var(--accent)'},{value:100-pct,color:'var(--panel-3)'}],
       {size:18,thickness:4});
+    // Hovering the figure lists which account each pound is sitting in.
+    const bd=(m.rows||[]).map(r=>(r.account||'?')+' '+(r.wrapper||'')+': '+fmtMoney(r.cash,0)).join('\n');
     body.innerHTML='<div class="metric">'+
-      '<div class="metric-main"><div class="metric-value">'+fmtMoney(m.value,0)+'</div>'+
+      '<div class="metric-main"><div class="metric-value" title="'+escapeHtml(bd)+'">'+fmtMoney(m.value,0)+'</div>'+
       '<div class="metric-sub">'+fmtPct(pct,pct<1?2:1)+' of portfolio'+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div>'+
       '<div class="metric-graphic">'+ring+'</div></div>';
   }
@@ -1499,10 +1506,9 @@ WIDGET_DEFS.design.push({
     body.innerHTML='<div class="design-hint">Every widget on every screen. The number sets left-to-right, '+
       'then top-to-bottom placement. <b>Height</b> is the row depth of the widget and <b>Width</b> is how many '+
       'twelfths of the screen it takes — set both here, no code change needed. Widgets flow in order, so a '+
-      'row holds as many as fit in 12 (small widgets keep a row to themselves). Click Apply to save.</div>'+
+      'row holds as many as fit in 12 (small widgets keep a row to themselves). Changes save as you make them.</div>'+
       '<div class="design-list"></div>'+
-      '<div class="design-actions"><button class="chip-btn primary" id="dlApplyOrder">Apply order</button>'+
-      '<span class="design-status" id="dlOrderStatus"></span></div>';
+      '<div class="design-actions"><span class="design-status" id="dlOrderStatus"></span></div>';
     const listEl=body.querySelector('.design-list');
     const statusEl=body.querySelector('#dlOrderStatus');
 
@@ -1527,6 +1533,9 @@ WIDGET_DEFS.design.push({
         const rows=defs.map(d=>{
           return '<div class="design-row" data-id="'+d.id+'" data-screen="'+screen+'">'+
             '<span class="design-num"><input type="number" min="1" max="'+defs.length+'" step="1" value="'+pos[d.id]+'"></span>'+
+            '<span class="design-move">'+
+              '<button class="dl-up" title="Move up" aria-label="Move up">▲</button>'+
+              '<button class="dl-down" title="Move down" aria-label="Move down">▼</button></span>'+
             '<span class="design-name">'+escapeHtml(d.title)+'</span>'+
             '<span class="design-size"><select class="dl-size">'+
               ['S','M','L','XL'].map(k=>'<option value="'+k+'"'+(sizeOf(d)===k?' selected':'')+'>'+
@@ -1538,35 +1547,68 @@ WIDGET_DEFS.design.push({
         }).join('');
         return '<div class="design-group-title">'+escapeHtml(SCREEN_TITLES[screen]||screen)+'</div>'+
           '<div class="design-row design-head"><span class="design-num">#</span>'+
+          '<span class="design-move"></span>'+
           '<span class="design-name">Widget</span><span class="design-size">Height</span>'+
           '<span class="design-width">Width</span></div>'+rows;
       }).join('');
     }
-    function applyOrder(){
-      SCREENS.forEach(screen=>{
-        const rows=Array.from(listEl.querySelectorAll('.design-row[data-screen="'+screen+'"]'));
-        const entries=rows.map((r,i)=>({id:r.dataset.id, n:parseInt(r.querySelector('input').value,10), i}));
-        entries.sort((a,b)=>{
-          const an=isNaN(a.n)?9999:a.n, bn=isNaN(b.n)?9999:b.n;
-          return an-bn || a.i-b.i;
-        });
-        saveOrder(screen, entries.map(e=>e.id));
-      });
-      // Height/width overrides: only store what actually differs from the code
-      // default, so a later default change still reaches widgets you never resized.
-      const sizes={};
-      listEl.querySelectorAll('.design-row').forEach(r=>{
-        const def=(WIDGET_DEFS[r.dataset.screen]||[]).find(d=>d.id===r.dataset.id);
-        if(!def) return;
-        const size=r.querySelector('.dl-size').value;
-        const span=Number(r.querySelector('.dl-span').value);
-        if(size!==def.size || span!==def.span) sizes[def.id]={size:size, span:span};
-      });
-      SIZE_OVERRIDES=sizes; saveSizes(sizes);
-      statusEl.textContent='Applied — order, height and width updated on every screen.';
+    // Up/down move a widget one place within its screen and save immediately —
+    // no need to renumber by hand for a single swap (user request 2026-07-19).
+    function move(row, delta){
+      const screen=row.dataset.screen;
+      const rows=Array.from(listEl.querySelectorAll('.design-row[data-screen="'+screen+'"]:not(.design-head)'));
+      const i=rows.indexOf(row), j=i+delta;
+      if(i<0 || j<0 || j>=rows.length) return;
+      const ids=rows.map(r=>r.dataset.id);
+      ids.splice(j,0,ids.splice(i,1)[0]);
+      saveOrder(screen, ids);
+      statusEl.textContent='Moved “'+(row.querySelector('.design-name').textContent)+'” '+(delta<0?'up':'down')+'.';
       renderList();
     }
-    body.querySelector('#dlApplyOrder').addEventListener('click',applyOrder);
+    listEl.addEventListener('click',e=>{
+      const btn=e.target.closest('.dl-up, .dl-down');
+      if(!btn) return;
+      move(btn.closest('.design-row'), btn.classList.contains('dl-up') ? -1 : 1);
+    });
+
+    // Everything on this screen saves AS YOU CHANGE IT — no Apply step (user
+    // request 2026-07-19). Order comes from the number boxes, height/width from the
+    // two selects; only values that differ from the code default are stored, so a
+    // later default change still reaches widgets the user never touched.
+    function saveScreenOrder(screen){
+      const rows=Array.from(listEl.querySelectorAll('.design-row[data-screen="'+screen+'"]'));
+      const entries=rows.map((r,i)=>({id:r.dataset.id, n:parseInt(r.querySelector('input').value,10), i}));
+      entries.sort((a,b)=>{
+        const an=isNaN(a.n)?9999:a.n, bn=isNaN(b.n)?9999:b.n;
+        return an-bn || a.i-b.i;
+      });
+      saveOrder(screen, entries.map(e=>e.id));
+    }
+    function saveSizeFor(row){
+      const def=(WIDGET_DEFS[row.dataset.screen]||[]).find(d=>d.id===row.dataset.id);
+      if(!def) return null;
+      const size=row.querySelector('.dl-size').value;
+      const span=Number(row.querySelector('.dl-span').value);
+      const map=Object.assign({}, SIZE_OVERRIDES);
+      if(size===def.size && span===def.span) delete map[def.id];
+      else map[def.id]={size:size, span:span};
+      SIZE_OVERRIDES=map; saveSizes(map);
+      return def;
+    }
+    listEl.addEventListener('change',e=>{
+      const row=e.target.closest('.design-row');
+      if(!row) return;
+      if(e.target.matches('.dl-size, .dl-span')){
+        const def=saveSizeFor(row);
+        if(def) statusEl.textContent='Saved — “'+def.title+'” is now '+
+          (SIZE_LABELS[sizeOf(def)]||sizeOf(def))+', width '+(spanOf(def)/2)+'.';
+      } else if(e.target.matches('input[type="number"]')){
+        saveScreenOrder(row.dataset.screen);
+        statusEl.textContent='Saved — order updated on '+(SCREEN_TITLES[row.dataset.screen]||row.dataset.screen)+'.';
+        renderList();
+      }
+    });
+
     action.querySelector('#dlResetOrder').addEventListener('click',()=>{
       SCREENS.forEach(screen=>saveOrder(screen, (DEFAULT_ORDER[screen]||[]).slice()));
       SIZE_OVERRIDES={}; saveSizes({});

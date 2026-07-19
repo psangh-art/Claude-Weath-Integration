@@ -138,6 +138,7 @@ ACCOUNT_SUMMARY = os.path.join(os.path.expanduser('~'), 'Downloads', 'AccountSum
 # --- AccountSummary.csv 'View all account details' columns (0-indexed) ---
 AS_TYPE, AS_NAME, AS_ACCTNO, AS_PRODUCT, AS_HOLDER = 0, 1, 2, 3, 4
 AS_PRICE, AS_QTY, AS_VALUE, AS_BOOKCOST, AS_GAIN = 7, 9, 10, 13, 14
+AS_CASH = 12                       # 'Cash available' — carried on the ACCOUNT rows
 # Broker ticker -> the Investments-sheet ticker the chart/alerts are keyed on.
 AS_TICKER_ALIASES = {'AV.': 'AV', 'SPLT': 'PLAT', 'SPDM': 'PALL', 'BT.A': 'BT.A'}
 # Fund holdings that belong in the Investments table, not Income Funds (no ticker
@@ -276,6 +277,42 @@ def _fund_income_events(downloads=DOWNLOADS):
         except OSError:
             continue   # a file mid-download / locked by Excel — skip, never fail
     return events
+
+
+def _fidelity_cash(path=ACCOUNT_SUMMARY):
+    """Uninvested cash per family account, from the broker export's 'Cash available'
+    column on each ACCOUNT row of the 'View all account details' section.
+
+    The Wealth Summary's cash rows only cover the three standalone Cash Accounts
+    (£79 in total) and miss the cash sitting inside every ISA/SIPP, which is the
+    bulk of it — that's what made the Cash Available widget wrong (user 2026-07-19).
+    """
+    if not os.path.exists(path):
+        return None, []
+    import csv
+    rows, total = [], 0.0
+    in_detail = False
+    with open(path, encoding='utf-8-sig', newline='') as fh:
+        for rec in csv.reader(fh):
+            if not rec:
+                continue
+            head = (rec[0] or '').strip()
+            if head.lower().startswith('view all account details'):
+                in_detail = True
+                continue
+            if not in_detail or head != 'Account' or len(rec) <= AS_CASH:
+                continue
+            holder = (rec[AS_HOLDER] or '').strip().split()[0] if rec[AS_HOLDER] else None
+            if (holder or '').upper() not in FAMILY_HOLDERS:
+                continue
+            cash = _as_num(rec[AS_CASH])
+            if not cash:
+                continue
+            total += cash
+            rows.append({'account': holder, 'wrapper': (rec[AS_PRODUCT] or '').strip() or None,
+                         'cash': round(cash, 2)})
+    rows.sort(key=lambda r: -r['cash'])
+    return round(total, 2), rows
 
 
 # Chart symbols priced in USD (per ounce / barrel / MMBtu) rather than UK pence.
@@ -523,7 +560,14 @@ def build(workbook=WORKBOOK):
     value_over_time = {'labels': [m['label'] for m in months],
                        'portfolio': [m['value'] for m in months]}
     last_col = months[-1]['col'] if months else 4
-    cash_available = sum(_num(ws.cell(row, last_col).value) or 0.0 for row in WS_CASH_ROWS)
+    # Cash: the broker export is authoritative (it includes the cash held INSIDE each
+    # ISA/SIPP). The Wealth Summary's standalone Cash Account rows are the fallback.
+    cash_available, cash_rows = _fidelity_cash()
+    cash_source = 'Fidelity AccountSummary — cash available across family accounts'
+    if cash_available is None:
+        cash_available = sum(_num(ws.cell(row, last_col).value) or 0.0 for row in WS_CASH_ROWS)
+        cash_rows = []
+        cash_source = 'Wealth Summary cash-account rows (broker export not in Downloads)'
     # Month-over-month change in the investable total (transparent, and consistent
     # with the trend chart). Includes contributions — flagged in the metric caveat.
     gain_last_month = round(months[-1]['value'] - months[-2]['value'], 2) if len(months) >= 2 else None
@@ -669,7 +713,7 @@ def build(workbook=WORKBOOK):
                                            f'£{share_accum_monthly:,.0f}/mo.'},
             'cash_available': {'value': round(cash_available, 2),
                                'pct_of_portfolio': round(cash_available / portfolio_value * 100.0, 2) if portfolio_value else None,
-                               'caveat': 'Fidelity cash accounts only; uninvested account cash added in Phase 1.5.'},
+                               'rows': cash_rows, 'caveat': cash_source + '.'},
         },
         'value_over_time': value_over_time,
         'accounts': {'month': accounts_month, 'prev_month': accounts_prev_month,
