@@ -951,6 +951,14 @@ Three user requests, all committed:
   (SANX002282)'` label format. NOTE: most rows show a £0 increase because the Wealth
   Summary carries the same figure across months for any account that hasn't been
   re-imported — that's the sheet, not the widget.
+- **FAMILY ACCOUNTS ONLY** (user decision 2026-07-19). The Fidelity export covers
+  accounts administered for wider relatives (Dorothy Wall, Olive Elizabeth Sangha,
+  Freda Hibbert) as well as the family's. `FAMILY_HOLDERS = {Paul, Susan, Liam,
+  Jayne}` filters `_fidelity_positions()` at source, so every downstream total is the
+  family's: 13 -> 12 investments (Vodafone was Olive's), 44 -> 22 income positions,
+  and the income-fund P&L flipped −£29,985 -> +£6,178 because the losses sat in the
+  relatives' accounts. The Wealth Summary accounts block and the History sheet were
+  already family-only, so those needed no change.
 - **Portfolio → Income Funds is now per fund PER ACCOUNT** (`portfolio.income_positions`,
   44 rows) with Account, Wrapper, P&L, Yield, Last Income, Ex-Div and Paid, plus a
   **sticky total row that totals the FILTERED rows**. The sheet-level `income_funds`

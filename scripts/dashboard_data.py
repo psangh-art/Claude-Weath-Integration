@@ -139,6 +139,12 @@ AS_TICKER_ALIASES = {'AV.': 'AV', 'SPLT': 'PLAT', 'SPDM': 'PALL', 'BT.A': 'BT.A'
 # Fund holdings that belong in the Investments table, not Income Funds (no ticker
 # in the broker name, so matched by name prefix) -> Investments ticker.
 AS_FUND_AS_INVESTMENT = {'WS GUINNESS GLOBAL ENERGY': 'GUINNESS'}
+# The dashboard models the FAMILY's investments only (user decision 2026-07-19).
+# The Fidelity export covers accounts held for wider relatives too (Dorothy Wall,
+# Olive Elizabeth Sangha, Freda Hibbert) — those are administered here but are not
+# part of the family portfolio, and including them inflated every total. Matched on
+# the account holder's first name, which is how the Wealth Summary labels them.
+FAMILY_HOLDERS = {'PAUL', 'SUSAN', 'LIAM', 'JAYNE'}
 
 
 def _as_num(s):
@@ -192,6 +198,8 @@ def _fidelity_positions(path=ACCOUNT_SUMMARY, funds=False):
                 continue       # wrong side of the equity / income-fund split
             ticker = AS_TICKER_ALIASES.get(ticker, ticker) if ticker else None
             holder = (rec[AS_HOLDER] or '').strip().split()[0] if rec[AS_HOLDER] else None
+            if (holder or '').upper() not in FAMILY_HOLDERS:
+                continue   # not a family account — see FAMILY_HOLDERS
             qty = _as_num(rec[AS_QTY])
             cost = _as_num(rec[AS_BOOKCOST])
             rows.append({
