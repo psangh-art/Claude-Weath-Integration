@@ -369,6 +369,15 @@ tbody tr:hover{background:var(--panel-2)}
 .design-name{flex:1;font-size:13px;font-weight:600;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .design-size{font-size:10px;text-transform:uppercase;letter-spacing:.045em;font-weight:700;padding:3px 9px;
   border-radius:6px;background:var(--panel-3);color:var(--muted);flex-shrink:0}
+.design-size,.design-width{flex-shrink:0}
+.design-size select,.design-width select{background:var(--panel-3);border:1px solid var(--line);
+  border-radius:6px;color:var(--text);font-size:11.5px;font-weight:600;padding:4px 6px;min-width:82px}
+.design-width select{min-width:74px}
+.design-head{background:none;border:none;padding-bottom:0;font-size:10px;text-transform:uppercase;
+  letter-spacing:.045em;color:var(--muted);font-weight:700}
+.design-head .design-num{width:48px;text-align:center}
+.design-head .design-size{min-width:82px}
+.design-head .design-width{min-width:74px}
 .design-actions{display:flex;align-items:center;gap:10px;margin-top:10px;flex-shrink:0}
 .design-status{font-size:11.5px;color:var(--success)}
 
@@ -1488,8 +1497,9 @@ WIDGET_DEFS.design.push({
     action.innerHTML='<button class="chip-btn" id="dlResetOrder">Reset all to default</button>';
 
     body.innerHTML='<div class="design-hint">Every widget on every screen. The number sets left-to-right, '+
-      'then top-to-bottom placement on that screen. Edit the numbers and click Apply — this updates the same '+
-      'order Edit-mode drag-and-drop uses, so it persists across reloads.</div>'+
+      'then top-to-bottom placement. <b>Height</b> is the row depth of the widget and <b>Width</b> is how many '+
+      'twelfths of the screen it takes — set both here, no code change needed. Widgets flow in order, so a '+
+      'row holds as many as fit in 12 (small widgets keep a row to themselves). Click Apply to save.</div>'+
       '<div class="design-list"></div>'+
       '<div class="design-actions"><button class="chip-btn primary" id="dlApplyOrder">Apply order</button>'+
       '<span class="design-status" id="dlOrderStatus"></span></div>';
@@ -1518,10 +1528,18 @@ WIDGET_DEFS.design.push({
           return '<div class="design-row" data-id="'+d.id+'" data-screen="'+screen+'">'+
             '<span class="design-num"><input type="number" min="1" max="'+defs.length+'" step="1" value="'+pos[d.id]+'"></span>'+
             '<span class="design-name">'+escapeHtml(d.title)+'</span>'+
-            '<span class="design-size">'+(SIZE_LABELS[d.size]||d.size)+'</span>'+
+            '<span class="design-size"><select class="dl-size">'+
+              ['S','M','L','XL'].map(k=>'<option value="'+k+'"'+(sizeOf(d)===k?' selected':'')+'>'+
+                (SIZE_LABELS[k]||k)+'</option>').join('')+'</select></span>'+
+            '<span class="design-width"><select class="dl-span">'+
+              WIDTH_CHOICES.map(w=>'<option value="'+(w[0]*2)+'"'+(spanOf(d)===w[0]*2?' selected':'')+'>'+
+                w[1]+'</option>').join('')+'</select></span>'+
             '</div>';
         }).join('');
-        return '<div class="design-group-title">'+escapeHtml(SCREEN_TITLES[screen]||screen)+'</div>'+rows;
+        return '<div class="design-group-title">'+escapeHtml(SCREEN_TITLES[screen]||screen)+'</div>'+
+          '<div class="design-row design-head"><span class="design-num">#</span>'+
+          '<span class="design-name">Widget</span><span class="design-size">Height</span>'+
+          '<span class="design-width">Width</span></div>'+rows;
       }).join('');
     }
     function applyOrder(){
@@ -1534,13 +1552,25 @@ WIDGET_DEFS.design.push({
         });
         saveOrder(screen, entries.map(e=>e.id));
       });
-      statusEl.textContent='Applied — widget order updated on every screen.';
+      // Height/width overrides: only store what actually differs from the code
+      // default, so a later default change still reaches widgets you never resized.
+      const sizes={};
+      listEl.querySelectorAll('.design-row').forEach(r=>{
+        const def=(WIDGET_DEFS[r.dataset.screen]||[]).find(d=>d.id===r.dataset.id);
+        if(!def) return;
+        const size=r.querySelector('.dl-size').value;
+        const span=Number(r.querySelector('.dl-span').value);
+        if(size!==def.size || span!==def.span) sizes[def.id]={size:size, span:span};
+      });
+      SIZE_OVERRIDES=sizes; saveSizes(sizes);
+      statusEl.textContent='Applied — order, height and width updated on every screen.';
       renderList();
     }
     body.querySelector('#dlApplyOrder').addEventListener('click',applyOrder);
     action.querySelector('#dlResetOrder').addEventListener('click',()=>{
       SCREENS.forEach(screen=>saveOrder(screen, (DEFAULT_ORDER[screen]||[]).slice()));
-      statusEl.textContent='Reset every screen to default order.';
+      SIZE_OVERRIDES={}; saveSizes({});
+      statusEl.textContent='Reset every screen to the default order, height and width.';
       renderList();
     });
     renderList();
@@ -1561,6 +1591,18 @@ const DEFAULT_ORDER={
 // default for widgets it already lists, so without a new key an existing browser
 // would keep the old arrangement for ever.
 const LAYOUT_KEY='dashboard:layout:v3:';
+// Per-widget HEIGHT (size) and WIDTH (span) overrides, set on the Design screen so
+// resizing doesn't need a code change (user request 2026-07-19). Shape: {id:{size,span}}.
+const SIZE_KEY='dashboard:sizes:v1';
+// Widths are chosen in TWELFTHS (how the user talks about them); the grid is 24 cols.
+const WIDTH_CHOICES=[[1,'1'],[1.5,'1.5'],[2,'2'],[3,'3'],[4,'4'],[6,'6'],[12,'12 (full)']];
+function loadSizes(){
+  try{ return JSON.parse(localStorage.getItem(SIZE_KEY))||{}; }catch(e){ return {}; }
+}
+function saveSizes(map){ localStorage.setItem(SIZE_KEY, JSON.stringify(map)); }
+let SIZE_OVERRIDES=loadSizes();
+function sizeOf(def){ const o=SIZE_OVERRIDES[def.id]; return (o&&o.size)||def.size; }
+function spanOf(def){ const o=SIZE_OVERRIDES[def.id]; return (o&&o.span)||def.span; }
 function getOrder(screen){
   const ids=WIDGET_DEFS[screen].map(d=>d.id);
   let saved=null;
@@ -1688,7 +1730,8 @@ function renderGrid(){
   order.forEach(id=>{
     const def=defs.find(d=>d.id===id);
     if(!def) return;
-    if(def.size==='S'){ smallCols=(smallCols+Number(def.span||1))%GRID_COLS; }
+    const dSize=sizeOf(def), dSpan=spanOf(def);
+    if(dSize==='S'){ smallCols=(smallCols+Number(dSpan||1))%GRID_COLS; }
     else if(prevSize==='S' && smallCols>0){
       const pad=document.createElement('div');
       pad.className='grid-spacer';
@@ -1699,9 +1742,9 @@ function renderGrid(){
     const el=document.createElement('section');
     el.className='widget';
     el.dataset.id=id;
-    el.dataset.size=def.size;
-    el.style.setProperty('--span',def.span);
-    prevSize=def.size;
+    el.dataset.size=dSize;
+    el.style.setProperty('--span',dSpan);
+    prevSize=dSize;
     if(UI.editMode) el.setAttribute('draggable','true');
     el.innerHTML='<header class="widget-head">'+
       (UI.editMode?'<span class="drag-handle" title="Drag to reorder">⠿⠿</span>':'')+
