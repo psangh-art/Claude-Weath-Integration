@@ -72,6 +72,148 @@ ACCOUNT_LABELS = {
 FAMILY_ORDER = ["Paul", "Susan", "Jayne", "Liam"]
 
 
+# ── Month anchors ─────────────────────────────────────────────────────────────
+# The hardcoded months in this file are two different kinds of thing, and the
+# distinction is the whole point of this section:
+#
+#   DATA pinned to the month it was measured — the Jan–Apr spend/income tables,
+#   load_history()'s wealth series, the May-2026 pension/house/car estimates.
+#   These keep their literal months for ever. They project forward from their own
+#   as-of date, so the calendar advancing never invalidates them.
+#
+#   ANCHORS describing where the report currently sits — which year it covers,
+#   which month the broker snapshot was taken in, which month is only partly
+#   captured, and where hardcoded history hands over to live data. These were
+#   written as literal May/June 2026 periods and silently went wrong the moment
+#   the calendar moved past them: on the 18 Jul 2026 export, May fell in the gap
+#   between the Jan–Apr history and the 60-day transaction window and was
+#   classified as an ACTUAL of zero (never estimated), while July was likewise
+#   treated as a complete actual and reported its part-month £192. Anchors are
+#   derived from the data below and must never be literals again.
+ESTIMATES_AS_OF = pd.Period("2026-05", "M")   # as-of month of the pinned estimates
+
+# Confirmed equity dividends for the reporting year, shown inline under Paul's SIPP
+# and summed for the Targets table's annual income. Pinned data — one copy, so the
+# table and the total can never disagree (they were separate literals until
+# 2026-07-19, and the total had to be re-added by hand whenever a payment changed).
+EQUITY_DIVIDENDS_INLINE = [
+    ("  RELX PLC",         {"2026-06": 413, "2026-09": 168}),
+    ("  Sage Group PLC",   {"2026-06": 178}),
+    ("  Auto Trader Group", {"2026-09": 315}),
+    ("  Weir Group",       {"2026-11": 78}),
+]
+EQUITY_DIVIDENDS_ANNUAL = sum(v for _, divs in EQUITY_DIVIDENDS_INLINE for v in divs.values())
+
+
+def _account_summary_export_date(account_summary_path):
+    """The 'Export date' header Fidelity writes at the top of AccountSummary.csv."""
+    if not account_summary_path or not os.path.exists(account_summary_path):
+        return None
+    try:
+        with open(account_summary_path, encoding="utf-8-sig") as f:
+            for _ in range(20):
+                line = f.readline()
+                if not line:
+                    break
+                parts = line.replace("\r", "").rstrip("\n").split(",")
+                if len(parts) >= 2 and parts[0].strip().lower() == "export date":
+                    return pd.to_datetime(parts[1].strip(), dayfirst=True)
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def _last_month_in(*series_dicts):
+    """Latest month present in any of the pinned history tables."""
+    months = [m for d in series_dicts for vals in d.values() for m in vals]
+    return max(months) if months else None
+
+
+class MonthAnchors:
+    """Where this report currently sits in the calendar. All derived — see above.
+
+    export_date     the broker snapshot's own date (AccountSummary 'Export date')
+    year / months   the calendar year being reported, Jan–Dec
+    data_month      month of the snapshot: the anchor for holdings, prices and
+                    account values, and the last month with any live data
+    partial_month   data_month when the snapshot lands mid-month, so its
+                    transactions are only partly captured (None on a month end)
+    partial_scale   fraction of that month the snapshot covers (day / days in month)
+    hold_from       first month with no live data at all — projections past the
+                    snapshot are unreliable, so account values hold flat from here
+    hist_cutoff     first month the live transaction files own; before it, the
+                    pinned Jan–Apr spend/income tables win
+    wealth_cutoff   same boundary for load_history()'s wealth series
+    """
+
+    def __init__(self, export_date, hist_last, wealth_hist_last):
+        self.export_date = export_date
+        self.hist_last = hist_last
+        self.year = export_date.year
+        self.jan = pd.Period(f"{self.year}-01", "M")
+        self.dec = pd.Period(f"{self.year}-12", "M")
+        self.months = [self.jan + i for i in range(12)]
+        self.data_month = export_date.to_period("M")
+        self.partial_scale = min(1.0, export_date.day / export_date.days_in_month)
+        self.partial_month = self.data_month if self.partial_scale < 1.0 else None
+        # Last month whose data is complete enough to average over.
+        self.last_actual = (self.data_month - 1) if self.partial_month else self.data_month
+        self.hold_from = self.data_month + 1
+        self.hist_cutoff = (hist_last + 1) if hist_last else self.jan
+        self.wealth_cutoff = (wealth_hist_last + 1) if wealth_hist_last else self.jan
+
+    def split_months(self, tx_months):
+        """Partition the year into (actual, estimated) months.
+
+        A month is an ACTUAL only if it is complete AND the transaction files
+        actually cover it. Everything else is estimated — including any GAP month
+        that falls between the end of the pinned history and the start of the
+        60-day transaction window, which is the case the old literal anchors
+        missed entirely.
+        """
+        tx = set(tx_months)
+        actual = [m for m in self.months if m <= self.last_actual and m in tx]
+        gap = [m for m in self.months if m <= self.last_actual and m not in tx]
+        later = [m for m in self.months if m > self.last_actual]
+        return actual, gap + later
+
+    def describe(self):
+        parts = [f"snapshot {self.export_date:%d %b %Y} → data month {self.data_month}"]
+        if self.partial_month:
+            parts.append(f"partial ({self.partial_scale:.0%} of the month)")
+        parts.append(f"history hands over at {self.hist_cutoff}")
+        return "; ".join(parts)
+
+    def warnings(self):
+        """Anything about this run that a human should look at, in plain words."""
+        out = []
+        if self.hist_last is not None and self.hist_last.year != self.year:
+            out.append(
+                f"The pinned spend/income history ends at {self.hist_last} but this report "
+                f"covers {self.year}. Those tables no longer contribute, so the early months "
+                f"rest entirely on estimates — refresh load_spend_history() and "
+                f"load_income_history() from a full-year export."
+            )
+        return out
+
+
+def resolve_anchors(account_summary_path=None):
+    """Build the MonthAnchors for this run from whatever the inputs tell us.
+
+    The AccountSummary export header is the only exact statement of the snapshot
+    date; with no AccountSummary at all, today is the honest fallback (the run is
+    being built from a transaction export that was just downloaded).
+    """
+    export_date = _account_summary_export_date(account_summary_path)
+    if export_date is None:
+        export_date = pd.Timestamp.today().normalize()
+    return MonthAnchors(
+        export_date,
+        _last_month_in(load_spend_history(), load_income_history()),
+        _last_month_in(load_history()),
+    )
+
+
 def apply_pending_holdings(holdings: dict, pending_path: str) -> dict:
     """
     Adds net units from pending (not-yet-settled) Buy/Sell orders on top of a
@@ -454,11 +596,12 @@ def load_barclays(path: str) -> pd.DataFrame:
     return pd.concat([sal, fid, exp])[["month", "category", "spend"]]
 
 
-def load_fidelity_income(path: str) -> pd.DataFrame:
+def load_fidelity_income(path: str, year: int = None) -> pd.DataFrame:
     """
     Returns income rows from Fidelity by account number and month.
     Includes: Income Received, Cash Dividend (positive amounts = money in).
     Includes: Income Payment (negative Amount, but Quantity = cash paid out to holder).
+    `year` limits rows to the reporting year (see MonthAnchors); None keeps all.
     """
     if not path or not os.path.exists(path):
         return pd.DataFrame(columns=["month", "account", "fund", "amount"])
@@ -505,7 +648,7 @@ def load_fidelity_income(path: str) -> pd.DataFrame:
         elif amount <= 0:
             continue  # skip negative income received (reversals etc.)
 
-        if dt.year != 2026:
+        if year is not None and dt.year != year:
             continue
 
         # Fund name: Source investment field, fallback to Investments, fallback to txn type
@@ -580,7 +723,7 @@ def load_income_history():
     }
 
 
-def build_spending_pivot(amex_df, bar_df):
+def build_spending_pivot(amex_df, bar_df, anchors):
     combined = pd.concat([amex_df, bar_df])
     pivot = combined.pivot_table(
         index="category", columns="month", values="spend",
@@ -591,8 +734,8 @@ def build_spending_pivot(amex_df, bar_df):
     pivot["Total"] = pivot[months].sum(axis=1)
     pivot = pivot.reindex(CATEGORIES + ["Salary", "Fidelity"], fill_value=0)
 
-    # Inject hardcoded Jan–Apr history — never overwrite with live data
-    HIST_CUTOFF = pd.Period("2026-06", "M")
+    # Inject the pinned spend history — never overwrite with live data
+    HIST_CUTOFF = anchors.hist_cutoff
     spend_hist = load_spend_history()
     for cat, hist_vals in spend_hist.items():
         for period, val in hist_vals.items():
@@ -608,7 +751,7 @@ def build_spending_pivot(amex_df, bar_df):
     return pivot, months
 
 
-def build_fidelity_pivot(fid_df):
+def build_fidelity_pivot(fid_df, anchors):
     if fid_df.empty:
         pivot = pd.DataFrame()
     else:
@@ -618,8 +761,8 @@ def build_fidelity_pivot(fid_df):
             aggfunc="sum", fill_value=0
         )
 
-    # Inject hardcoded Jan–Apr income history — never overwrite with live data
-    HIST_CUTOFF = pd.Period("2026-06", "M")
+    # Inject the pinned income history — never overwrite with live data
+    HIST_CUTOFF = anchors.hist_cutoff
     inc_hist = load_income_history()
     for acc, hist_vals in inc_hist.items():
         for period, val in hist_vals.items():
@@ -640,12 +783,14 @@ def build_fidelity_pivot(fid_df):
     return pivot, months
 
 
-def estimate_future_months(pivot, actual_months, future_months, may_scale=18/31,
+def estimate_future_months(pivot, actual_months, future_months, anchors,
                            skip_funds=None):
     """
-    Estimate future month values.
-    - May (partial, in future_months): scaled up from its own raw value.
-    - Other future months: median of actuals.
+    Estimate the months that aren't complete actuals.
+    - The PARTIAL month (the one the broker snapshot lands inside): scaled up
+      from its own raw value by how much of the month the snapshot covers.
+    - Every other estimated month — future months and any GAP month between the
+      pinned history and the transaction window: median of actuals.
     - University Fees: Feb actual + Sep estimate only.
     - Tax: no extrapolation.
     - Stocks: use confirmed dividend payment months from market data.
@@ -653,7 +798,8 @@ def estimate_future_months(pivot, actual_months, future_months, may_scale=18/31,
     import numpy as np
 
     result = pivot.copy()
-    MAY = pd.Period("2026-05", "M")
+    PARTIAL = anchors.partial_month
+    partial_scale = anchors.partial_scale
 
     # Confirmed 2026 dividend payment months for stocks
     # Sold stocks get empty list (no future payments)
@@ -690,9 +836,9 @@ def estimate_future_months(pivot, actual_months, future_months, may_scale=18/31,
                 if m.month == 2:
                     feb_val = float(result.loc[idx, m])
             for m in future_months:
-                if m == MAY:
+                if m == PARTIAL:
                     raw = float(result.loc[idx, m]) if m in result.columns else 0
-                    result.loc[idx, m] = round(raw / may_scale) if raw > 0 else 0
+                    result.loc[idx, m] = round(raw / partial_scale) if raw > 0 else 0
                 else:
                     result.loc[idx, m] = round(feb_val) if m.month == 9 else 0
             result.loc[idx, "Total"] = round(sum(float(result.loc[idx, m]) for m in actual_months + future_months))
@@ -705,15 +851,17 @@ def estimate_future_months(pivot, actual_months, future_months, may_scale=18/31,
             continue
 
         if idx == "Salary":
-            # Salary is a fixed payment — never scale up for partial months
-            # Use May actual as-is, project forward using median of actuals
+            # Salary is a fixed payment — never scale up for a partial month.
+            # Keep whatever has actually been paid in the partial month; if the
+            # payslip hasn't landed yet (snapshot taken before pay day) fall back
+            # to the median rather than reporting a month with no salary at all.
             actuals_vals = [float(result.loc[idx, m]) for m in actual_months if m in result.columns]
             monthly_salary = round(np.median(actuals_vals)) if actuals_vals else 0
             for m in future_months:
-                if m == MAY:
-                    pass  # keep May raw value unchanged
-                else:
-                    result.loc[idx, m] = monthly_salary
+                raw = float(result.loc[idx, m]) if m in result.columns else 0
+                if m == PARTIAL and raw > 0:
+                    continue  # already paid this month — keep the actual
+                result.loc[idx, m] = monthly_salary
             result.loc[idx, "Total"] = round(sum(float(result.loc[idx, m]) for m in actual_months + future_months))
             continue
 
@@ -767,10 +915,12 @@ def estimate_future_months(pivot, actual_months, future_months, may_scale=18/31,
                 actual_vals = [float(result.loc[idx, m]) for m in future_months if m in result.columns and float(result.loc[idx, m]) > 0]
 
             for m in future_months:
-                if m == MAY:
+                if m == PARTIAL:
                     raw = float(result.loc[idx, m]) if m in result.columns else 0
                     if raw > 0:
-                        result.loc[idx, m] = round(raw / may_scale)
+                        # A dividend is a discrete payment, not a monthly rate —
+                        # one already banked stands as it is. Scaling it by the
+                        # partial-month fraction would invent cash.
                         continue
                 # Check if this month has a scheduled payment
                 pay_entry = next(((mo, ppm) for mo, ppm in schedule if mo == m.month), None)
@@ -791,8 +941,12 @@ def estimate_future_months(pivot, actual_months, future_months, may_scale=18/31,
         is_stock = any(p in idx_upper for p in [", ORD ", "ORD GBP", "ORD USD", "ORD EUR", "ORD NPV"])
         if is_stock:
             for m in future_months:
+                # Keep a payment already banked in the partial month
+                if m == PARTIAL and m in result.columns and float(result.loc[idx, m]) > 0:
+                    continue
                 result.loc[idx, m] = 0
-            result.loc[idx, "Total"] = round(sum(float(result.loc[idx, m]) for m in actual_months))
+            result.loc[idx, "Total"] = round(sum(float(result.loc[idx, m])
+                                                 for m in actual_months + future_months))
             continue
 
         # Default: median of actuals for regular monthly/recurring income
@@ -801,9 +955,9 @@ def estimate_future_months(pivot, actual_months, future_months, may_scale=18/31,
         median_est = float(np.median(non_zero)) if non_zero else 0
 
         for m in future_months:
-            if m == MAY:
+            if m == PARTIAL:
                 raw = float(result.loc[idx, m]) if m in result.columns else 0
-                result.loc[idx, m] = round(raw / may_scale) if raw > 0 else round(median_est)
+                result.loc[idx, m] = round(raw / partial_scale) if raw > 0 else round(median_est)
             else:
                 result.loc[idx, m] = round(median_est)
 
@@ -895,11 +1049,14 @@ def _read_account_summary_rows(account_summary_path):
         return
 
 
-def build_acc_holdings(account_summary_path, fidelity_path=None, inc_income_df=None):
+def build_acc_holdings(account_summary_path, anchors, fidelity_path=None, inc_income_df=None):
     """
-    Returns dict: { acc: { fund: {'value', 'units', 'price_may26', 'monthly_values'} } }
+    Returns dict: { acc: { fund: {'value', 'units', 'price_anchor', 'monthly_values'} } }
     Only accumulation (Acc/ACC) funds in family accounts.
     monthly_values: { pd.Period -> value } based on cumulative units × price.
+
+    Units and price are anchored at the broker snapshot's own month
+    (anchors.data_month) and walked backwards/forwards from there.
     """
     FAMILY_ACCS = set(ACCOUNT_OWNER.keys())
     result = {}
@@ -923,8 +1080,8 @@ def build_acc_holdings(account_summary_path, fidelity_path=None, inc_income_df=N
         except (ValueError, TypeError):
             continue
         if acc not in result: result[acc] = {}
-        price_may26 = val / qty if qty > 0 else 0
-        result[acc][fund] = {"value": val, "units": qty, "price_may26": price_may26, "monthly_values": {}}
+        price_anchor = val / qty if qty > 0 else 0
+        result[acc][fund] = {"value": val, "units": qty, "price_anchor": price_anchor, "monthly_values": {}}
 
     if not fidelity_path or not os.path.exists(fidelity_path):
         return result
@@ -965,10 +1122,9 @@ def build_acc_holdings(account_summary_path, fidelity_path=None, inc_income_df=N
                 unit_changes[(acc, inv)][period] -= qty
 
     # ── Build monthly value for each (acc, fund) ────────────────────────────────
-    MAY_2026 = pd.Period("2026-05", "M")
-    JAN_2026 = pd.Period("2026-01", "M")
-    DEC_2026 = pd.Period("2026-12", "M")
-    all_periods = [JAN_2026 + i for i in range(12)]  # Jan–Dec 2026
+    ANCHOR = anchors.data_month          # month the broker snapshot was taken
+    YEAR_START = anchors.jan
+    all_periods = list(anchors.months)
 
     # Annual yield overrides for funds where transaction history is sparse
     # For Acc funds, this represents total return (income reinvested into NAV)
@@ -979,13 +1135,13 @@ def build_acc_holdings(account_summary_path, fidelity_path=None, inc_income_df=N
         "WS Guinness Global Energy Fund I Acc":           0.0235,  # 2.35% historic yield
     }
 
-    def interpolate_price(fund, period, price_may26):
+    def interpolate_price(fund, period, price_anchor):
         """Get price for a given period using observations + interpolation/extrapolation."""
         obs = dict(price_obs.get(fund, {}))
-        obs[MAY_2026] = price_may26  # anchor at May 26
+        obs[ANCHOR] = price_anchor   # snapshot month is ground truth
         periods_sorted = sorted(obs.keys())
         if not periods_sorted:
-            return price_may26
+            return price_anchor
         if period in obs:
             return obs[period]
         before = [p for p in periods_sorted if p <= period]
@@ -1013,33 +1169,33 @@ def build_acc_holdings(account_summary_path, fidelity_path=None, inc_income_df=N
 
     for acc, funds in result.items():
         for fund, data in funds.items():
-            price_may26 = data["price_may26"]
-            units_may26 = data["units"]
+            price_anchor = data["price_anchor"]
+            units_anchor = data["units"]
 
-            # Work backwards/forwards from May 2026 to get units each month
+            # Work backwards/forwards from the snapshot month to get units each month
             monthly_vals = {}
             monthly_units = {}   # units held at START of each month
 
-            # Go forward from May 2026
-            running = units_may26
+            # Go forward from the snapshot month
+            running = units_anchor
             for p in sorted(all_periods):
-                if p >= MAY_2026:
+                if p >= ANCHOR:
                     delta = unit_changes.get((acc, fund), {}).get(p, 0)
-                    if p > MAY_2026:
+                    if p > ANCHOR:
                         running += delta
-                    price = interpolate_price(fund, p, price_may26)
+                    price = interpolate_price(fund, p, price_anchor)
                     monthly_vals[p] = round(running * price)
                     monthly_units[p] = running
-            # Go backward from May 2026
-            running = units_may26
+            # Go backward from the snapshot month
+            running = units_anchor
             # Find earliest buy date for this fund/account from unit_changes
             fund_unit_changes = unit_changes.get((acc, fund), {})
             # If there are no buy transactions, the fund was held before our data window
-            # Use Jan 2026 as the start (fund was already held)
+            # Use the start of the year (fund was already held)
             buys = [p for p, d in fund_unit_changes.items() if d > 0]
-            earliest_buy = min(buys) if buys else JAN_2026
+            earliest_buy = min(buys) if buys else YEAR_START
 
-            for p in sorted([pp for pp in all_periods if pp < MAY_2026], reverse=True):
+            for p in sorted([pp for pp in all_periods if pp < ANCHOR], reverse=True):
                 delta = fund_unit_changes.get(p, 0)
                 running -= delta  # undo this month's purchase
                 if running <= 0 and p < earliest_buy:
@@ -1047,7 +1203,7 @@ def build_acc_holdings(account_summary_path, fidelity_path=None, inc_income_df=N
                     monthly_vals[p] = 0
                     monthly_units[p] = 0
                 else:
-                    price = interpolate_price(fund, p, price_may26)
+                    price = interpolate_price(fund, p, price_anchor)
                     monthly_vals[p] = round(running * price)
                     monthly_units[p] = running
 
@@ -1091,8 +1247,8 @@ def build_acc_holdings(account_summary_path, fidelity_path=None, inc_income_df=N
                         price_appreciation[p] = round(units_start * ppu)
                     else:
                         # Fallback: interpolated price change × units — floor at 0
-                        price_now  = interpolate_price(fund, p, price_may26)
-                        price_prev = interpolate_price(fund, p_prev, price_may26)
+                        price_now  = interpolate_price(fund, p, price_anchor)
+                        price_prev = interpolate_price(fund, p_prev, price_anchor)
                         price_appreciation[p] = max(0, round(units_start * (price_now - price_prev)))
 
             data["monthly_values"] = monthly_vals
@@ -1275,7 +1431,7 @@ def load_history(path: str = None) -> dict:
     }
 
 
-def build_summary_data(account_summary_path, all_months):
+def build_summary_data(account_summary_path, all_months, anchors):
     """Build summary data. History is embedded in load_history() — no CSV needed."""
     FIDELITY_ACCS = {
         'AW10032966','SANX002282','2000001606','SANQ000468',
@@ -1303,20 +1459,22 @@ def build_summary_data(account_summary_path, all_months):
             fidelity_by_acc[acc] = v
             fidelity_total += v
 
-    # ── Find May 2026 period index ────────────────────────────────────────────
-    MAY_2026 = pd.Period("2026-05", "M")
-    may_idx = next((i for i, m in enumerate(all_months) if m == MAY_2026), 0)
+    # ── Index of the month the pinned estimates below were measured ───────────
+    # This one IS a fixed month on purpose: the pension/house/car figures were
+    # taken as at ESTIMATES_AS_OF and the projection runs out from there, so it
+    # stays correct as the calendar advances. It is not a live-data anchor.
+    est_idx = next((i for i, m in enumerate(all_months) if m == ESTIMATES_AS_OF), 0)
 
-    def project_monthly(may_value, annual_pct=None, monthly_add=None):
-        """Project values forward/backward from May 2026."""
+    def project_monthly(base_value, annual_pct=None, monthly_add=None):
+        """Project the ESTIMATES_AS_OF value forward and backward across the year."""
         vals = {}
         for i, m in enumerate(all_months):
-            offset = i - may_idx  # months from May 2026
+            offset = i - est_idx  # months from ESTIMATES_AS_OF
             if annual_pct is not None:
                 # Compound monthly: (1 + annual_pct) ^ (offset/12)
-                vals[m] = round(may_value * ((1 + annual_pct) ** (offset / 12)))
+                vals[m] = round(base_value * ((1 + annual_pct) ** (offset / 12)))
             elif monthly_add is not None:
-                vals[m] = round(max(0, may_value + offset * monthly_add))
+                vals[m] = round(max(0, base_value + offset * monthly_add))
         return vals
 
     # ── PS Arriva (Defined Benefit) ────────────────────────────────────────────
@@ -1325,7 +1483,7 @@ def build_summary_data(account_summary_path, all_months):
     # ── Expleo Scottish Widows ────────────────────────────────────────────────
     expleo_sw = project_monthly(12000, monthly_add=6000)
 
-    # ── Susan's pensions (5%/year growth from May 2026 estimates) ─────────────
+    # ── Susan's pensions (5%/year growth from the ESTIMATES_AS_OF figures) ────
     susan_pensions = {
         "Capita (RMSPS) – to 2018 (65 yrs)":    project_monthly(489475, annual_pct=0.05),
         "RMPP 2012–2023 (65 years)":             project_monthly(229010, annual_pct=0.05),
@@ -1345,9 +1503,8 @@ def build_summary_data(account_summary_path, all_months):
 
     # Override pre-cutoff months with history values for Susan Fidelity Pension
     susan_fid_hist = history.get("Susan Fidelity Pension", {})
-    HISTORY_CUTOFF_PERIOD = pd.Period("2026-07", "M")
     for m in all_months:
-        if m < HISTORY_CUTOFF_PERIOD and m in susan_fid_hist:
+        if m < anchors.wealth_cutoff and m in susan_fid_hist:
             susan_fidelity_sipp_vals[m] = susan_fid_hist[m]
 
     # ── Liam Fidelity (AS10303823 + AG10131710) ───────────────────────────────
@@ -1357,9 +1514,10 @@ def build_summary_data(account_summary_path, all_months):
     jayne_fid_total = fidelity_by_acc.get("SANX002936", 0)
 
     # ── Barclays balance by month ──────────────────────────────────────────────
-    # Jan-May: established values (manual/previous tracking)
-    # June: actual Barclays balance £6,916.87 (confirmed)
-    # Jul+: hold at June balance pending further data
+    # Pinned balances from manual/previous tracking, ending with the last one
+    # confirmed. Every month with no pinned balance holds at that last figure,
+    # so this needs no calendar anchor — extend the dict when a newer balance
+    # is confirmed.
     barclays_by_month = {
         pd.Period("2026-01", "M"): 6000,
         pd.Period("2026-02", "M"): 6000,
@@ -1367,12 +1525,11 @@ def build_summary_data(account_summary_path, all_months):
         pd.Period("2026-04", "M"): 5500,
         pd.Period("2026-05", "M"): 13000,
     }
-    BARCLAYS_JUNE_BALANCE = 6916.87
-    JUNE_2026_BAR = pd.Period("2026-06", "M")
-    barclays_by_month[JUNE_2026_BAR] = round(BARCLAYS_JUNE_BALANCE)
+    barclays_by_month[pd.Period("2026-06", "M")] = round(6916.87)   # confirmed
+    last_known = barclays_by_month[max(barclays_by_month)]
     for m in all_months:
         if m not in barclays_by_month:
-            barclays_by_month[m] = round(BARCLAYS_JUNE_BALANCE)
+            barclays_by_month[m] = last_known
 
     return {
         "fidelity_total": fidelity_total,
@@ -1384,7 +1541,7 @@ def build_summary_data(account_summary_path, all_months):
         "barclays_by_month": barclays_by_month,
         "liam_fid_total": liam_fid_total,
         "jayne_fid_total": jayne_fid_total,
-        "may_idx": may_idx,
+        "estimates_idx": est_idx,
         "_account_summary_path": account_summary_path,
     }
 
@@ -1417,8 +1574,8 @@ def _resolve_cell_num(ws, cell):
 
 # ── Write Excel ────────────────────────────────────────────────────────────────
 def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
-                acc_fund_map, holdings, summary_data, acc_holdings, output_path,
-                reimbursements=None):
+                acc_fund_map, holdings, summary_data, acc_holdings, anchors,
+                output_path, reimbursements=None):
     wb = Workbook()
     ws = wb.active
     ws.title = "Wealth Summary"
@@ -1440,10 +1597,10 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     actual_set = set(actual_months)  # months with real CSV data (Jan–Apr)
 
     # ── History boundary ───────────────────────────────────────────────────────
-    # Previous Data owns everything BEFORE this month.
-    # Live CSV files own this month and everything after.
-    # This boundary never moves when new files are uploaded.
-    HISTORY_CUTOFF = pd.Period("2026-07", "M")   # AccountSummary export date: 29 May 2026
+    # Previous Data owns everything BEFORE this month; live files own this month
+    # and everything after. It sits one month past the end of load_history(), so
+    # it moves by itself when that pinned series is extended.
+    HISTORY_CUTOFF = anchors.wealth_cutoff
 
     def is_history_month(m):
         """True if this month belongs to Previous Data (read-only)."""
@@ -1670,8 +1827,6 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
             cell.alignment = Alignment(horizontal="right", vertical="center")
         return r + 1
 
-    MAY_2026 = pd.Period("2026-05", "M")
-
     # Section title
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_sum_cols)
     t = ws.cell(row=1, column=1, value="Family Wealth Summary")
@@ -1754,16 +1909,17 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
         sanq_monthly[m] = sanq_monthly.get(m, 0) + sanq_non_acc_val
 
     # The AccountSummary total is the ACTUAL current value of the account. The
-    # forward growth-projection past the build anchor (MAY_2026 in build_acc_holdings)
+    # forward growth-projection past the build anchor (anchors.data_month in
+    # build_acc_holdings)
     # is unreliable — it collapsed the current month (was hardcoded to override only
     # JUNE, so when "now" advanced to July the July value dropped ~£145k to a broken
     # projection: bug #20, 2026-07-18). Hold the current data month and every month
     # after it flat at the actual total — exactly as every OTHER Fidelity account row
     # already is (see the `else` branch below) — keeping only the reliable historical
-    # backward ramp for earlier months. HOLD_FROM is the first forward-projected month
-    # after the May build anchor; if that anchor is ever moved, move this with it.
+    # backward ramp for earlier months. hold_from is the first month past the
+    # build anchor, so it now tracks the snapshot automatically.
     sanq_actual = fid_by_acc.get("SANQ000468", 0)
-    HOLD_FROM = pd.Period("2026-06", "M")
+    HOLD_FROM = anchors.hold_from
     if sanq_actual:
         for m in all_months:
             if m >= HOLD_FROM:
@@ -1865,23 +2021,23 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     cur_row = sum_row(cur_row, "Cash (Barclays)", bar_data, alt=False, label_indent="  ",
                       font_color="1A5276")
 
-    house_may = 450450
+    house_at_est = 450450   # as at ESTIMATES_AS_OF
     house_vals = {}
-    may_idx_h = next((i for i, m in enumerate(all_months) if m == MAY_2026), 0)
+    est_idx_h = next((i for i, m in enumerate(all_months) if m == ESTIMATES_AS_OF), 0)
     for i, m in enumerate(all_months):
-        offset = i - may_idx_h
-        house_vals[m] = round(house_may * ((1.05) ** (offset / 12)))
+        offset = i - est_idx_h
+        house_vals[m] = round(house_at_est * ((1.05) ** (offset / 12)))
     house_merged = projection_with_hist_override(house_vals, "house")
     cur_row = sum_row(cur_row, "House", house_merged, alt=True, label_indent="  ",
                       font_color="1A5276")  # pre-merged
 
     # Liam ISA (AS10303823) and Investment Account (AG10131710) already in Fidelity accounts — not duplicated here
 
-    car_may = 42074  # actual May 2026 value from history (Cars Paul)
+    car_at_est = 42074  # actual value from history at ESTIMATES_AS_OF (Cars Paul)
     car_vals = {}
     for i, m in enumerate(all_months):
-        offset = i - may_idx_h
-        car_vals[m] = round(car_may * ((1 - 0.05) ** (offset / 12)))
+        offset = i - est_idx_h
+        car_vals[m] = round(car_at_est * ((1 - 0.05) ** (offset / 12)))
     car_merged = projection_with_hist_override(car_vals, "cars")
     cur_row = sum_row(cur_row, "Cars Paul (Mercedes AMG GTS 2016)", car_merged, alt=False,
                       label_indent="  ", font_color="1A5276")  # pre-merged
@@ -1897,24 +2053,26 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
         monthly_income = fid_pivot[m].sum() if m in fid_pivot.columns else 0
         fid_growth[m] = round(fid_growth[all_months[i-1]] + monthly_income)
 
-    # ── SIPP growth: history Jan–Apr, AccountSummary anchors May, income grows Jun+ ─
-    # AccountSummary is the authoritative source for the export date (May 26 2026)
-    paul_sipp_val_may = fid_by_acc.get("2000001606", 0)  # AccountSummary May value
-    susan_sipp_val    = fid_by_acc.get("2000001604", 0)  # AccountSummary May value
+    # ── SIPP growth: pinned history early, AccountSummary anchors the snapshot
+    # month, income grows the months after it. The snapshot is a statement of
+    # what the accounts are worth ON ITS OWN DATE — anchoring it to a fixed month
+    # made every later export overwrite the wrong column.
+    paul_sipp_val  = fid_by_acc.get("2000001606", 0)   # value at anchors.data_month
+    susan_sipp_val = fid_by_acc.get("2000001604", 0)
     paul_hist_series  = hist("paul_pension")
     paul_sipp_growth_vals = {}
     susan_sipp_growth_vals = {}
     sipp_vals_from_summary = summary_data.get("susan_fidelity_sipp", {})
 
-    ps_running = paul_hist_series.get(all_months[0], paul_sipp_val_may)
+    ps_running = paul_hist_series.get(all_months[0], paul_sipp_val)
     ss_running = sipp_vals_from_summary.get(all_months[0], susan_sipp_val)
 
     for i, m in enumerate(all_months):
-        if m == MAY_2026:
+        if m == anchors.data_month:
             # AccountSummary is ground truth for this month — override any projection
-            ps_running = paul_sipp_val_may
+            ps_running = paul_sipp_val
             ss_running = susan_sipp_val
-            paul_sipp_growth_vals[m] = paul_sipp_val_may
+            paul_sipp_growth_vals[m] = paul_sipp_val
             susan_sipp_growth_vals[m] = susan_sipp_val
         elif is_history_month(m):
             # Pre-cutoff: use history if available
@@ -2565,12 +2723,6 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
 
                 # ── Equity dividends — write inline under Paul SIPP (2000001606) ──
                 if acc == "2000001606":
-                    EQUITY_DIVIDENDS_INLINE = [
-                        ("  RELX PLC", {"2026-06": 413, "2026-09": 168}),
-                        ("  Sage Group PLC", {"2026-06": 178}),
-                        ("  Auto Trader Group", {"2026-09": 315}),
-                        ("  Weir Group", {"2026-11": 78}),
-                    ]
                     for eq_offset, (eq_label, eq_divs) in enumerate(EQUITY_DIVIDENDS_INLINE):
                         eq_row = current_row
                         equity_data_rows.append(eq_row)
@@ -3187,53 +3339,27 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     ws.row_dimensions[hdr_tgt].height = 18
 
     # ── Compute actuals ────────────────────────────────────────────────────────
-    # Income per month — use hardcoded income history for Jan-Apr, live pivot for May+
+    # Both pivots already carry the whole year: pinned history for the early
+    # months, transaction data for the covered ones and estimates for the rest
+    # (see estimate_future_months). So the annual figures are just their row
+    # sums — no month literals, and nothing to re-tune as the calendar moves.
     inc_hist_data = load_income_history()
-    hist_income_jan_apr = sum(
-        sum(v for v in month_vals.values() if pd.Period(m,'M') < pd.Period('2026-05','M'))
-        for acc_id, month_vals in inc_hist_data.items()
-        for m in [str(p) for p in month_vals]
-    )
-    # Recalculate properly: sum Jan-Apr from hardcoded history
-    jan_apr_income = 0
-    for acc_id, month_vals in inc_hist_data.items():
-        for period, val in month_vals.items():
-            jan_apr_income += val
-    # May+ income from live fid_pivot
-    may_dec_income = 0
-    if not fid_pivot.empty:
-        for m in [pd.Period(f'2026-{mo:02d}','M') for mo in range(5, 13)]:
-            if m in fid_pivot.columns:
-                may_dec_income += fid_pivot[m].sum()
-            else:
-                # Estimate from May actual
-                may_col = pd.Period('2026-05','M')
-                if may_col in fid_pivot.columns:
-                    may_dec_income += fid_pivot[may_col].sum()
-    # Add salary (hardcoded Jan-Apr) + May salary from spend_pivot
-    salary_jan_apr = sum(load_spend_history().get('Salary', {}).values())
-    salary_may = spend_pivot.loc['Salary', pd.Period('2026-05','M')] if 'Salary' in spend_pivot.index and pd.Period('2026-05','M') in spend_pivot.columns else 0
-    # Equity dividends annual
-    equity_annual = 413 + 168 + 178 + 315 + 78  # RELX + Sage + AutoTrader + Weir
-
-    # Build from Total Income row in the spreadsheet (more reliable after formula evaluation)
-    # Use fid_pivot directly for accuracy
     fid_annual = 0
     if not fid_pivot.empty:
-        for m in [pd.Period(f'2026-{mo:02d}','M') for mo in range(1, 13)]:
-            if m in fid_pivot.columns:
-                fid_annual += fid_pivot[m].sum()
-            else:
-                # Estimate missing months from nearest known
-                nearest = max((c for c in fid_pivot.columns if c <= m), default=None)
-                if nearest:
-                    fid_annual += fid_pivot[nearest].sum()
-    # Add history months not in fid_pivot
-    for acc_id, month_vals in inc_hist_data.items():
-        for period, val in month_vals.items():
-            if period not in fid_pivot.columns:
-                fid_annual += val
-    salary_annual = sum(load_spend_history().get('Salary', {}).values()) + salary_may * 8
+        cols = [m for m in all_months if m in fid_pivot.columns]
+        fid_annual = float(fid_pivot[cols].sum().sum())
+        # Any pinned history month the pivot has no column for
+        for month_vals in inc_hist_data.values():
+            for period, val in month_vals.items():
+                if period not in fid_pivot.columns:
+                    fid_annual += val
+
+    salary_annual = 0
+    if 'Salary' in spend_pivot.index:
+        cols = [m for m in all_months if m in spend_pivot.columns]
+        salary_annual = float(spend_pivot.loc['Salary', cols].sum())
+
+    equity_annual = EQUITY_DIVIDENDS_ANNUAL
     total_annual_income = fid_annual + salary_annual + equity_annual
     income_avg_pm = round(total_annual_income / 12)
 
@@ -3266,11 +3392,17 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     except Exception as _e:
         print(f"  (share-dividend export skipped: {_e})")
 
+    # These targets are all "what is it worth NOW" figures, so they read the
+    # snapshot month's column — month columns start at column 4, and _r is a
+    # 0-indexed tuple. This used to be a hardcoded _r[7] (May) and quietly went on
+    # reporting a stale month once the export moved on.
+    _CUR = 3 + all_months.index(anchors.data_month)
+
     # 2. Paul SIPP 25% drawdown
     paul_sipp_val_tgt = 0
     for _r in ws.iter_rows():
         if '2000001606' in str(_r[0].value or '') and 'SIPP' in str(_r[0].value or ''):
-            paul_sipp_val_tgt = _resolve_cell_num(ws, _r[7])  # May
+            paul_sipp_val_tgt = _resolve_cell_num(ws, _r[_CUR])
             break
     paul_drawdown = round(paul_sipp_val_tgt * 0.25)
 
@@ -3278,7 +3410,7 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     susan_sipp_val_tgt = 0
     for _r in ws.iter_rows():
         if '2000001604' in str(_r[0].value or '') and 'SIPP' in str(_r[0].value or ''):
-            susan_sipp_val_tgt = _resolve_cell_num(ws, _r[7])
+            susan_sipp_val_tgt = _resolve_cell_num(ws, _r[_CUR])
             break
     susan_drawdown = round(susan_sipp_val_tgt * 0.25)
 
@@ -3286,9 +3418,9 @@ def write_excel(spend_pivot, actual_months, future_months, fid_pivot,
     paul_isa_val = susan_isa_val = 0
     for _r in ws.iter_rows():
         if str(_r[0].value or '').strip() == 'Investment ISA (Paul)':
-            paul_isa_val = _resolve_cell_num(ws, _r[7])
+            paul_isa_val = _resolve_cell_num(ws, _r[_CUR])
         if str(_r[0].value or '').strip() == 'Investment ISA (Susan)':
-            susan_isa_val = _resolve_cell_num(ws, _r[7])
+            susan_isa_val = _resolve_cell_num(ws, _r[_CUR])
     isa_combined = round(paul_isa_val + susan_isa_val)
 
     # 5. Growth % (Shares + Non-Income Funds) and Income % of total invested
@@ -3623,6 +3755,13 @@ def main():
         print(f"  Pending:  {pending_path}")
     print(f"  Output:   {output_path}\n")
 
+    # Every month boundary this run depends on, derived from the inputs.
+    anchors = resolve_anchors(summary_path)
+    print(f"Anchors: {anchors.describe()}")
+    for _w in anchors.warnings():
+        print(f"  WARNING: {_w}")
+    print()
+
     print("Loading Amex...")
     amex_df = load_amex(amex_path)
     print(f"  {len(amex_df)} transactions\n")
@@ -3632,7 +3771,7 @@ def main():
     print(f"  {len(bar_df)} transactions\n")
 
     print("Loading Fidelity income...")
-    fid_df = load_fidelity_income(fid_path)
+    fid_df = load_fidelity_income(fid_path, anchors.year)
     print(f"  {len(fid_df)} income entries\n")
 
     print("Building holdings...")
@@ -3654,21 +3793,24 @@ def main():
     print()
 
     print("Building pivots...")
-    spend_pivot, spend_months       = build_spending_pivot(amex_df, bar_df)
-    fid_pivot, fid_months           = build_fidelity_pivot(fid_df)
+    spend_pivot, spend_months       = build_spending_pivot(amex_df, bar_df, anchors)
+    fid_pivot, fid_months           = build_fidelity_pivot(fid_df, anchors)
     acc_fund_map, acc_fund_months   = build_account_fund_pivot(fid_df)
 
-    # Always show full Jan–Dec 2026 — transaction files may only cover partial year
-    # but history fills Jan–Apr and projections cover future months
-    JAN_2026 = pd.Period("2026-01", "M")
-    DEC_2026 = pd.Period("2026-12", "M")
-    all_months = [JAN_2026 + i for i in range(12)]
+    # Always show the full reporting year — the transaction files only cover a
+    # 60-day window, the pinned history covers the early months, and everything
+    # in between or beyond is estimated.
+    all_months = list(anchors.months)
 
-    # Actual months = those covered by transaction files (spend or fidelity data)
-    tx_months = sorted(set(spend_months) | set(fid_months))
-    MAY_2026 = pd.Period("2026-05", "M")
-    actual_months = [m for m in tx_months if m != MAY_2026]
-    partial_months = [m for m in tx_months if m == MAY_2026]
+    # Split the year into complete actuals vs months that must be estimated.
+    # Done PER PIVOT, from that pivot's own coverage: the spending sources and the
+    # Fidelity export cover different months, and a bank export that is missing
+    # entirely must not make its months read as actual zeroes (that once left the
+    # salary row blank for a month and dragged the median down for every other).
+    spend_actual, spend_future = anchors.split_months(spend_months)
+    fid_actual, fid_future = anchors.split_months(fid_months)
+    actual_months, future_months = anchors.split_months(
+        sorted(set(spend_months) | set(fid_months)))
 
     spend_months = fid_months = acc_fund_months = all_months
     spend_pivot = spend_pivot.reindex(columns=all_months + ["Total"], fill_value=0)
@@ -3682,17 +3824,11 @@ def main():
             df["Total"] = df[all_months].sum(axis=1)
             acc_fund_map[person][acc] = df
 
-    # Future months = all months not covered by transaction files
-    last_tx = max(tx_months) if tx_months else MAY_2026
-    future_months = partial_months[:]  # May first (partial, scale up)
-    m = last_tx + 1
-    while m <= DEC_2026:
-        future_months.append(m)
-        m += 1
-
-    # Also add any months in all_months before first tx month that aren't partial
-    print(f"  Actuals: {len(actual_months)} months ({actual_months[0] if actual_months else 'none'} – {actual_months[-1] if actual_months else 'none'})")
-    print(f"  Estimating: {len(future_months)} months ({future_months[0] if future_months else 'none'} – {future_months[-1] if future_months else 'none'})")
+    def _months(ms):
+        return ", ".join(str(m) for m in ms) if ms else "none"
+    print(f"  Anchors:  {anchors.describe()}")
+    print(f"  Spend   — actual: {_months(spend_actual)} | estimated: {_months(spend_future)}")
+    print(f"  Income  — actual: {_months(fid_actual)} | estimated: {_months(fid_future)}")
 
     # Full year Jan–Dec (actuals + future, always 12 months)
     full_months = all_months
@@ -3725,7 +3861,7 @@ def main():
                 new_row = {m: 0 for m in full_months + ["Total"]}
                 for pay_month, ppm in payments:
                     for m in full_months:
-                        if m.month == pay_month and m.year == 2026:
+                        if m.month == pay_month and m.year == anchors.year:
                             new_row[m] = round(units * ppm / 100)
                 new_row["Total"] = sum(new_row[m] for m in full_months)
                 new_df = pd.DataFrame([new_row], index=[income_name])
@@ -3738,46 +3874,38 @@ def main():
                       f"Sep=£{round(units*payments[1][1]/100):,})")
 
     # Apply estimates to all pivots (injected funds are skipped)
-    spend_pivot    = estimate_future_months(spend_pivot, actual_months, future_months)
+    spend_pivot    = estimate_future_months(spend_pivot, spend_actual, spend_future, anchors)
     if not fid_pivot.empty:
-        fid_pivot  = estimate_future_months(fid_pivot, actual_months, future_months)
+        fid_pivot  = estimate_future_months(fid_pivot, fid_actual, fid_future, anchors)
     for person in acc_fund_map:
         for acc in acc_fund_map[person]:
             acc_fund_map[person][acc] = estimate_future_months(
-                acc_fund_map[person][acc], actual_months, future_months,
+                acc_fund_map[person][acc], fid_actual, fid_future, anchors,
                 skip_funds=injected_funds)
 
-    # ── June provisional estimate fallback ────────────────────────────────────
-    # June 2026 TransactionHistory only covers the last 60 days (from ~mid-Apr),
-    # so some monthly fund distributions paid later in June aren't captured yet.
-    # Fall back to the May value as a placeholder estimate — flagged for revision
-    # once the rest of June's transaction data is provided.
-    JUN_2026 = pd.Period("2026-06", "M")
-    MAY_2026_fb = pd.Period("2026-05", "M")
-    june_estimated_funds = set()
-    for person in acc_fund_map:
-        for acc, fund_df in acc_fund_map[person].items():
-            if JUN_2026 in fund_df.columns and MAY_2026_fb in fund_df.columns:
-                for fund in fund_df.index:
-                    if fund in injected_funds:
-                        continue
-                    jun_val = fund_df.loc[fund, JUN_2026]
-                    may_val = fund_df.loc[fund, MAY_2026_fb]
-                    if (pd.isna(jun_val) or jun_val == 0) and may_val and may_val > 0:
-                        fund_df.loc[fund, JUN_2026] = may_val
-                        june_estimated_funds.add((acc, fund))
-    if june_estimated_funds:
-        print(f"  June provisional estimates applied to {len(june_estimated_funds)} fund rows (using May values)")
-
-    # June Salary estimate — payslip not yet received, use Apr (normal monthly)
-    # since May included a one-off £42,432 "UK EXCL CM AND W" payment
-    APR_2026_fb = pd.Period("2026-04", "M")
-    if "Salary" in spend_pivot.index and JUN_2026 in spend_pivot.columns and APR_2026_fb in spend_pivot.columns:
-        jun_sal = spend_pivot.loc["Salary", JUN_2026]
-        apr_sal = spend_pivot.loc["Salary", APR_2026_fb]
-        if (pd.isna(jun_sal) or jun_sal == 0) and apr_sal and apr_sal > 0:
-            spend_pivot.loc["Salary", JUN_2026] = apr_sal
-            print(f"  June Salary estimated as £{apr_sal:,.0f} (Apr value — May included one-off £42,432 payment)")
+    # ── Partial-month provisional fallback ────────────────────────────────────
+    # The transaction export only covers the last 60 days, and the snapshot is
+    # usually taken mid-month, so a monthly distribution due later in the partial
+    # month isn't in the file yet. Carry the previous month's figure as a
+    # placeholder — it is replaced by the real one on the next export.
+    partial = anchors.partial_month
+    prev = (partial - 1) if partial else None
+    provisional_funds = set()
+    if partial:
+        for person in acc_fund_map:
+            for acc, fund_df in acc_fund_map[person].items():
+                if partial in fund_df.columns and prev in fund_df.columns:
+                    for fund in fund_df.index:
+                        if fund in injected_funds:
+                            continue
+                        cur_val = fund_df.loc[fund, partial]
+                        prev_val = fund_df.loc[fund, prev]
+                        if (pd.isna(cur_val) or cur_val == 0) and prev_val and prev_val > 0:
+                            fund_df.loc[fund, partial] = prev_val
+                            provisional_funds.add((acc, fund))
+    if provisional_funds:
+        print(f"  {partial}: provisional estimates on {len(provisional_funds)} fund rows "
+              f"(carried from {prev})")
 
     # Rebuild fid_pivot account totals after estimation + injection
     for person in acc_fund_map:
@@ -3786,10 +3914,8 @@ def main():
             acc_total = fund_df[full_months].sum()
             if acc in fid_pivot.index:
                 for m in full_months:
-                    # Only overwrite months NOT covered by hardcoded income history
-                    # History covers Jan–May 2026 (HIST_CUTOFF = 2026-06)
-                    hist_cutoff = pd.Period("2026-06", "M")
-                    if m >= hist_cutoff:
+                    # Only overwrite months the pinned income history doesn't own
+                    if m >= anchors.hist_cutoff:
                         fid_pivot.loc[acc, m] = acc_total[m]
                 # Always update Total
                 fid_pivot.loc[acc, "Total"] = fid_pivot.loc[acc, full_months].sum()
@@ -3800,17 +3926,15 @@ def main():
     print(f"  Fidelity: {len(fid_pivot)} accounts\n")
 
     print("Writing Excel...")
-    # Actual months for write_excel = Jan–May (history + transaction file months)
-    # Future months = Jun–Dec
-    JAN_2026 = pd.Period("2026-01", "M")
-    MAY_2026_m = pd.Period("2026-05", "M")
-    DEC_2026_m = pd.Period("2026-12", "M")
-    actual_for_excel = [JAN_2026 + i for i in range(6)]   # Jan–Jun (AccountSummary 10 Jun 2026)
-    future_for_excel = [JAN_2026 + i for i in range(6, 12)]  # Jul–Dec
-    full_months = actual_for_excel + future_for_excel  # Jan–Dec
+    # The sheet shades months as actual vs estimated. Everything up to and
+    # including the snapshot month is shown as actual (the partial month has real
+    # data in it, just not all of it); everything after is projection.
+    actual_for_excel = [m for m in anchors.months if m <= anchors.data_month]
+    future_for_excel = [m for m in anchors.months if m > anchors.data_month]
+    full_months = actual_for_excel + future_for_excel  # the whole year, in order
 
-    summary_data = build_summary_data(summary_path, full_months)
-    acc_holdings = build_acc_holdings(summary_path, fid_path, inc_income_df=fid_df)
+    summary_data = build_summary_data(summary_path, full_months, anchors)
+    acc_holdings = build_acc_holdings(summary_path, anchors, fid_path, inc_income_df=fid_df)
     # Expense Reimbursements: Royal Mail or Expleo credits under £1,000 (excl. salary)
     REIMBURSEMENT_KEYWORDS = ["ROYAL MAIL", "EXPLEO"]
 
@@ -3866,8 +3990,8 @@ def main():
         pass
 
     write_excel(spend_pivot, actual_for_excel, future_for_excel, fid_pivot,
-                acc_fund_map, holdings, summary_data, acc_holdings, output_path,
-                reimbursements=reimbursements)
+                acc_fund_map, holdings, summary_data, acc_holdings, anchors,
+                output_path, reimbursements=reimbursements)
     print(f"Done → {output_path}\n")
 
     # Console preview of Fidelity section

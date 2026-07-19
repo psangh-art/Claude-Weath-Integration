@@ -1088,6 +1088,66 @@ TradingView capture → OCR → master sheet (+SOI +spending tabs) → history.d
 only broadcasts (no re-generation — the pipeline already wrote the files); the dashboard
 isn't required to be running (data lands on disk regardless).
 
+## spending_summary month anchors are DERIVED, never hardcoded (2026-07-19)
+
+`spending_summary.py` was hand-calibrated with literal `2026-05` / `2026-06` /
+`2026-07` periods scattered through it, and they went wrong the moment the calendar
+moved past them (bug #20, 2026-07-18, was one symptom). On the 18 Jul 2026 export the
+user reported the **Income table missing May**, and the cause was exactly this: May
+fell in the GAP between the pinned Jan–Apr history tables and the 60-day transaction
+window, so it was classified as an *actual of zero* and never estimated, while **July
+was likewise treated as a complete actual and shipped its part-month £192**.
+
+The fix is a single `MonthAnchors` object (`resolve_anchors()`), built from the
+AccountSummary `Export date` header, that every month boundary now reads from. **The
+governing distinction, which any future edit must respect:**
+
+- **DATA pinned to the month it was measured** keeps its literal month for ever — the
+  Jan–Apr `load_spend_history()`/`load_income_history()` tables, `load_history()`'s
+  wealth series, and the May-2026 pension/house/car estimates (now anchored on the
+  named `ESTIMATES_AS_OF` constant). These project forward from their own as-of date,
+  so the calendar advancing never invalidates them.
+- **ANCHORS describing where the report sits** are always derived: `year`, `months`,
+  `data_month` (the snapshot month — the anchor for holdings, prices, account values
+  and the Targets "what's it worth now" reads), `partial_month` + `partial_scale` (the
+  snapshot lands mid-month, so `18/31` is computed, not typed), `hold_from`,
+  `hist_cutoff` and `wealth_cutoff` (both = one month past the end of the pinned
+  tables, so extending a table moves the boundary by itself).
+
+Verified by re-resolving against synthetic export dates (18 Jul, 31 Jul, 3 Sep 2026,
+5 Jan 2027): the data month, partial flag, hold-from and actual/estimated split all
+track the export, and a 2027 export raises a loud WARNING that the pinned 2026 tables
+no longer contribute (they need a fresh full-year export — the anchors can't invent
+that data, and silently estimating the whole year would be worse).
+
+Three things worth keeping in mind:
+
+- **The actual/estimated split is computed PER PIVOT**, from that pivot's own month
+  coverage. The spending sources and the Fidelity export cover different months; when
+  the bank exports are absent entirely, a shared split made their months read as
+  actual zeroes — which blanked the salary row for June and dragged the median down
+  for every other month. `anchors.split_months(tx_months)` is called separately for
+  the spend pivot and the income pivots.
+- **A dividend already banked in the partial month is never scaled.** The partial-month
+  rule scales a raw value up by `1/partial_scale`, which is right for a continuous flow
+  (spend, monthly fund income) and wrong for a discrete payment — it would invent cash.
+  The stock branches keep a banked payment as-is instead. Same reason `Salary` keeps a
+  real payment but falls back to the median when the payslip hasn't landed yet (this
+  subsumes the old hardcoded "June Salary estimate" special case).
+- **`EQUITY_DIVIDENDS_INLINE` is now module-level and `EQUITY_DIVIDENDS_ANNUAL` sums
+  it.** The Targets table used to carry a duplicated `413 + 168 + 178 + 315 + 78`
+  literal that had to be re-added by hand whenever a payment changed. The annual income
+  figures are likewise now row sums of the already-estimated pivots rather than
+  month-literal arithmetic — that alone corrected Income per month £15,418 → £22,359
+  (the old calculation under-counted the gap months and used a `salary_may * 8` hack).
+
+Measured against a pre-change baseline on the same inputs: the Wealth Summary's gap
+months fill in (May and July across every income/spend row), Paul's SIPP reads its
+July snapshot value in the July column instead of stamping it onto May, SANQ000468's
+back-ramp shifts to end at the real snapshot month, and the Targets SIPP/ISA rows come
+out byte-identical (they now read the July column, which holds what the May column
+used to).
+
 ## Open items / things to verify on the next export run
 
 - Brent/Palladium/Copper charts were added by the user 2026-07-13 and the symbol
