@@ -139,7 +139,28 @@ def _price_for(ticker, xlsx_literal, latest):
     return _num(xlsx_literal)
 
 
-ACCOUNT_SUMMARY = os.path.join(os.path.expanduser('~'), 'Downloads', 'AccountSummary.csv')
+# The broker exports are ARCHIVED out of Downloads after a successful pipeline run —
+# consume_input_files.py moves the newest of each into ~/Downloads/old_pipeline/ under
+# a canonical name, keeping exactly one copy. So 'not in Downloads' does NOT mean 'no
+# export exists', and treating it that way is what silently dropped Cash Available back
+# to the Wealth Summary's £79 (and Holdings back to the stale workbook column) once the
+# 18 Jul export was consumed. Downloads wins when both exist — that's the fresher one.
+EXPORT_DIRS = [os.path.join(os.path.expanduser('~'), 'Downloads'),
+               os.path.join(os.path.expanduser('~'), 'Downloads', 'old_pipeline')]
+
+
+def _export_path(name):
+    """The newest available copy of a broker export, Downloads before the archive.
+    Falls back to the Downloads path when neither exists, so 'missing' messages
+    still name the place the user is expected to put it."""
+    for d in EXPORT_DIRS:
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return p
+    return os.path.join(EXPORT_DIRS[0], name)
+
+
+ACCOUNT_SUMMARY = _export_path('AccountSummary.csv')
 # --- AccountSummary.csv 'View all account details' columns (0-indexed) ---
 AS_TYPE, AS_NAME, AS_ACCTNO, AS_PRODUCT, AS_HOLDER = 0, 1, 2, 3, 4
 AS_PRICE, AS_QTY, AS_VALUE, AS_BOOKCOST, AS_GAIN = 7, 9, 10, 13, 14
@@ -226,7 +247,7 @@ def _fidelity_positions(path=ACCOUNT_SUMMARY, funds=False):
     return rows
 
 
-DOWNLOADS = os.path.join(os.path.expanduser('~'), 'Downloads')
+DOWNLOADS = EXPORT_DIRS[0]
 # --- TransactionHistory.csv columns (0-indexed, header 'Order date,...') ---
 TX_ORDER, TX_COMPLETE, TX_TYPE, TX_WRAPPER, TX_ACCTNO, TX_SOURCE, TX_AMOUNT = 0, 1, 2, 4, 5, 6, 7
 
@@ -240,7 +261,7 @@ def _tx_date(s):
     return None
 
 
-def _fund_income_events(downloads=DOWNLOADS):
+def _fund_income_events(downloads=None):
     """(fund name upper, account number) -> the most recent 'Income Received' the
     Fidelity transaction export shows for that holding.
 
@@ -252,14 +273,19 @@ def _fund_income_events(downloads=DOWNLOADS):
     """
     import csv
     events = {}
-    for fn in sorted(os.listdir(downloads)) if os.path.isdir(downloads) else []:
+    # Both the live Downloads copy and the archived one (see EXPORT_DIRS) — the
+    # archive is scanned FIRST so a fresher Downloads row overwrites it on the
+    # most-recent-payment check below.
+    dirs = list(reversed(EXPORT_DIRS)) if downloads is None else [downloads]
+    files = [(d, fn) for d in dirs if os.path.isdir(d) for fn in sorted(os.listdir(d))]
+    for d, fn in files:
         low = fn.lower()
         if not (low.startswith('transactionhistory') or low.startswith('transactions')):
             continue
         if not low.endswith('.csv'):
             continue
         try:
-            with open(os.path.join(downloads, fn), encoding='utf-8-sig', newline='') as fh:
+            with open(os.path.join(d, fn), encoding='utf-8-sig', newline='') as fh:
                 for rec in csv.reader(fh):
                     if len(rec) <= TX_AMOUNT or (rec[TX_TYPE] or '').strip() != 'Income Received':
                         continue
@@ -745,6 +771,7 @@ def build(workbook=WORKBOOK):
     investments = []
     inv_value_total = 0.0
     short_term_value = strategic_value = 0.0
+    strategic_count = 0
     alert_below = alert_near = alert_above = 0
     for pos in positions:
         ticker = pos['ticker']
@@ -763,6 +790,7 @@ def build(workbook=WORKBOOK):
         # still matched so a sheet that hasn't been migrated classifies the same way.
         if isinstance(itype, str) and itype.strip().lower() in ('strategic', 'long term'):
             strategic_value += holdings
+            strategic_count += 1
         else:
             short_term_value += holdings
         if diff_low is not None:
@@ -888,7 +916,9 @@ def build(workbook=WORKBOOK):
     if cash_available is None:
         cash_available = sum(_num(ws.cell(row, last_col).value) or 0.0 for row in WS_CASH_ROWS)
         cash_rows = []
-        cash_source = 'Wealth Summary cash-account rows (broker export not in Downloads)'
+        cash_source = ('Wealth Summary cash-account rows — standalone Cash Accounts only, '
+                       'excludes cash held inside each ISA/SIPP (no broker export in '
+                       'Downloads or Downloads/old_pipeline)')
     # Month-over-month change in the investable total (transparent, and consistent
     # with the trend chart). Includes contributions — flagged in the metric caveat.
     #
@@ -925,6 +955,47 @@ def build(workbook=WORKBOOK):
                                if prev_m['value'] else None)
         gain_month_label, gain_prev_label = cur['label'], prev_m['label']
     gain_stale_months = (last_complete - gain_idx) if gain_idx is not None else 0
+
+    # Gain SINCE THE START OF THIS YEAR, and the last 6 monthly moves for the
+    # sparkline (user request 2026-07-20). Both END on the same month as the
+    # headline figure — a card showing two gains measured to different dates
+    # invites exactly the misreading the 'name the month' rule exists to stop.
+    def _label_ym(label):
+        parts = str(label).split()
+        if len(parts) == 2 and parts[0] in _MON and parts[1].isdigit():
+            return int(parts[1]), _MON[parts[0]]
+        return None
+
+    end_i = gain_idx if gain_idx is not None else (last_complete if months else None)
+    gain_ytd = gain_ytd_pct = gain_ytd_from = None
+    gain_series = []
+    if end_i is not None and end_i > 0:
+        end_ym = _label_ym(months[end_i]['label'])
+        if end_ym:
+            # Baseline = the closing value of LAST December when the sheet carries it,
+            # otherwise the first month of this year (the series currently starts at
+            # Jan, so 'since the start of the year' really means 'since the January
+            # figure' — the caveat names both months so it can't be misread).
+            base_i = None
+            for i, m in enumerate(months):
+                ym = _label_ym(m['label'])
+                if not ym:
+                    continue
+                if ym[0] == end_ym[0] - 1 and ym[1] == 12:
+                    base_i = i
+                elif ym[0] == end_ym[0] and base_i is None:
+                    base_i = i
+                    break
+            if base_i is not None and base_i < end_i:
+                base_v = months[base_i]['value']
+                gain_ytd = round(months[end_i]['value'] - base_v, 2)
+                gain_ytd_pct = round(gain_ytd / base_v * 100.0, 2) if base_v else None
+                gain_ytd_from = months[base_i]['label']
+        # Month-on-month moves, not the value line — this is the GAIN card, and the
+        # value trend already has its own widget.
+        for i in range(max(1, end_i - 5), end_i + 1):
+            gain_series.append({'label': months[i]['label'],
+                                'value': round(months[i]['value'] - months[i - 1]['value'], 2)})
 
     # Total Portfolio Value = the Wealth Summary's 'Fidelity accounts' block for the
     # latest actual month — the same series the trend chart plots, so the headline and
@@ -1043,7 +1114,23 @@ def build(workbook=WORKBOOK):
         share_accum_monthly = float(_dv.get('share_accumulation_monthly') or 0)
     except (OSError, ValueError):
         pass
-    monthly_dividend = round(funds_monthly_income + share_income_monthly + share_accum_monthly, 2)
+    # Monthly Dividend = income actually PAID OUT: income funds + stocks-and-shares
+    # dividends, each shown as its own line on the card (user request 2026-07-20).
+    #
+    # The accumulation funds' reinvested income is NOT in here. It used to be, AND was
+    # then added again by total_income (= monthly_dividend + accumulative), so Total
+    # Income double-counted it: £21,707 + £4,381 = £26,088 against a true £21,707.
+    # It has its own 'Accumulative Fund Income' card, so paid-out vs reinvested is the
+    # clean split — and it makes the stated relationship true, that the two cards to
+    # the left of Total Income add up to it.
+    monthly_dividend = round(funds_monthly_income + share_income_monthly, 2)
+    total_income_monthly = round(monthly_dividend + share_accum_monthly, 2)
+    # Year-to-date total income (user request 2026-07-20). There is no month-by-month
+    # income history exported anywhere, so this is the current monthly rate over the
+    # months of this year so far — the same run-rate basis as the annual figure beside
+    # it, and labelled as such rather than presented as measured actuals.
+    income_ytd_months = now.month
+    income_ytd = round(total_income_monthly * income_ytd_months, 2)
 
     soi = wb['Stocks of Interest']
     soif = wbf['Stocks of Interest']
@@ -1113,6 +1200,13 @@ def build(workbook=WORKBOOK):
             'gain_last_month': {'value': gain_last_month, 'pct': gain_last_month_pct,
                                 'month': gain_month_label, 'prev_month': gain_prev_label,
                                 'stale_months': gain_stale_months,
+                                'ytd': gain_ytd, 'ytd_pct': gain_ytd_pct,
+                                'ytd_from': gain_ytd_from,
+                                'ytd_caveat': (f'Change from {gain_ytd_from} to {gain_month_label}. '
+                                               'Same investment-account total as the monthly figure, '
+                                               'so it includes contributions as well as market movement.'
+                                               if gain_ytd is not None else None),
+                                'series': gain_series,
                                 'caveat': (f'{gain_month_label} vs {gain_prev_label} — the most recent month '
                                            'with fresh data. Investment-account change, includes contributions.'
                                            + (f' The {gain_stale_months} month(s) since carry the same figure '
@@ -1122,20 +1216,36 @@ def build(workbook=WORKBOOK):
             'trading_profit': {'value': round(profit_ytd, 2), 'year': profit_year,
                                'sells': sells_in_year},
             'monthly_dividend': {'value': monthly_dividend,
-                                 'caveat': f'Income funds £{funds_monthly_income:,.0f}/mo + share income '
-                                           f'£{share_income_monthly:,.0f}/mo + share accumulation '
-                                           f'£{share_accum_monthly:,.0f}/mo.'},
+                                 'funds': round(funds_monthly_income, 2),
+                                 'shares': round(share_income_monthly, 2),
+                                 'caveat': (f'Income paid out: income funds £{funds_monthly_income:,.0f}/mo '
+                                            f'+ stocks & shares dividends £{share_income_monthly:,.0f}/mo. '
+                                            'Reinvested Acc-fund income is the separate Accumulative card, '
+                                            'and both are counted in Total Income.')},
             # Total income (user request 2026-07-19): everything the portfolio pays
-            # out or reinvests in a month — the same three parts as Monthly Dividend
-            # plus the Accumulative fund income, so the two metrics beside it add up
-            # to this one and the split stays visible.
-            'total_income': {'value': round(monthly_dividend + share_accum_monthly, 2),
+            # out or reinvests in a month — Monthly Dividend (income funds + share
+            # dividends) plus the Accumulative fund income, so the two metrics beside
+            # it add up to this one and the split stays visible.
+            'total_income': {'value': total_income_monthly,
                              'monthly_dividend': monthly_dividend,
+                             'funds': round(funds_monthly_income, 2),
+                             'shares': round(share_income_monthly, 2),
                              'accumulative': share_accum_monthly,
-                             'annual': round((monthly_dividend + share_accum_monthly) * 12, 2),
-                             'caveat': (f'Monthly dividend £{monthly_dividend:,.0f} + accumulative fund '
-                                        f'income £{share_accum_monthly:,.0f} — income paid out plus income '
-                                        'reinvested inside the Acc funds.')},
+                             'annual': round(total_income_monthly * 12, 2),
+                             'ytd': income_ytd, 'ytd_months': income_ytd_months,
+                             'ytd_caveat': (f'{income_ytd_months} month(s) of {now.year} at the current '
+                                            f'£{total_income_monthly:,.0f}/mo rate — a run-rate, not '
+                                            'measured month-by-month actuals.'),
+                             'caveat': (f'Income funds £{funds_monthly_income:,.0f} + shares '
+                                        f'£{share_income_monthly:,.0f} + accumulative £{share_accum_monthly:,.0f} '
+                                        '— income paid out plus income reinvested inside the Acc funds.')},
+            'strategic_value': {'value': round(strategic_value, 2),
+                                'count': strategic_count,
+                                'pct_of_portfolio': (round(strategic_value / portfolio_value * 100.0, 2)
+                                                     if portfolio_value else None),
+                                'caveat': (f'{strategic_count} holding(s) on the Investments sheet with '
+                                           "Type = 'Strategic', valued from the broker export. "
+                                           'Short-term share holdings and income funds are excluded.')},
             'cash_available': {'value': round(cash_available, 2),
                                'pct_of_portfolio': round(cash_available / portfolio_value * 100.0, 2) if portfolio_value else None,
                                'rows': cash_rows, 'caveat': cash_source + '.'},
@@ -1155,7 +1265,12 @@ def build(workbook=WORKBOOK):
                  'income_positions_total': income_positions_total,
                  'income_summary': {'year': now.year,
                                     'total_annual_income': funds_annual_income,
-                                    'total_monthly_income': monthly_dividend,
+                                    # Total income, NOT the paid-out-only Monthly
+                                    # Dividend — this read the same figure before
+                                    # accumulation was split out of that metric, and
+                                    # narrowing it here would silently drop the
+                                    # reinvested income from the Portfolio screen.
+                                    'total_monthly_income': total_income_monthly,
                                     'fund_count': len(income_funds)}}
     historic = {'generated_at': now.isoformat(timespec='seconds'),
                 'sold': sold,
@@ -1168,7 +1283,7 @@ def build(workbook=WORKBOOK):
     # ---------------- Targets (income + allocation by Type) ----------------
     targets = {
         'generated_at': now.isoformat(timespec='seconds'),
-        'income_per_month': monthly_dividend,
+        'income_per_month': total_income_monthly,   # unchanged by the dividend split
         'annual_income': funds_annual_income,
         'allocation': [
             {'label': 'Income Funds', 'value': round(funds_value_total, 2)},

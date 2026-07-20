@@ -196,6 +196,14 @@ svg{display:block}
 .metric-value{font-family:var(--mono);font-size:16.5px;font-weight:750;letter-spacing:-.01em;line-height:1.08}
 .metric-sub{margin-top:3px;display:flex;align-items:center;gap:5px;font-size:9.5px;color:var(--muted)}
 .metric-graphic{flex-shrink:0;display:flex;align-items:center;width:100%;margin-top:0;line-height:0;overflow:hidden}
+/* Secondary figure on a metric card (e.g. the Gain card's year-to-date line, the
+   Total Income card's YTD): smaller than the headline so the card still reads as
+   one number with context, not two competing numbers. */
+.metric-extra{margin-top:4px;display:flex;align-items:center;gap:5px;font-size:10px;white-space:nowrap}
+.metric-extra .me-label{color:var(--faint);font-weight:700;letter-spacing:.04em;font-size:9px}
+.metric-extra .me-pct{color:var(--muted);font-family:var(--mono)}
+.metric-extra .me-sep{color:var(--faint);margin:0 1px}
+.metric-extra .chip{font-size:10px}
 .tip{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;
   background:var(--panel-3);color:var(--faint);font-size:10px;font-weight:700;cursor:help;position:relative;flex-shrink:0}
 .tip[data-tip]:hover::after,.tip[data-tip]:focus::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);
@@ -857,9 +865,25 @@ WIDGET_DEFS.overview.push({
       if(t) t.textContent='Gain — '+m.month;
     }
     const sub=m.month?('vs '+(m.prev_month||'the previous month')):'Month-on-month';
+    // Year-to-date gain alongside the monthly one, and a spark of the last 6 monthly
+    // MOVES (user request 2026-07-20). The spark plots deltas, not the value line —
+    // this is the gain card, and the value trend has its own widget. Both figures end
+    // on the same month as the headline, so the card can't read as two different dates.
+    const spark=(m.series&&m.series.length>1)
+      ? trendSparkline(m.series.map(p=>p.value),{width:52,height:18})
+      : '';
+    const ytd=(m.ytd==null)?'' :
+      '<div class="metric-extra">'+
+        '<span class="me-label">YTD</span>'+
+        deltaChip(m.ytd,{kind:'money',decimals:0})+
+        (m.ytd_pct==null?'':'<span class="me-pct">'+fmtPct(m.ytd_pct,2)+'</span>')+
+        (m.ytd_caveat?' <span class="tip" data-tip="'+escapeHtml(m.ytd_caveat)+'" tabindex="0">i</span>':'')+
+      '</div>';
     body.innerHTML='<div class="metric">'+
       '<div class="metric-main"><div class="metric-value">'+deltaChip(m.value,{kind:'money',decimals:0})+'</div>'+
-      '<div class="metric-sub">'+escapeHtml(sub)+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div>'+
+      '<div class="metric-sub">'+escapeHtml(sub)+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div>'+
+      ytd+'</div>'+
+      (spark?'<div class="metric-graphic">'+spark+'</div>':'')+
       '</div>';
   }
 });
@@ -884,9 +908,17 @@ WIDGET_DEFS.overview.push({
   mount(body){
     body.classList.add('metric-body');
     const m=DATA.overview.metrics.monthly_dividend;
+    // Stocks-and-shares dividends shown as their own line rather than folded silently
+    // into the total (user request 2026-07-20) — the sub line used to just say
+    // 'Income funds', which named only one of the two things in the figure.
+    const parts=[];
+    if(m.funds!=null) parts.push('<span class="me-label">Funds</span>'+fmtMoneyCompact(m.funds));
+    if(m.shares!=null) parts.push('<span class="me-label">Shares</span>'+fmtMoneyCompact(m.shares));
     body.innerHTML='<div class="metric">'+
       '<div class="metric-main"><div class="metric-value">'+fmtMoneyCompact(m.value)+'</div>'+
-      '<div class="metric-sub">Income funds'+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div></div>';
+      '<div class="metric-sub">Paid out / mo'+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div>'+
+      (parts.length?'<div class="metric-extra">'+parts.join('<span class="me-sep">·</span>')+'</div>':'')+
+      '</div></div>';
   }
 });
 WIDGET_DEFS.overview.push({
@@ -908,12 +940,18 @@ WIDGET_DEFS.overview.push({
   mount(body){
     body.classList.add('metric-body');
     const m=DATA.overview.metrics.total_income||{};
+    const ytd=(m.ytd==null)?'' :
+      '<div class="metric-extra"><span class="me-label">YTD</span>'+fmtMoneyCompact(m.ytd)+
+      (m.ytd_caveat?' <span class="tip" data-tip="'+escapeHtml(m.ytd_caveat)+'" tabindex="0">i</span>':'')+
+      '</div>';
     body.innerHTML='<div class="metric">'+
       '<div class="metric-main"><div class="metric-value" title="'+escapeHtml(
-        'Paid out: '+fmtMoney(m.monthly_dividend,0)+'/mo\nReinvested: '+fmtMoney(m.accumulative,0)+'/mo')+'">'+
+        'Income funds: '+fmtMoney(m.funds,0)+'/mo\nShares: '+fmtMoney(m.shares,0)+
+        '/mo\nReinvested (Acc): '+fmtMoney(m.accumulative,0)+'/mo')+'">'+
         fmtMoneyCompact(m.value)+'</div>'+
       '<div class="metric-sub">'+fmtMoneyCompact(m.annual)+' / yr'+
-        (m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div></div>';
+        (m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div>'+
+      ytd+'</div></div>';
   }
 });
 WIDGET_DEFS.overview.push({
@@ -921,7 +959,11 @@ WIDGET_DEFS.overview.push({
   mount(body){
     body.classList.add('metric-body');
     const m=DATA.overview.metrics.cash_available;
-    const pct=(m.pct_of_portfolio||0)*100;
+    // pct_of_portfolio is ALREADY a percentage (dashboard_data does the ×100), so
+    // scaling it again read 1,021% and filled the ring solid. It was invisible while
+    // the broker export was missing and cash fell back to £79 → 0.21%, rounded to
+    // '0.00%'; the moment the real £384k came back the error showed.
+    const pct=m.pct_of_portfolio||0;
     // No centre label: at the halved small-widget width the ring has to be tiny,
     // so the % moves into the sub line where it stays legible.
     const ring=ringSVG([{value:pct,color:'var(--accent)'},{value:100-pct,color:'var(--panel-3)'}],
@@ -931,6 +973,26 @@ WIDGET_DEFS.overview.push({
     body.innerHTML='<div class="metric">'+
       '<div class="metric-main"><div class="metric-value" title="'+escapeHtml(bd)+'">'+fmtMoney(m.value,0)+'</div>'+
       '<div class="metric-sub">'+fmtPct(pct,pct<1?2:1)+' of portfolio'+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div>'+
+      '<div class="metric-graphic">'+ring+'</div></div>';
+  }
+});
+// Total £ held in Strategic positions (user request 2026-07-20) — the long-hold half
+// of the equity book, split out from the short-term trading positions. Same ring
+// treatment as Cash Available so the two 'share of the portfolio' cards read alike.
+WIDGET_DEFS.overview.push({
+  id:'m-strategic-value', title:'Strategic Holdings', size:'S', span:3,
+  mount(body){
+    body.classList.add('metric-body');
+    const m=DATA.overview.metrics.strategic_value||{};
+    const pct=m.pct_of_portfolio||0;
+    const ring=ringSVG([{value:pct,color:'var(--accent)'},{value:100-pct,color:'var(--panel-3)'}],
+      {size:18,thickness:4});
+    const sub=(m.count!=null?m.count+' holding'+(m.count===1?'':'s'):'Strategic')+
+      (pct?' · '+fmtPct(pct,pct<1?2:1):'');
+    body.innerHTML='<div class="metric">'+
+      '<div class="metric-main"><div class="metric-value">'+fmtMoney(m.value,0)+'</div>'+
+      '<div class="metric-sub">'+escapeHtml(sub)+
+        (m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div></div>'+
       '<div class="metric-graphic">'+ring+'</div></div>';
   }
 });
