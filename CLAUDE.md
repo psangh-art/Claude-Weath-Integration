@@ -943,6 +943,20 @@ Three user requests, all committed:
   clearly inactive rather than literally vanishing; a script-opened tab does close. Do
   NOT expect `window.close()` alone to remove a normal tab — the cover is the reliable
   part. Verified in-browser: opening a 2nd tab dropped the cover on the 1st.
+  - **Superseded as the primary mechanism 2026-07-20 — the launcher now opens a
+    DEDICATED Chrome profile and closes stale tabs for real over CDP** (user accepted
+    the trade-off). Chrome only exposes CDP when started with
+    `--remote-debugging-port`, and it will not do that for an already-running normal
+    profile, so `scripts/dashboard_open.js` runs its own profile under
+    `data/dashboard-chrome-profile/` (gitignored — a whole browser profile) on port
+    **9333** (NOT 9222, that is TradingView Desktop's) in an `--app` window. Second
+    launch: find the profile already up, `/json/close` every page target on the
+    dashboard's ORIGIN (sweeping `/decks/architecture`, `/pipeline` too), open one
+    fresh tab. `Run Investment Dashboard.bat` calls it; it waits for the server's port
+    first so the tab can't land on a connection error, and falls back to the default
+    browser when Chrome isn't installed. **The BroadcastChannel cover stays** — it is
+    the only thing that helps a tab the user opened by hand in their everyday Chrome.
+    The cost Paul accepted: the dashboard runs in a profile signed into nothing.
 
 ## Dashboard: income-fund positions, real dividend dates, Fidelity-accounts total (2026-07-19)
 
@@ -1157,6 +1171,31 @@ July snapshot value in the July column instead of stamping it onto May, SANQ0004
 back-ramp shifts to end at the real snapshot month, and the Targets SIPP/ISA rows come
 out byte-identical (they now read the July column, which holds what the May column
 used to).
+
+**Applied to the live workbook 2026-07-20** — the fix had only ever been run to a temp
+file, so `Stocks_Buy_Strategy.xlsx` still carried the reported bug (Salary/SIPP blank
+for May, July stuck on its part-month £192). Rebuilt `spending_summary.xlsx` →
+`integrate_spending_tabs.py` → `dashboard_data.py`. Note the Amex/Barclays exports were
+consumed on 2026-07-12 and are gone, so the spend side is estimated throughout; June
+Salary moved 6535 → the 6379 median, which is the honest estimate for a month with no
+bank export behind it. **The Finance Google Sheet has NOT been re-synced** — that is
+still outstanding, along with the 'Strategic' rename.
+
+- **The gap months between the pinned history and the snapshot are INTERPOLATED, not
+  projected (2026-07-20).** Rebuilding surfaced a second defect the anchors work exposed
+  rather than caused: months after the history tables end but BEFORE the snapshot month
+  were grown forward on fund income — a branch written when the snapshot was the very
+  next month and the gap was empty. With a July snapshot the gap opened and the
+  projection overshot: Paul's SIPP read £1.498M for June against a July snapshot of
+  £1.432M, so the row climbed above the snapshot and fell back onto it, and rows 18/26/
+  33/34 inherited the spike. `sheet_assets.py` now interpolates across the gap so the
+  series is monotone between the two months actually MEASURED and lands exactly on the
+  snapshot; months after the snapshot still grow on income. Measured A/B on the same
+  inputs: **6 cells move, all June**. May is NOT affected — 2026-05 is a pinned value in
+  `load_history()`'s 'Paul Pension' table (1,490,236), real data, not a projection.
+  Consequence worth knowing: the dashboard's Gain-vs-last-month now picks June and reads
+  **−£27,266** (half of the real May→July fall) where it used to read +£48,856 off a
+  flat carry-forward. The direction is now right; the magnitude is an interpolation.
 
 ## Payslips screen + pension allowance (2026-07-19)
 
