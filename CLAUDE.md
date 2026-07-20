@@ -1521,10 +1521,26 @@ dropped out of the captured layouts that's worth a look on the next run.
   first month of this year — the series currently starts at Jan 2026, so 'since the
   start of the year' really means 'since the January figure' and the caveat names
   both months.
-- **Total Income YTD is a RUN-RATE, and says so.** No month-by-month income history
-  is exported anywhere, so it is the current monthly total × months elapsed — the
-  same basis as the annual figure beside it. If real actuals are wanted, they'd have
-  to come out of the spending pivots.
+- **Total Income YTD is MEASURED from the spending pivots (2026-07-20).** It shipped
+  as a run-rate (monthly total × months elapsed) and overstated — £151,949 against a
+  measured **£133,093** for Jan–Jul. `sheet_targets.py` now writes a **`months`**
+  array into `data/spending_dividends.json`: per month `fund_income` (received across
+  the family accounts of `fid_pivot`, pinned Jan–Apr history injected),
+  `share_dividends`, `accumulation`, their `total`, `salary`, and `actual`/`partial`
+  flags. Three things about it are load-bearing:
+  - **Share dividends are pinned PER PAYMENT MONTH** (`EQUITY_DIVIDENDS_INLINE`), not
+    spread evenly, and are NOT in `fid_pivot` — the annual total adds them separately,
+    so counting both is not a double count.
+  - **`salary` is exported but excluded from `total`** — the dashboard's Total Income
+    is investment income, not earnings. A consumer wanting household income adds it.
+  - **Only months flagged `actual` may be summed for a year-to-date.** The pivots
+    carry the whole year including estimated future months; summing those reports a
+    forecast as a result. `dashboard_data` sums the actual ones and falls back to the
+    run-rate when the export predates the field, labelling the card with which basis
+    it used.
+
+  Note the LATEST actual month is usually `partial` (the snapshot lands mid-month), so
+  a YTD legitimately includes a part-month — flagged in the caveat, not hidden.
 - **New 'Strategic Holdings' small widget** — total £ in `Type = 'Strategic'`
   positions (£111,655 over 2 holdings), same ring treatment as Cash Available.
   `DEFAULT_ORDER` is derived from the `WIDGET_DEFS.overview` push order, and
