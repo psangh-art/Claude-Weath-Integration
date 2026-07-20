@@ -1490,6 +1490,36 @@ def build(workbook=WORKBOOK):
                 inherited.append(t)
     below_tickers = [w['ticker'] for w in watchlist if (w.get('proximity_pct') is not None and w['proximity_pct'] <= 0)]
 
+    # Group the unmarked charts by their SAVED LAYOUT (user request 2026-07-20): the
+    # user marks a whole layout at a time in TradingView, so the dashboard shows the
+    # LAYOUTS that need marking up rather than every individual ticker. Each entry
+    # opens that layout in TradingView Desktop (chart_id), carries the count and the
+    # tickers within it that need drawing. Tickers with no captured layout become
+    # single-ticker entries (layout=None) keeping their browser link.
+    _by_layout = {}
+    layouts_to_markup = []
+    for u in unmarked:
+        key = u.get('layout_id') or u.get('layout')
+        if key:
+            g = _by_layout.get(key)
+            if g is None:
+                g = {'layout': u.get('layout'), 'layout_id': u.get('layout_id'),
+                     'chart_id': u.get('chart_id'), 'chart_url': u.get('chart_url'),
+                     'tickers': [], 'count': 0}
+                _by_layout[key] = g
+                layouts_to_markup.append(g)
+            if u.get('chart_id') and not g.get('chart_id'):
+                g['chart_id'] = u['chart_id']
+            g['count'] += 1
+            if u.get('ticker'):
+                g['tickers'].append(u['ticker'])
+        else:
+            layouts_to_markup.append({'layout': None, 'layout_id': None,
+                                      'chart_id': u.get('chart_id'), 'chart_url': u.get('chart_url'),
+                                      'tickers': [u['ticker']] if u.get('ticker') else [], 'count': 1})
+    # Grouped layouts first (most charts to draw first), then the loose no-layout ones.
+    layouts_to_markup.sort(key=lambda x: (x['layout'] is None, -x['count'], (x['layout'] or '')))
+
     def act(category, priority, title, detail, link=None, link_label=None):
         return {'category': category, 'priority': priority, 'title': title,
                 'detail': detail, 'link': link, 'link_label': link_label}
@@ -1516,7 +1546,8 @@ def build(workbook=WORKBOOK):
             'Lock in the latest dashboard/data changes when you are happy with them.'),
     ]
     activity = {'generated_at': now.isoformat(timespec='seconds'),
-                'actions': actions, 'charts_to_markup': unmarked}
+                'actions': actions, 'charts_to_markup': unmarked,
+                'layouts_to_markup': layouts_to_markup}
 
     return {'overview': overview, 'portfolio': portfolio, 'historic': historic,
             'watchlist': watchlist_payload, 'targets': targets, 'news': news_payload,

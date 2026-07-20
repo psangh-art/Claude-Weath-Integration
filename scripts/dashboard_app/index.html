@@ -282,6 +282,8 @@ svg{display:block}
   font-weight:700;background:var(--panel-3);border-radius:6px;padding:3px 8px;color:var(--text);text-decoration:none}
 .activity-chart-chip:hover{background:var(--accent-soft);color:var(--accent)}
 .activity-chart-chip .dim-ticker{color:var(--faint)}
+.activity-chart-chip .chip-count{background:var(--accent);color:#fff;border-radius:8px;
+  font-size:9px;padding:0 5px;min-width:14px;text-align:center}
 
 /* ---- Relevant News widget ---- */
 .news-list{display:flex;flex-direction:column;gap:0;overflow-y:auto;flex:1;min-height:0}
@@ -1188,26 +1190,29 @@ WIDGET_DEFS.overview.push({
       '<div class="cs-bar">'+bar+'</div>'+
       '<div class="cs-legend">'+legend+'</div></div>';
 
-    // Charts to mark up — moved here from the Activity widget (user request
-    // 2026-07-19): this is the widget about what the detection run found, and the
-    // 'N not marked up' figure above is exactly what this list enumerates.
-    // Clicking a ticker opens its SAVED LAYOUT in TradingView Desktop so it's there
-    // ready to draw on; a browser tab can't do that. Tickers with no captured layout
-    // keep the browser link.
-    const charts=((DATA.activity||{}).charts_to_markup)||[];
+    // Layouts to mark up — the user marks up a whole TradingView LAYOUT at a time,
+    // so this lists the LAYOUTS that need updating (user request 2026-07-20) rather
+    // than every individual ticker. Each shows how many charts in it still need trend
+    // lines; clicking opens that SAVED LAYOUT in TradingView Desktop, ready to draw on
+    // (a browser tab can't do that). Loose tickers with no captured layout keep a
+    // browser link and show the ticker instead of a layout name.
+    const charts=((DATA.activity||{}).layouts_to_markup)||[];
     if(!charts.length) return;
     const chartsHtml=charts.map((c,i)=>{
+      const label=c.layout?escapeHtml(c.layout)+' <span class="chip-count">'+c.count+'</span>'
+                          :'<span class="dim-ticker">'+escapeHtml((c.tickers&&c.tickers[0])||'—')+'</span>';
+      const tip=c.tickers&&c.tickers.length?escapeHtml(c.tickers.join(', ')):'';
       if(c.chart_id) return '<button class="activity-chart-chip" data-chart="'+i+'" '+
-        'title="Open '+escapeHtml(c.layout||'this layout')+' in TradingView Desktop">📊 '+escapeHtml(c.ticker||'—')+'</button>';
-      if(c.chart_url) return '<a class="activity-chart-chip" href="'+escapeHtml(c.chart_url)+'" target="_blank" rel="noopener" title="No captured layout for this ticker — opens TradingView in the browser">📊 '+escapeHtml(c.ticker||'—')+'</a>';
-      return '<span class="activity-chart-chip"><span class="dim-ticker">'+escapeHtml(c.ticker||'—')+'</span></span>';
+        'title="Open '+escapeHtml(c.layout||'this layout')+' in TradingView Desktop'+(tip?' — '+tip:'')+'">📊 '+label+'</button>';
+      if(c.chart_url) return '<a class="activity-chart-chip" href="'+escapeHtml(c.chart_url)+'" target="_blank" rel="noopener" title="No captured layout — opens TradingView in the browser'+(tip?' ('+tip+')':'')+'">📊 '+label+'</a>';
+      return '<span class="activity-chart-chip">📊 '+label+'</span>';
     }).join('');
 
     const wrap=document.createElement('div');
     wrap.className='activity-charts';
     wrap.innerHTML='<button class="activity-charts-toggle" aria-expanded="false">'+
       '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>'+
-      'Charts to mark up ('+charts.length+')</button>'+
+      'Layouts to mark up ('+charts.length+')</button>'+
       // Status sits ABOVE the chip list: the list scrolls inside the widget, so a
       // message underneath it was off-screen exactly when it mattered.
       '<div class="activity-charts-msg dim" hidden></div>'+
@@ -1225,14 +1230,15 @@ WIDGET_DEFS.overview.push({
       btn.addEventListener('click',async()=>{
         const c=charts[Number(btn.dataset.chart)];
         if(!c) return;
+        const first=(c.tickers&&c.tickers[0])||null;
         btn.disabled=true;
-        say('Opening '+(c.layout||c.ticker)+' in TradingView…');
+        say('Opening '+(c.layout||first||'layout')+' in TradingView…');
         try{
           const r=await fetch('/api/open-chart',{method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({chart_id:c.chart_id, ticker:c.ticker, layout:c.layout})});
+            body:JSON.stringify({chart_id:c.chart_id, ticker:first, layout:c.layout})});
           const out=await r.json();
-          if(out.ok) say(c.ticker+' → '+(c.layout||'layout')+' is open in TradingView Desktop.');
+          if(out.ok) say((c.layout||first||'Layout')+' is open in TradingView Desktop.');
           else say(out.error||'Could not open the chart.',true);
         }catch(e){
           say(String((e&&e.message)||e),true);
