@@ -9,7 +9,6 @@ Approved → In progress → Done (with commit/PR ref). Items marked
 
 | Item | Why it matters | Size | Status | Builder |
 |---|---|---|---|---|
-| **Sync the Finance Sheet via the Sheets API, not the browser** | The delete-then-import dance is manual only because Chrome won't open a native file picker for a tab the extension drives in the background (`visibilityState: "hidden"`) — proven 2026-07-20. Worse, it has a **half-way state where the Sheet sits EMPTY**: every data tab is deleted before the import runs, and if the import doesn't land (it didn't, twice) Paul's live Finance Sheet has no data in it until someone finishes by hand. A `values.batchUpdate` / `batchUpdateByDataFilter` sync writes each tab in place — no deletion, no picker, no empty window, and re-runnable unattended. **Auth is DONE and verified 2026-07-20** (service account, key at `~/.secrets/`, sheet shared, `check_sheets_auth.py` green) — what remains is the sync itself. Open design question: whether it also pushes formatting (`batchUpdate` + `repeatCell`), or the tabs are styled once in Google and then left alone | M | Approved — auth done, sync to build | data-developer |
 | First investment-analyst run (analyst notes + daily brief draft) | Exercises the agent end to end; populates the deck's Analyst view | M | Proposed | investment-analyst |
 | Verify the TradingView chart-open happy path | `POST /api/open-chart` (dashboard → TV Desktop over CDP 9222) has never run end to end. Needs TV Desktop relaunched with `--remote-debugging-port=9222`, and it navigates the live session — any in-progress drawing is lost | S | **User decision** — needs a moment Paul isn't mid-markup | user |
 
@@ -33,6 +32,7 @@ Approved → In progress → Done (with commit/PR ref). Items marked
 
 | Item | Shipped |
 |---|---|
+| **Sheets API sync built** (`sync_finance_sheet.py`) — writes each tab in place in ~20s, no tab deletion, no file picker, no window where the sheet is empty. Verified at **0 differing cells across all 9 tabs**, twice. Two write passes (RAW vs USER_ENTERED) to stop silent type coercion, and number formats re-pushed from the workbook because USER_ENTERED clears them | 2026-07-20 |
 | Finance Google Sheet re-synced — 11 tabs restored cleanly, no `(1)` suffixes, carrying the month-anchor + gap-interpolation fixes and the 'Strategic' rename (its first trip to Google). Silver's Alert Low set to 50.00 / Source = Manual by hand | 2026-07-20 |
 | Dashboard opens in a dedicated Chrome profile — stale tabs now actually CLOSE over CDP, instead of only being covered by the BroadcastChannel guard (a browser refuses `window.close()` on a user-opened tab). Paul accepted the trade-off: the dashboard runs in a profile signed into nothing | 2026-07-20, commit ebbedde |
 | Month-anchor + gap-interpolation fixes applied to the LIVE workbook — May/July gaps filled, July's part-month £192 replaced by a full-month estimate, June SIPP interpolated between two measured months instead of projected past the snapshot | 2026-07-20, commit 3070b2f |

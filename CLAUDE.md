@@ -728,6 +728,54 @@ financial credentials, and would hide a genuine MITM.
 The architecture deck carries all of this on a dedicated slide, rebuilt by the
 re-runnable `scripts/oneoff/add_sheets_sync_slide_2026-07-20.py`.
 
+### `sync_finance_sheet.py` — the API sync itself (built 2026-07-20)
+
+`python scripts/sync_finance_sheet.py [--dry-run] [--tabs A,B]`. Writes each tab
+IN PLACE in ~20s. **Verified against the pre-sync snapshot at 0 differing cells on
+all 9 tabs**, twice (so it's idempotent) — the sheet had just been populated by a
+manual xlsx import, which made "byte-identical to the import" the acceptance test.
+
+Four things are load-bearing; changing any of them silently corrupts a live
+financial sheet:
+
+- **TWO WRITE PASSES, because one `valueInputOption` cannot serve the whole grid.**
+  RAW for everything except formulas and dates; USER_ENTERED for those only.
+  USER_ENTERED **coerces**: it turned `6.7%` into `0.067` rendered as `6.70%`, and
+  would turn a free-text Chart Note reading `1-2` into a date. There are ~6,100
+  plain strings exposed to that. RAW stores them verbatim; formulas and dates
+  genuinely must be parsed (a formula written RAW lands as literal text).
+- **Which cells get parsed is decided by the openpyxl CELL TYPE, never by sniffing
+  the rendered string.** The first version tested "does this text look like an ISO
+  date", which converted Investments' 'Chart Last Checked' column — 347 cells that
+  are plain TEXT in the workbook — into real dates. Exactly the coercion the
+  two-pass design exists to prevent. Only the source type can tell them apart.
+- **NUMBER FORMATS MUST BE RE-PUSHED AFTER the USER_ENTERED pass, which clears
+  them.** Measured: after the first full sync every formula cell came back
+  `numberFormat: None`, so `-0.4%` rendered as `-0.003685720404` while RAW-written
+  literals kept their `#,##0.00`. `sheets_number_format()` maps the workbook's
+  format codes across (Excel and Sheets share the pattern syntax for everything
+  this workbook uses). Taking them from the WORKBOOK rather than reading them back
+  off the sheet means the sync can also repair a sheet whose formats are already
+  lost — which is how the live sheet was fixed.
+- **`ClaudeCode` and `Stats` are never written.** ClaudeCode is the run log (and
+  Google needs ≥1 sheet); **Stats holds CHARTS and no data** (1×1 in the xlsx) —
+  the API cannot rebuild charts from openpyxl, so clearing it would destroy them.
+
+Fills, borders, merges and column widths are NOT pushed and don't need to be:
+`clear()` wipes values only. So the model is **import the xlsx by hand ONCE to
+establish the appearance, then let the API keep the numbers current**. A
+STRUCTURAL change (inserting a column, moving a section) misaligns that surviving
+formatting and needs a fresh manual import — the known cost of the approach.
+
+The run-log line is appended at the true next free row, computed explicitly.
+`append_row(table_range='A1')` treats the first contiguous block as "the table"
+and INSERTS after it, which put five test entries at the TOP of ClaudeCode and
+pushed the history down (repaired from the pre-sync snapshot).
+
+**Take a snapshot before any bulk sheet operation.** `get_all_values(
+value_render_option='FORMULA')` over every tab dumps to JSON in seconds, and it
+is what made both mistakes above cheaply reversible.
+
 **GOOGLEFINANCE cannot price commodities (verified 2026-07-11).** `TVC:GOLD`-style
 formulas return `#N/A`, and so do `CURRENCY:XAUUSD`/`XAGUSD`/`XPTUSD`/`XPDUSD` —
 Google has dropped metals support — while equities (`GOOG`) and FX
