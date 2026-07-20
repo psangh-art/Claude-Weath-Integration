@@ -868,6 +868,17 @@ read this run (`lower`/`upper`), so a wrong level shows up wrong, which is the p
   workbook is NEVER touched. Wired into `pipeline_app_server.js` after all stages
   succeed; failed runs keep their inputs for the re-run. `cleanup_downloads.py`
   itself is still rename-only.
+  - **`purge_flagged_downloads.py` + `Clean Up Downloads.bat` on the Desktop
+    (added 2026-07-20) are the human decision cleanup_downloads.py defers.** They
+    recycle ONLY files whose name begins exactly with the `Delete ` prefix the
+    pipeline itself wrote — nothing is matched on age, size or extension, so a file
+    can never be caught by accident; rename a file with that prefix to have it
+    removed, take the prefix off to spare it. Recycle Bin, never a hard delete, and
+    it lists everything and asks first (`--yes` skips the prompt, `--dry-run` only
+    lists). With no console to confirm on it recycles NOTHING rather than assuming
+    yes. This is the only thing in the repo that removes a user-visible file, which
+    is why the blast radius is kept this narrow — do not widen it to pattern
+    matching.
   - Note: the Amex family matches **`activity.csv` only**. An `activity.xlsx` sitting
     in Downloads is neither read by `spending_summary.py` nor archived — export Amex
     as CSV.
