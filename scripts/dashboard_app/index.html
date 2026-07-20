@@ -835,6 +835,7 @@ const ICONS={
   refresh:'<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v4h-4"/></svg>',
   gem:'<svg viewBox="0 0 24 24"><path d="M6 3.5h12l3.2 5-9.2 12L2.8 8.5z"/><path d="M2.8 8.5h18.4M8.6 3.5l-2.6 5 6 12 6-12-2.6-5M8.6 8.5h6.8"/></svg>',
   calendar:'<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><line x1="3.5" y1="9.5" x2="20.5" y2="9.5"/><line x1="8" y1="3" x2="8" y2="6.5"/><line x1="16" y1="3" x2="16" y2="6.5"/></svg>',
+  chart:'<svg viewBox="0 0 24 24"><path d="M4 4v16h16"/><rect x="7" y="11" width="3" height="6"/><rect x="12" y="7.5" width="3" height="9.5"/><rect x="17" y="13.5" width="3" height="3.5"/></svg>',
 };
 
 /* ---------------------------- app state ---------------------------- */
@@ -860,6 +861,7 @@ const NAV_ITEMS=[
   {id:'watchlist', label:'Watchlist', icon:ICONS.star, enabled:true},
   {id:'payslips', label:'Payslips', icon:ICONS.doc, enabled:true},
   {id:'intelligence', label:'Intelligence', icon:ICONS.pulse, enabled:true},
+  {id:'charting', label:'Charting', icon:ICONS.chart, enabled:true},
   {id:'diary', label:'Diary', icon:ICONS.calendar, enabled:true},
   {id:'design', label:'Design', icon:ICONS.sliders, enabled:true},
   {id:'reports', label:'Reports', icon:ICONS.doc, enabled:false},
@@ -879,7 +881,7 @@ const EXTERNAL_LINKS=[
 const SIZE_LABELS={S:'Small', M:'Medium', L:'Large', XL:'X-Large', XXL:'XX-Large'};
 
 /* ---------------------------- widget definitions ---------------------------- */
-const WIDGET_DEFS={overview:[], portfolio:[], commodities:[], historic:[], watchlist:[], payslips:[], intelligence:[], diary:[], design:[]};
+const WIDGET_DEFS={overview:[], portfolio:[], commodities:[], historic:[], watchlist:[], payslips:[], intelligence:[], charting:[], diary:[], design:[]};
 
 WIDGET_DEFS.overview.push({
   id:'m-portfolio-value', title:'Total Portfolio Value', size:'S', span:3,
@@ -1376,6 +1378,16 @@ function drawDiary(body){
 WIDGET_DEFS.diary.push({
   id:'diary', title:'Dividend Diary', size:'L', span:12,
   mount(body){ drawDiary(body); }
+});
+
+// Charting screen (user request 2026-07-20) — placeholder until its widgets are
+// specified; keeps the screen from rendering an empty grid.
+WIDGET_DEFS.charting.push({
+  id:'charting-placeholder', title:'Charting', size:'L', span:24,
+  mount(body){
+    body.innerHTML='<div class="dim" style="padding:32px;text-align:center">'+
+      'Charting screen — no widgets configured yet.</div>';
+  }
 });
 
 /* ------------------------- Commodities screen ------------------------- */
@@ -1979,8 +1991,9 @@ function mountIndexWidget(body,action,key){
 // the Upload button POSTs a PDF to /api/payslips/upload, which runs payslip_ingest.py
 // and, on success, regenerates the dashboard data so the new row appears immediately.
 
-// Pension annual allowance (user request 2026-07-19). Sits at the TOP of the
-// Payslips screen: what's left this tax year, and the month contributions would
+// Pension annual allowance (user request 2026-07-19; moved to the BOTTOM of the
+// Payslips screen 2026-07-20 via DEFAULT_ORDER). What's left this tax year, and the
+// month contributions would
 // have to stop at the current rate. Every figure is arithmetic on Paul's own
 // payslips — the assumptions it cannot verify (taper, MPAA, contributions paid
 // outside payroll) are listed on the card, not buried, because any one of them
@@ -2386,8 +2399,11 @@ const DEFAULT_ORDER={
   commodities: WIDGET_DEFS.commodities.map(w=>w.id),
   historic: WIDGET_DEFS.historic.map(w=>w.id),
   watchlist: WIDGET_DEFS.watchlist.map(w=>w.id),
-  payslips: WIDGET_DEFS.payslips.map(w=>w.id),
+  // Pension Annual Allowance moved to the BOTTOM (user request 2026-07-20); explicit
+  // order rather than push order so the big allowance widget block needn't be relocated.
+  payslips: ['payslips-summary','payslips-table','payslips-allowance'],
   intelligence: WIDGET_DEFS.intelligence.map(w=>w.id),
+  charting: WIDGET_DEFS.charting.map(w=>w.id),
   diary: WIDGET_DEFS.diary.map(w=>w.id),
   design: WIDGET_DEFS.design.map(w=>w.id),
 };
@@ -2398,7 +2414,9 @@ const DEFAULT_ORDER={
 // would keep the old arrangement for ever.
 // v4 (2026-07-19): Total Income added to the Overview row, so a saved v3 layout
 // would have pinned the old six-card order and never shown it.
-const LAYOUT_KEY='dashboard:layout:v4:';
+// v5 (2026-07-20): Pension Annual Allowance moved to the bottom of Payslips; a saved
+// v4 layout would otherwise keep it pinned at the top.
+const LAYOUT_KEY='dashboard:layout:v5:';
 // Per-widget HEIGHT (size) and WIDTH (span) overrides, set on the Design screen so
 // resizing doesn't need a code change (user request 2026-07-19). Shape: {id:{size,span}}.
 const SIZE_KEY='dashboard:sizes:v1';
@@ -2500,7 +2518,7 @@ function syncThemeButton(){
 
 /* ---------------------------- render: topbar ---------------------------- */
 const GRID_COLS=24;   // 24ths, so a Small can be 1.5 twelfths (3/24)
-const SCREEN_TITLES={overview:'Overview', portfolio:'Portfolio', commodities:'Commodities', historic:'Historic', watchlist:'Watchlist', payslips:'Payslips', intelligence:'Intelligence', diary:'Diary', design:'Design'};
+const SCREEN_TITLES={overview:'Overview', portfolio:'Portfolio', commodities:'Commodities', historic:'Historic', watchlist:'Watchlist', payslips:'Payslips', intelligence:'Intelligence', charting:'Charting', diary:'Diary', design:'Design'};
 // Screens whose content does NOT come from a pipeline run hide the pipeline
 // top-bar buttons: on Payslips they were misleading (user request 2026-07-19) —
 // payslips are loaded from that screen's own Upload button, and neither 'Run' nor
