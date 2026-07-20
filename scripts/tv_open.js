@@ -13,7 +13,7 @@
 // Navigation is a plain window.location.assign to the layout's chart URL, the same
 // approach layoutSwitch() uses, because loadChartFromServer(id) silently no-ops on
 // a numeric layout id.
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { evaluate, getClient } from '../src/connection.js';
@@ -23,6 +23,20 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CDP_HOST = 'localhost';
 const CDP_PORT = 9222;
 const LAUNCH_BAT = path.join(__dirname, 'launch_tv_debug.bat');
+const FOREGROUND_PS1 = path.join(__dirname, 'tv_foreground.ps1');
+
+/**
+ * Raise the TradingView Desktop window to the foreground (user request 2026-07-20).
+ * Best-effort: navigation has already succeeded, so a failure here (window gone,
+ * PowerShell blocked) must not fail the open — just don't present the window.
+ */
+function bringToForeground() {
+  try {
+    spawnSync('powershell',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', FOREGROUND_PS1],
+      { timeout: 10000, stdio: 'ignore', windowsHide: true });
+  } catch { /* presentation is best-effort */ }
+}
 
 /** Is TradingView Desktop reachable over CDP right now? */
 export async function tvAvailable() {
@@ -111,6 +125,10 @@ export async function openChart({ chartId, symbol, layout }) {
       await new Promise(r => setTimeout(r, 800));
       await evaluate(`window.location.assign(${JSON.stringify(url)})`);
     }
+
+    // Present the window — otherwise the layout loads behind the browser/dashboard
+    // and the user has to alt-tab to the chart they just asked to draw on.
+    bringToForeground();
 
     return { ok: true, url, layout: layout || null, symbol: symbol || null };
   } catch (e) {
