@@ -860,6 +860,7 @@ const NAV_ITEMS=[
   {id:'watchlist', label:'Watchlist', icon:ICONS.star, enabled:true},
   {id:'payslips', label:'Payslips', icon:ICONS.doc, enabled:true},
   {id:'intelligence', label:'Intelligence', icon:ICONS.pulse, enabled:true},
+  {id:'diary', label:'Diary', icon:ICONS.calendar, enabled:true},
   {id:'design', label:'Design', icon:ICONS.sliders, enabled:true},
   {id:'reports', label:'Reports', icon:ICONS.doc, enabled:false},
 ];
@@ -878,7 +879,7 @@ const EXTERNAL_LINKS=[
 const SIZE_LABELS={S:'Small', M:'Medium', L:'Large', XL:'X-Large', XXL:'XX-Large'};
 
 /* ---------------------------- widget definitions ---------------------------- */
-const WIDGET_DEFS={overview:[], portfolio:[], commodities:[], historic:[], watchlist:[], payslips:[], intelligence:[], design:[]};
+const WIDGET_DEFS={overview:[], portfolio:[], commodities:[], historic:[], watchlist:[], payslips:[], intelligence:[], diary:[], design:[]};
 
 WIDGET_DEFS.overview.push({
   id:'m-portfolio-value', title:'Total Portfolio Value', size:'S', span:3,
@@ -1370,8 +1371,12 @@ function drawDiary(body){
     DIARY.month=nm; drawDiary(body);
   }));
 }
-/* Dividend Diary is registered on the Intelligence screen (see below, next to
-   Relevant News) — the two are the same dividend/income theme (moved 2026-07-20). */
+// Dividend Diary — month calendar of dividend / ex-dividend dates, on its own
+// dedicated Diary screen (user request 2026-07-20).
+WIDGET_DEFS.diary.push({
+  id:'diary', title:'Dividend Diary', size:'L', span:12,
+  mount(body){ drawDiary(body); }
+});
 
 /* ------------------------- Commodities screen ------------------------- */
 // One Small card per commodity (user request 2026-07-20), read from
@@ -2251,12 +2256,7 @@ WIDGET_DEFS.intelligence.push({
   }
 });
 
-// Dividend Diary — month calendar of dividend / ex-dividend dates (moved here from
-// Overview 2026-07-20, user request). Sits with Relevant News, its dividend-theme kin.
-WIDGET_DEFS.intelligence.push({
-  id:'diary', title:'Dividend Diary', size:'L', span:12,
-  mount(body){ drawDiary(body); }
-});
+// Dividend Diary lives on its own dedicated Diary screen (user request 2026-07-20).
 
 /* ---------------------- Design (Widgets — order control for every screen) ---------------------- */
 WIDGET_DEFS.design.push({
@@ -2388,6 +2388,7 @@ const DEFAULT_ORDER={
   watchlist: WIDGET_DEFS.watchlist.map(w=>w.id),
   payslips: WIDGET_DEFS.payslips.map(w=>w.id),
   intelligence: WIDGET_DEFS.intelligence.map(w=>w.id),
+  diary: WIDGET_DEFS.diary.map(w=>w.id),
   design: WIDGET_DEFS.design.map(w=>w.id),
 };
 
@@ -2499,7 +2500,7 @@ function syncThemeButton(){
 
 /* ---------------------------- render: topbar ---------------------------- */
 const GRID_COLS=24;   // 24ths, so a Small can be 1.5 twelfths (3/24)
-const SCREEN_TITLES={overview:'Overview', portfolio:'Portfolio', commodities:'Commodities', historic:'Historic', watchlist:'Watchlist', payslips:'Payslips', intelligence:'Intelligence', design:'Design'};
+const SCREEN_TITLES={overview:'Overview', portfolio:'Portfolio', commodities:'Commodities', historic:'Historic', watchlist:'Watchlist', payslips:'Payslips', intelligence:'Intelligence', diary:'Diary', design:'Design'};
 // Screens whose content does NOT come from a pipeline run hide the pipeline
 // top-bar buttons: on Payslips they were misleading (user request 2026-07-19) —
 // payslips are loaded from that screen's own Upload button, and neither 'Run' nor
