@@ -406,7 +406,7 @@ const server = http.createServer((req, res) => {
     fs.readFile(ARCH_HTML, 'utf-8', (e, html) => {
       if (e) { res.writeHead(404); res.end('Architecture view not available.'); return; }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(html);
+      res.end(injectBackToDashboard(html));
     });
     return;
   }
