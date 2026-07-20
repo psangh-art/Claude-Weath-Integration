@@ -1075,6 +1075,21 @@ Three user requests, all committed:
     the only thing that helps a tab the user opened by hand in their everyday Chrome.
     The cost Paul accepted: the dashboard runs in a profile signed into nothing.
 
+- **A SERVER MUST BIND ITS PORT BEFORE DOING ANY STARTUP WORK THAT WRITES TO DISK
+  (2026-07-20).** `Run Investment Dashboard.bat` started `dashboard_server.js`
+  unconditionally, so relaunching it while one was already up died with a raw
+  `EADDRINUSE` stack trace on 4600 — and because `regenerate('startup')` ran BEFORE
+  `server.listen()`, the instance that was about to die had already rewritten the
+  dashboard JSON, racing the live server that owns those files. Now the bat
+  port-checks 4600 exactly as it already did 4590 (curl, reuse the running one and
+  close the window), and the server binds FIRST, regenerating only from inside the
+  `listen` callback, with an `error` handler that reports EADDRINUSE in plain English
+  and exits 0. Both paths tested: cold start binds → regenerates → serves 200; a
+  second launch reuses the live server and leaves its data alone. **Any new
+  long-running server here (the Production Centre included) should follow the same
+  order — bind, then do startup work** — otherwise a duplicate launch corrupts the
+  running instance's state on its way out.
+
 ## Dashboard: income-fund positions, real dividend dates, Fidelity-accounts total (2026-07-19)
 
 - **Total Portfolio Value and the Portfolio Value Over Time series read Wealth Summary
