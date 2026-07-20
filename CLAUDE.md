@@ -559,6 +559,19 @@ drawer), out to an **output bay** linking the built products. Front end is
 `app-developer` agent (`.claude/agents/app-developer.md`) owns this front end** —
 route it any UI/presentation change; it's scoped away from pipeline logic.
 
+**It shares the Dashboard's `shell > rail + main > topbar + content` shell
+(2026-07-20, commit 36472e2)** — the second half of the reskin whose palette match
+shipped earlier. The rail's classes and tokens (`--bg-rail`, `--accent-soft`, the
+≤960px icon-only collapse) are copied from `dashboard_app/index.html` so the two
+apps read as one system; both files stay deliberately self-contained, so a change
+to one shell has to be mirrored by hand. **It is still a SINGLE live page** — the
+rail items scroll to the four panels (Progress / Input feedstock / Production line /
+Output bay) with an IntersectionObserver scrollspy, and must NOT be turned into
+separate screens: the user watches feedstock, stages and products together while a
+run is in flight. The Links group and the Output Bay tiles read the same `/products`
+response, so an unconfigured product (e.g. no `productWebLinks.architecturePptx`)
+shows `.disabled` rather than 404ing.
+
 Server routes beyond `/` + SSE `/events` + `POST /run`: `/files` (preflight status
 on load), `/products` (built-product availability + links), `/deck` (in-Chrome
 gallery of the review deck), and `/asset?p=` (image proxy for the gallery,
@@ -1427,9 +1440,51 @@ drives it and `GET /api/tradingview-status` reports reachability.
 - **TradingView Desktop must be running with `--remote-debugging-port=9222`.** It is
   NOT by default — the app can be open (it was, PID 4044) with the port closed. The
   route returns a 503 and a plain-English message saying exactly that rather than
-  hanging or throwing. **The happy path has not been exercised end to end yet**: doing
-  so needs TradingView relaunched with the debug port, which would drop the user's
-  running session, so it was left for them to confirm.
+  hanging or throwing. ~~The happy path has not been exercised end to end yet~~ —
+  **VERIFIED end to end 2026-07-20**: with TradingView Desktop up on 9222, clicking
+  WEIR drove it to `chart/Ulo7OOqy/?symbol=LSE:WEIR` (confirmed by reading the app's
+  own CDP target list), and the UI reported success.
+
+### EVERY chart link opens the DESKTOP app, not the browser (2026-07-20)
+
+The user reported layout links "opening the browser version of TradingView". Only the
+'Charts to mark up' chips had ever used the desktop path — the **📊 cell in the
+Watchlist and Portfolio-Holdings tables** was still a plain `<a target="_blank">` to
+tradingview.com. Both tables now render the same button, and `chartLinkCell()` /
+`chartOpenButton()` in `dashboard_app/index.html` are the single implementation so the
+two can't drift apart again. Three things this needed:
+
+- **The manifest and the workbook disagree about what a ticker is called.**
+  `layout_manifest_tmp.json` carries TradingView's SYMBOL (`PALLADIUM`, `COPPER1!`,
+  `BT.A`); the table rows are built from workbook columns carrying the SHEET ticker
+  (`PALL`, `COPP`, `BT-A`). `dashboard_data._layout_by_ticker()` (now shared by the
+  watchlist, the holdings and the mark-up chips — it was inlined in the activity
+  builder before) keys entries under BOTH, via `_master_key()` →
+  `ticker_normalize.normalize()`, dash-normalized so `BT.A`/`BT-A` are one key.
+  Keying on the raw symbol alone silently drops every commodity and class-suffix row
+  to a browser link — that's what PALL and PLAT were doing.
+- **A ticker can be captured in SEVERAL layouts** (GLEN is in both 'FT100 Mining' and
+  'FT100 Support Services 2'; 19 tickers are duplicated). The manifest's LAST entry
+  wins, which is what the chips have always done — an early version of the shared
+  helper used `setdefault` and silently moved GLEN to a different layout. A raw-symbol
+  match beats a derived master-ticker one. Don't change either without checking the
+  chips.
+- **A row the manifest missed can still open in the desktop app.** The workbook's own
+  hyperlink is `=HYPERLINK(".../chart/<chartId>/","📊 Layout")`, so `chartIdFromUrl()`
+  parses the layout id straight out of `chart_url` — that's how AV. and AUTO (both
+  absent from the current capture) still get a desktop button. Only a `/chart/<id>/`
+  form qualifies; a bare `?symbol=` link has no layout to load and stays a browser
+  link.
+
+A click's result is reported in a floating **toast** (new `toast()` + `.toast` CSS):
+the chips' widget-local message line is off-screen from most rows of a long scrolling
+table. The delegated `[data-tv-chart]` click handler is on `document` because these
+tables re-render on every sort/filter.
+
+**Still absent from the capture manifest: AV. (Aviva) and AUTO (Auto Trader)** — 352
+panes over 84 layouts, and neither appears (nor in `channel_results_tmp.json`). They
+fall back to the workbook's chart id so the link works, but if they've genuinely
+dropped out of the captured layouts that's worth a look on the next run.
 
 ## Codebase banner + consolidation pass (2026-07-19)
 

@@ -13,12 +13,17 @@ TradingView last price), and derive every percentage ourselves. Never trust a fo
 cell's value here.
 """
 import os
+import sys
 import json
 import sqlite3
 import datetime
 import openpyxl
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:      # importable from any cwd, incl. as a module
+    sys.path.insert(0, SCRIPT_DIR)
+import ticker_normalize             # noqa: E402  (needs the path above)
+
 REPO = os.path.dirname(SCRIPT_DIR)
 WORKBOOK = os.path.join(os.path.expanduser('~'), 'Downloads', 'Stocks_Buy_Strategy.xlsx')
 HISTORY_DB = os.path.join(REPO, 'data', 'history.db')
@@ -337,6 +342,74 @@ def _tv_url(cell):
     return None
 
 
+_LAYOUT_BY_TICKER = None
+
+
+def _layout_by_ticker():
+    """ticker -> the SAVED LAYOUT it was captured in, from the capture manifest —
+    the only place that mapping exists. Every chart link in the dashboard uses it
+    to drive TradingView DESKTOP (the point is to land on the layout ready to draw
+    on, which a browser tab can't do); a ticker with no captured layout falls back
+    to its browser chart_url. Read once — the manifest doesn't change mid-run.
+
+    Keyed under BOTH the raw TradingView symbol and its normalized master-sheet
+    ticker, because the two sides disagree: the manifest carries TradingView's
+    symbol ('PALLADIUM', 'COPPER1!', 'BT.A') while the workbook rows the tables are
+    built from carry the sheet ticker ('PALL', 'COPP', 'BT-A'). Keying on the raw
+    symbol alone silently drops every commodity and class-suffix row to a browser
+    link.
+
+    A ticker can be captured in SEVERAL layouts (GLEN is in both 'FT100 Mining' and
+    'FT100 Support Services 2'); the last one in the manifest wins, which is what
+    the Activity chips have always done — don't change that to first-wins here or
+    existing chips silently jump layout. A raw-symbol match always beats a derived
+    master-ticker one.
+    """
+    global _LAYOUT_BY_TICKER
+    if _LAYOUT_BY_TICKER is None:
+        by_raw, by_master = {}, {}
+        lm_path = os.path.join(SCRIPT_DIR, 'layout_manifest_tmp.json')
+        if os.path.exists(lm_path):
+            try:
+                for e in json.load(open(lm_path, encoding='utf-8')):
+                    raw = str(e.get('ticker') or '').strip().upper()
+                    if not (raw and e.get('chartId')):
+                        continue
+                    entry = {'chart_id': e['chartId'], 'layout': e.get('name'),
+                             'layout_id': e.get('id')}
+                    by_raw[raw] = entry
+                    master = _master_key(e.get('ticker'))
+                    if master:
+                        by_master[master] = entry
+            except (ValueError, OSError):
+                pass
+        _LAYOUT_BY_TICKER = {**by_master, **by_raw}
+    return _LAYOUT_BY_TICKER
+
+
+def _master_key(ticker):
+    """A ticker in master-sheet form, dash-normalized (BT.A and BT-A are one key —
+    the same equivalence ticker_normalize.master_tickers_match applies)."""
+    if not ticker:
+        return None
+    try:
+        info = ticker_normalize.normalize(ticker)
+    except Exception:
+        info = None
+    master = (info or {}).get('master_ticker') or str(ticker)
+    return master.strip().upper().replace('.', '-') or None
+
+
+def _layout_for(ticker):
+    """The layout dict for a ticker, or {} — spread into a row so the front end can
+    open it in TradingView Desktop."""
+    if not ticker:
+        return {}
+    lookup = _layout_by_ticker()
+    return (lookup.get(str(ticker).strip().upper())
+            or lookup.get(_master_key(ticker)) or {})
+
+
 def _read_soi_band(soi, soif, band_substring, base, latest, changes=None):
     """Read one 'Stocks of Interest' section-table band (e.g. 'AT LOWER BOUNDARY')
     into dashboard watchlist row dicts. Returns [] if that band isn't found on the
@@ -382,6 +455,7 @@ def _read_soi_band(soi, soif, band_substring, base, latest, changes=None):
             'notes': soi.cell(r, SOI_NOTES).value,
             'last_updated': updated.strftime('%Y-%m-%d') if isinstance(updated, datetime.datetime) else updated,
             'chart_url': _tv_url(soif.cell(r, SOI_TV).value),
+            **_layout_for(ticker),
         })
         r += 1
     return rows
@@ -716,6 +790,7 @@ def build(workbook=WORKBOOK):
             'diff_to_low_pct': round(diff_low, 2) if diff_low is not None else None,
             'alert_high': high,
             'chart_url': _tv_url(invf.cell(r, I_TV).value) if r else None,
+            **_layout_for(ticker),
         })
     investments.sort(key=lambda x: (-(x['holdings'] or 0)))
 
@@ -1188,22 +1263,6 @@ def build(workbook=WORKBOOK):
         url = _tv_url(invf.cell(r, I_TV).value)
         if tkr and url:
             tv_by_ticker[str(tkr).strip().upper()] = url
-    # ticker -> the SAVED LAYOUT it was captured in. The Activity widget opens the
-    # layout in TradingView Desktop (user request 2026-07-19), which needs the chart
-    # url slug; the capture manifest is the only place that mapping exists.
-    layout_by_ticker = {}
-    lm_path = os.path.join(SCRIPT_DIR, 'layout_manifest_tmp.json')
-    if os.path.exists(lm_path):
-        try:
-            for e in json.load(open(lm_path, encoding='utf-8')):
-                t = str(e.get('ticker') or '').strip().upper()
-                if t and e.get('chartId'):
-                    layout_by_ticker[t] = {'chart_id': e['chartId'],
-                                           'layout': e.get('name'),
-                                           'layout_id': e.get('id')}
-        except (ValueError, OSError):
-            pass
-
     unmarked, inherited = [], []
     cr_path = os.path.join(SCRIPT_DIR, 'channel_results_tmp.json')
     if os.path.exists(cr_path):
@@ -1213,7 +1272,7 @@ def build(workbook=WORKBOOK):
             if 'no channel or trend line found near price' in reason:
                 key = str(t).strip().upper()
                 unmarked.append({'ticker': t, 'chart_url': tv_by_ticker.get(key),
-                                 **layout_by_ticker.get(key, {})})
+                                 **_layout_for(t)})
             elif 'axis' in reason:
                 inherited.append(t)
     below_tickers = [w['ticker'] for w in watchlist if (w.get('proximity_pct') is not None and w['proximity_pct'] <= 0)]

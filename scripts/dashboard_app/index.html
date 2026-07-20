@@ -348,6 +348,19 @@ tbody tr:hover{background:var(--panel-2)}
 .chart-link{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;
   text-decoration:none;background:var(--panel-3);font-size:12px}
 .chart-link:hover{background:var(--accent-soft)}
+/* The desktop-opening variant is a <button>; keep it visually identical to the
+   anchor so a row with a captured layout doesn't look different from one without. */
+button.chart-link{border:0;padding:0;color:inherit;font:inherit;cursor:pointer;line-height:1}
+button.chart-link:disabled{opacity:.45;cursor:default}
+
+/* ============================== TOAST ============================== */
+.toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:60;
+  max-width:min(560px,92vw);padding:10px 16px;border-radius:10px;
+  background:var(--panel-2);color:var(--text);border:1px solid var(--line);
+  box-shadow:var(--shadow);font-size:13px;
+  opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.toast.is-err{border-color:var(--danger);background:var(--danger-soft)}
 .dim{color:var(--faint)}
 .trunc{display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
 .rating-buy{color:var(--success)} .rating-sell{color:var(--danger)} .rating-neutral{color:var(--muted)}
@@ -566,6 +579,74 @@ function fmtDateTime(iso){
 function truncCell(text,maxWidth){
   if(!text) return '<span class="dim">—</span>';
   return '<span class="trunc" style="max-width:'+(maxWidth||180)+'px" title="'+escapeHtml(text)+'">'+escapeHtml(text)+'</span>';
+}
+
+/* ------------------------- TradingView chart links -------------------------
+   EVERY chart link in the app opens the SAVED LAYOUT in TradingView DESKTOP —
+   the point is to land on the layout ready to draw on, which a browser tab
+   can't do. A row only falls back to the browser url when the capture manifest
+   has no layout for that ticker (chart_id absent). One helper so the tables and
+   the 'Charts to mark up' chips can't drift apart again. */
+function chartLinkCell(row){
+  if(!row) return '<td><span class="dim">—</span></td>';
+  const id=row.chart_id||chartIdFromUrl(row.chart_url);
+  if(id) return '<td>'+chartOpenButton({...row, chart_id:id},'📊')+'</td>';
+  if(row.chart_url) return '<td><a class="chart-link" href="'+escapeHtml(row.chart_url)+
+    '" target="_blank" rel="noopener" title="No layout id for this ticker — opens TradingView in the browser">📊</a></td>';
+  return '<td><span class="dim">—</span></td>';
+}
+// The workbook's own chart hyperlink is =HYPERLINK(".../chart/<chartId>/","📊 Layout"),
+// so a row the capture manifest missed can still be opened in the DESKTOP app —
+// the layout id is right there in the url. Only a /chart/<id>/ form qualifies; a
+// bare ?symbol= link has no layout to load.
+function chartIdFromUrl(url){
+  const m=/\/chart\/([A-Za-z0-9]+)\/?/.exec(url||'');
+  return m?m[1]:null;
+}
+function chartOpenButton(row,label){
+  return '<button class="chart-link" data-tv-chart="'+escapeHtml(row.chart_id)+
+    '" data-tv-ticker="'+escapeHtml(row.ticker||'')+'" data-tv-layout="'+escapeHtml(row.layout||'')+
+    '" title="Open '+escapeHtml(row.layout||'this layout')+' in TradingView Desktop">'+label+'</button>';
+}
+// Delegated: the tables re-render on every sort/filter, so per-row listeners
+// would have to be re-wired each time.
+document.addEventListener('click',async(ev)=>{
+  const btn=ev.target.closest&&ev.target.closest('[data-tv-chart]');
+  if(!btn) return;
+  const chart_id=btn.dataset.tvChart, ticker=btn.dataset.tvTicker, layout=btn.dataset.tvLayout;
+  btn.disabled=true;
+  const before=btn.title;
+  btn.title='Opening '+(layout||ticker)+' in TradingView…';
+  try{
+    const r=await fetch('/api/open-chart',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({chart_id:chart_id, ticker:ticker, layout:layout})});
+    const out=await r.json();
+    toast(out.ok ? (ticker+' → '+(layout||'layout')+' is open in TradingView Desktop.')
+                 : (out.error||'Could not open the chart.'), !out.ok);
+  }catch(e){
+    toast(String((e&&e.message)||e), true);
+  }finally{
+    btn.disabled=false; btn.title=before;
+  }
+});
+
+/* A chart link can be anywhere in a long scrolling table, so the result of the
+   click is reported in a floating toast rather than next to the row (the widget
+   -local message line the chips use is off-screen from most rows). */
+let _toastTimer=null;
+function toast(text,isErr){
+  let el=document.getElementById('toast');
+  if(!el){
+    el=document.createElement('div');
+    el.id='toast'; el.className='toast';
+    document.body.appendChild(el);
+  }
+  el.textContent=text;
+  el.classList.toggle('is-err',!!isErr);
+  el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(()=>el.classList.remove('show'), isErr?9000:4000);
 }
 
 /* ---------------------------- small SVG kit ---------------------------- */
@@ -1272,7 +1353,7 @@ WIDGET_DEFS.portfolio.push({
           '<td>'+sourceBadge(r.alert_low_source)+'</td>'+
           '<td class="num">'+proximityChip(r.diff_to_low_pct)+'</td>'+
           '<td class="money-flat num">'+fmtPrice(r.alert_high,r.price_unit)+'</td>'+
-          '<td>'+(r.chart_url?'<a class="chart-link" href="'+escapeHtml(r.chart_url)+'" target="_blank" rel="noopener" title="Open TradingView chart">📊</a>':'<span class="dim">—</span>')+'</td>'+
+          chartLinkCell(r)+
           '</tr>';
       }).join('');
       scroll.innerHTML='<table><thead>'+headerRow(invCols,UI.holdings.invSort)+'</thead><tbody>'+
@@ -1614,7 +1695,7 @@ WIDGET_DEFS.watchlist.push({
           '<td class="money-flat num">'+fmtMoney(r.target_value,2)+'</td>'+
           '<td>'+truncCell(r.notes,220)+'</td>'+
           '<td class="mono">'+fmtDate(r.last_updated)+'</td>'+
-          '<td>'+(r.chart_url?'<a class="chart-link" href="'+escapeHtml(r.chart_url)+'" target="_blank" rel="noopener" title="Open TradingView chart">📊</a>':'<span class="dim">—</span>')+'</td>'+
+          chartLinkCell(r)+
           '</tr>';
       }).join('');
       scroll.innerHTML='<table><thead>'+headerRow()+'</thead><tbody>'+
