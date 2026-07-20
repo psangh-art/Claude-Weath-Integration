@@ -27,6 +27,20 @@ const PYTHON = process.env.PYTHON || 'python';
 const REPO_ROOT = path.join(__dirname, '..');
 const REVIEW_GALLERY = path.join(__dirname, 'pipeline_app', 'review_deck.html');
 
+// A floating "Back to Dashboard" link injected into the rendered deck views at serve
+// time (user request 2026-07-20). Done here, not in the render script, so it survives
+// every deck regeneration and needs no rebuild. Self-contained inline styles so it
+// can't be affected by — or affect — the deck's own CSS.
+const BACK_TO_DASH_HTML =
+  '<a href="/" style="position:fixed;top:14px;left:14px;z-index:9999;background:#16203a;'
+  + 'color:#e8ecf5;border:1px solid #263353;border-radius:8px;padding:8px 14px;'
+  + 'font:600 13px system-ui,Segoe UI,Arial,sans-serif;text-decoration:none;'
+  + 'box-shadow:0 4px 14px rgba(0,0,0,.3)">&larr; Back to Dashboard</a>';
+function injectBackToDashboard(html) {
+  if (/<body[^>]*>/i.test(html)) return html.replace(/<body[^>]*>/i, m => m + BACK_TO_DASH_HTML);
+  return BACK_TO_DASH_HTML + html;
+}
+
 // In-app readable view of the architecture deck. No slide renderer is available,
 // so a raw .pptx link only downloads the file — render_architecture_html.py lays
 // the SAME .pptx out as HTML instead. Regenerated lazily when the .pptx is newer
@@ -405,7 +419,7 @@ const server = http.createServer((req, res) => {
     fs.readFile(ALERTRULES_HTML, 'utf-8', (e, html) => {
       if (e) { res.writeHead(404); res.end('Alert Rules view not available.'); return; }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(html);
+      res.end(injectBackToDashboard(html));
     });
     return;
   }

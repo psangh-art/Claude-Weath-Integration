@@ -25,6 +25,7 @@ import shutil
 
 import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 WORKBOOK = os.path.join(os.path.expanduser('~'), 'Downloads', 'Stocks_Buy_Strategy.xlsx')
 SHEET = 'Payslip Summary'
@@ -35,12 +36,14 @@ ARCHIVE = os.path.join(REPO, 'data', 'payslips')
 # Column -> the labels a payslip might use for it, tried in order. Kept as data so a
 # new payroll layout is a one-line addition rather than a code change.
 FIELD_LABELS = {
-    'gross':       ['gross pay', 'total gross pay', 'gross salary', 'total payments'],
+    'gross':       ['gross pay', 'total gross pay', 'gross salary', 'total payments',
+                    'salary'],
     'pension_ee':  ['pension ee', 'employee pension', 'pension (employee)',
-                    'salary sacrifice', 'pension sacrifice'],
+                    'salary sacrifice', 'pension sacrifice', 'scottish widows ee',
+                    'ee %'],
     'pension_er':  ['pension er', 'employer pension', 'pension (employer)',
                     'employers pension', "employer's pension"],
-    'bonus':       ['bonus'],
+    'bonus':       ['bonus', 'employee referral', 'referral'],
     'taxable_pay': ['taxable pay', 'taxable gross'],
     'paye':        ['paye', 'paye tax', 'income tax', 'tax paid'],
     'ni':          ['national insurance', 'ni contribution', 'nic', 'employee ni'],
@@ -84,13 +87,53 @@ def _money_after(line, label):
     return float(m.group(0).replace(',', '')) if m else None
 
 
+def _period_lines(text):
+    """Only the THIS-PERIOD lines. Everything under a 'CUMULATIVE YEAR TO DATE' header,
+    and any 'YTD ...' line, carries the year-to-date totals — reading those as the
+    period figure is exactly how gross came out as the YTD 'Total Gross Payments'
+    instead of this month's salary. Drop them so the period scan can't reach them."""
+    out = []
+    for l in text.splitlines():
+        s = l.strip()
+        if not s:
+            continue
+        if 'cumulative year to date' in s.lower():
+            break
+        if s.lower().startswith('ytd'):
+            continue
+        out.append(s)
+    return out
+
+
+def _columnar_summary(lines):
+    """Some payslips print the pay summary as a header ROW of column names with the
+    values on the NEXT row (so _money_after finds nothing beside the label — this is
+    why 'Net Pay' couldn't be read). Detect the header carrying both 'gross pay' and
+    'net pay' and take the money tokens off the following line by position:
+    Gross | PAYE | NIC | Others | Net. Gross is deliberately NOT taken here — it's the
+    post-sacrifice figure; the sheet's Gross Salary comes from the 'Salary' pay line."""
+    for i in range(len(lines) - 1):
+        low = lines[i].lower()
+        if 'gross pay' in low and 'net pay' in low and 'paye' in low:
+            nums = MONEY.findall(lines[i + 1])
+            if len(nums) == 5:
+                v = [float(n.replace(',', '')) for n in nums]
+                return {'paye': v[1], 'ni': v[2], 'net': v[4]}
+            break
+    return {}
+
+
 def extract_fields(path):
     """Best-effort field extraction. Returns (fields, text, missing)."""
     text = pdf_text(path)
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    lines = _period_lines(text)
 
     fields = {}
+    # The two-line summary block is the only place Net Pay appears with its value.
+    fields.update(_columnar_summary(lines))
     for key, labels in FIELD_LABELS.items():
+        if key in fields:
+            continue
         for label in labels:
             for line in lines:
                 if label in line.lower():
@@ -100,6 +143,11 @@ def extract_fields(path):
                         break
             if key in fields:
                 break
+
+    # Salary-sacrifice pension is quoted negative in the Payments column; the sheet
+    # records the magnitude.
+    if fields.get('pension_ee'):
+        fields['pension_ee'] = abs(fields['pension_ee'])
 
     # Pay date: the latest date on the page that isn't in the future
     today = datetime.date.today()
@@ -117,9 +165,8 @@ def extract_fields(path):
 
     if fields.get('pension_ee') and fields.get('pension_er'):
         fields['pension_total'] = round(fields['pension_ee'] + fields['pension_er'], 2)
-    if fields.get('paye') is not None and fields.get('ni') is not None:
-        fields['deductions'] = round(fields['paye'] + fields['ni']
-                                     + (fields.get('pension_ee') or 0), 2)
+    # Taxable Pay and Total Deductions are written as FORMULAS by append_row (to match
+    # the neighbour rows), so they are deliberately NOT computed as values here.
     if fields.get('pay_date'):
         fields['tax_year'] = tax_year_of(fields['pay_date'])
 
@@ -214,10 +261,29 @@ def append_row(fields, workbook=WORKBOOK, dry_run=False):
     ws.cell(row=target, column=1, value=pay_date.strftime('%d/%m/%Y'))
     ws.cell(row=target, column=2, value=tax_year)
     for i, key in enumerate(COLS[2:], start=3):
+        if key in ('taxable_pay', 'deductions'):
+            continue  # written as formulas below, to match the neighbour rows
         val = fields.get(key)
         if val is not None:
             ws.cell(row=target, column=i, value=val)
+    # Taxable Pay = Gross − Pension(EE); Total Deductions = PAYE + NI (col 8 and 11).
+    ws.cell(row=target, column=8, value=f'=C{target}-D{target}')
+    ws.cell(row=target, column=11, value=f'=I{target}+J{target}')
     _row_style(ws, target, template + (1 if template >= target else 0))
+
+    # Extend the band's TOTAL SUM ranges to cover the inserted row. openpyxl does NOT
+    # adjust formulas on insert, so the tax-year TOTAL would otherwise keep summing the
+    # old range and silently leave the new payslip out. The TOTAL sat at band_end and
+    # was pushed down one row by the insert. (Payslips always land in the latest — last
+    # — band, so bands below aren't a concern.)
+    if band_end is not None:
+        total_row = band_end + 1
+        first, last = band_start + 1, total_row - 1
+        for c in range(3, len(COLS) + 1):
+            cell = ws.cell(row=total_row, column=c)
+            if isinstance(cell.value, str) and cell.value.upper().startswith('=SUM('):
+                lc = get_column_letter(c)
+                cell.value = f'=SUM({lc}{first}:{lc}{last})'
 
     backup = workbook + '.bak-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     shutil.copyfile(workbook, backup)

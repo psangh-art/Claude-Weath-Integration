@@ -842,7 +842,7 @@ const DATA={overview:null, portfolio:null, historic:null, watchlist:null, target
 const UI={
   screen:'overview',   // always open on Overview (user request 2026-07-18), regardless of last-viewed
   editMode:false,
-  chart:{timeframe:'ALL'},
+  chart:{timeframe:'1Y'},
   holdings:{tab:'investments',
     invSort:{key:'name',dir:'asc'}, incSort:{key:'name',dir:'asc'}, filter:''},
   sold:{sort:{key:'sell_date',dir:'desc'}, filter:''},
@@ -1048,7 +1048,7 @@ WIDGET_DEFS.overview.push({
 WIDGET_DEFS.overview.push({
   id:'value-over-time', title:'Portfolio Value Over Time', size:'M', span:6,
   mount(body,action){
-    const frames=['3M','6M','YTD','1Y','ALL'];
+    const frames=['3M','6M','9M','1Y'];
     action.innerHTML='<div class="seg">'+frames.map(f=>'<button data-tf="'+f+'" class="'+(UI.chart.timeframe===f?'active':'')+'">'+f+'</button>').join('')+'</div>';
     action.querySelectorAll('button').forEach(btn=>{
       btn.addEventListener('click',()=>{
@@ -1068,12 +1068,8 @@ WIDGET_DEFS.overview.push({
       let start=0;
       if(tf==='3M') start=Math.max(0,n-3);
       else if(tf==='6M') start=Math.max(0,n-6);
+      else if(tf==='9M') start=Math.max(0,n-9);
       else if(tf==='1Y') start=Math.max(0,n-12);
-      else if(tf==='YTD'){
-        const year=String(new Date().getFullYear());
-        const idx=labels.findIndex(l=>l.indexOf(year)!==-1);
-        start=idx===-1?0:idx;
-      }
       return {labels:labels.slice(start), values:values.slice(start)};
     }
     function draw(){

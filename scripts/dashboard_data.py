@@ -898,18 +898,24 @@ def build(workbook=WORKBOOK):
             continue
         # Only ACTUALS: the Wealth Summary carries forward-projected future months,
         # which would draw a misleading flat line past today. Cap at the current month.
+        mkey = None
         parts = str(label).split()
         if len(parts) == 2 and parts[0] in _MON and parts[1].isdigit():
             yr, mo = int(parts[1]), _MON[parts[0]]
             if (yr, mo) > (now.year, now.month):
                 continue
+            mkey = (yr, mo)
         invest_sum = _num(ws.cell(WS_FIDELITY_TOTAL_ROW, c).value) or 0.0
         if invest_sum <= 0:
             continue  # drop empty / future months with no data
-        months.append({'col': c, 'label': str(label), 'value': round(invest_sum, 2)})
-    value_over_time = {'labels': [m['label'] for m in months],
-                       'portfolio': [m['value'] for m in months]}
+        months.append({'col': c, 'label': str(label), 'value': round(invest_sum, 2), 'key': mkey})
     last_col = months[-1]['col'] if months else 4
+    # The chart DROPS the current month: the snapshot lands mid-month, so its Fidelity
+    # total is a partial figure that would drag the line down at the right edge. last_col
+    # still points at that latest actual month for the cash fallback below.
+    chart_months = [m for m in months if m['key'] != (now.year, now.month)]
+    value_over_time = {'labels': [m['label'] for m in chart_months],
+                       'portfolio': [m['value'] for m in chart_months]}
     # Cash: the broker export is authoritative (it includes the cash held INSIDE each
     # ISA/SIPP). The Wealth Summary's standalone Cash Account rows are the fallback.
     cash_available, cash_rows = _fidelity_cash()
