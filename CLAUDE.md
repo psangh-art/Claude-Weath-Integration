@@ -1486,6 +1486,53 @@ panes over 84 layouts, and neither appears (nor in `channel_results_tmp.json`). 
 fall back to the workbook's chart id so the link works, but if they've genuinely
 dropped out of the captured layouts that's worth a look on the next run.
 
+## Dashboard metrics batch (2026-07-20)
+
+- **THE BROKER EXPORTS LIVE IN `~/Downloads/old_pipeline/` AFTER A SUCCESSFUL RUN —
+  read them from there too.** `consume_input_files.py` ARCHIVES the newest of each
+  export out of Downloads once a run succeeds (one canonical copy each, by design).
+  `dashboard_data.py` only ever looked in Downloads, so from the moment the 18 Jul
+  export was consumed every broker-backed figure silently fell back: **Cash Available
+  £384,106 → £79** (the Wealth Summary's three standalone Cash Account rows — it
+  misses the cash inside every ISA/SIPP), **Holdings 12 → 6** (back to the stale
+  workbook `Holdings (£)` column), and the income funds lost their real dividend
+  dates. Nothing errored; the fallbacks are all legitimate-looking. `EXPORT_DIRS` +
+  `_export_path()` now resolve Downloads FIRST, archive second, and `_fund_income_events`
+  scans both (archive first, so a fresher Downloads row wins the most-recent check).
+  **Any new reader of a broker export must use `_export_path`, not a raw Downloads
+  join** — and a "the figure looks like the fallback" bug should send you here first.
+- **`pct_of_portfolio` is ALREADY a percentage.** The Cash Available card multiplied
+  it by 100 again. It was invisible at £79 (0.21% → shown as '0.00%') and would have
+  read **1,021%** with the real number restored, ring filled solid.
+- **Total Income double-counted the accumulation funds, and the fix redefines Monthly
+  Dividend.** `monthly_dividend` included `share_accum_monthly`, and `total_income`
+  was `monthly_dividend + share_accum_monthly` — £26,088 against a true £21,707. Now:
+  **Monthly Dividend = income PAID OUT** (income funds + stocks-and-shares dividends,
+  each shown as its own line on the card, user request 2026-07-20); **Accumulative
+  Fund Income** keeps the reinvested income; **Total Income = the two of them**, which
+  is what the widget always claimed. Two downstream reads are deliberately pinned to
+  the TOTAL so the split didn't silently narrow them: `targets.income_per_month` and
+  `portfolio.income_summary.total_monthly_income` (both still £21,707).
+- **Gain card: year-to-date figure + a 6-month sparkline** (user request). The spark
+  plots monthly MOVES, not the value line — this is the gain card and the value trend
+  has its own widget. Both figures END on the same month as the headline (the last
+  month with fresh data, currently Jun), so the card can't read as two different
+  dates. The YTD baseline is last December when the sheet carries it, otherwise the
+  first month of this year — the series currently starts at Jan 2026, so 'since the
+  start of the year' really means 'since the January figure' and the caveat names
+  both months.
+- **Total Income YTD is a RUN-RATE, and says so.** No month-by-month income history
+  is exported anywhere, so it is the current monthly total × months elapsed — the
+  same basis as the annual figure beside it. If real actuals are wanted, they'd have
+  to come out of the spending pivots.
+- **New 'Strategic Holdings' small widget** — total £ in `Type = 'Strategic'`
+  positions (£111,655 over 2 holdings), same ring treatment as Cash Available.
+  `DEFAULT_ORDER` is derived from the `WIDGET_DEFS.overview` push order, and
+  `getOrder()` inserts a widget missing from a saved layout at its default position,
+  so **adding a widget needs no `LAYOUT_KEY` bump** — only changing the order of
+  existing ones does. Overview row 1 is now 8 smalls × span 3 = exactly 24 columns,
+  so the `.grid-spacer` correctly emits nothing.
+
 ## Codebase banner + consolidation pass (2026-07-19)
 
 - **Overview carries a live "Codebase" banner** (user request): lines of code, file
