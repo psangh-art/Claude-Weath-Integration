@@ -455,5 +455,16 @@ const server = http.createServer((req, res) => {
   serveFile(res, target);
 });
 
-regenerate('startup');
-server.listen(PORT, () => console.log(`Investment Dashboard -> http://localhost:${PORT}`));
+// Bind BEFORE regenerating: a second launch must not rewrite the data files and
+// then die on EADDRINUSE (the already-running instance owns that job).
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    console.log(`Investment Dashboard is already running on http://localhost:${PORT} — using that one.`);
+    process.exit(0);
+  }
+  throw e;
+});
+server.listen(PORT, () => {
+  console.log(`Investment Dashboard -> http://localhost:${PORT}`);
+  regenerate('startup');
+});

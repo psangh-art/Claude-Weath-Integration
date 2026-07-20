@@ -20,5 +20,15 @@ REM dashboard tab from a previous launch can actually be CLOSED over CDP —
 REM a browser refuses window.close() on a tab the user opened, so the web-only
 REM guard can never do better than cover it. See scripts\dashboard_open.js.
 start "Open Dashboard" /min node scripts\dashboard_open.js http://localhost:4600
-node scripts\dashboard_server.js
-pause
+
+REM Don't start a second dashboard server on 4600 — the running one already
+REM serves the tab we just opened. (dashboard_server.js also refuses the port
+REM gracefully, but this keeps the window from sitting on a dead process.)
+echo Checking Investment Dashboard (port 4600)...
+curl -s http://localhost:4600 >nul 2>&1
+if %errorlevel% neq 0 (
+    node scripts\dashboard_server.js
+    pause
+) else (
+    echo Already running - reusing it. Closing this window.
+)
