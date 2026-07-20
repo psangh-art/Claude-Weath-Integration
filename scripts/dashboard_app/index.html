@@ -940,8 +940,14 @@ WIDGET_DEFS.overview.push({
   mount(body){
     body.classList.add('metric-body');
     const m=DATA.overview.metrics.total_income||{};
+    // YTD is MEASURED from the spending pivots' monthly actuals when they're
+    // available (ytd_measured), and a run-rate otherwise — the label says which, and
+    // hovering lists the months that were summed.
+    const ytdMonths=(m.ytd_months_detail||[]).map(p=>p.period+': '+fmtMoney(p.total,0)).join('\n');
     const ytd=(m.ytd==null)?'' :
-      '<div class="metric-extra"><span class="me-label">YTD</span>'+fmtMoneyCompact(m.ytd)+
+      '<div class="metric-extra" title="'+escapeHtml(ytdMonths)+'"><span class="me-label">YTD</span>'+
+      fmtMoneyCompact(m.ytd)+
+      (m.ytd_months?'<span class="me-pct">'+m.ytd_months+'mo'+(m.ytd_measured?'':' est')+'</span>':'')+
       (m.ytd_caveat?' <span class="tip" data-tip="'+escapeHtml(m.ytd_caveat)+'" tabindex="0">i</span>':'')+
       '</div>';
     body.innerHTML='<div class="metric">'+

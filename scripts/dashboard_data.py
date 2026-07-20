@@ -1107,6 +1107,7 @@ def build(workbook=WORKBOOK):
     # (which stays sourced from the master's Income Funds tab — no double count).
     # Falls back to 0 until that file exists (e.g. a run without the Fidelity exports).
     share_income_monthly = share_accum_monthly = 0.0
+    _dv = {}                      # stays {} if the export is missing — see the YTD below
     try:
         with open(os.path.join(REPO, 'data', 'spending_dividends.json'), encoding='utf-8') as _f:
             _dv = json.load(_f)
@@ -1125,12 +1126,25 @@ def build(workbook=WORKBOOK):
     # the left of Total Income add up to it.
     monthly_dividend = round(funds_monthly_income + share_income_monthly, 2)
     total_income_monthly = round(monthly_dividend + share_accum_monthly, 2)
-    # Year-to-date total income (user request 2026-07-20). There is no month-by-month
-    # income history exported anywhere, so this is the current monthly rate over the
-    # months of this year so far — the same run-rate basis as the annual figure beside
-    # it, and labelled as such rather than presented as measured actuals.
-    income_ytd_months = now.month
-    income_ytd = round(total_income_monthly * income_ytd_months, 2)
+    # Year-to-date total income (user request 2026-07-20). MEASURED where possible:
+    # spending_summary exports the month-by-month actuals to spending_dividends.json
+    # ('months', each flagged actual/estimated), so sum the actual months of this year
+    # rather than multiplying up a rate. Only the months flagged actual count — the
+    # rest of the year is projection, and summing those would report a forecast as a
+    # result. Falls back to the run-rate when the export predates this field.
+    income_ytd_actual = None
+    income_ytd_partial = False
+    _rows = [m for m in (_dv.get('months') or []) if str(m.get('period', '')).startswith(str(now.year))] \
+        if isinstance(_dv, dict) else []
+    _actual_rows = [m for m in _rows if m.get('actual')]
+    if _actual_rows:
+        income_ytd_actual = round(sum(float(m.get('total') or 0) for m in _actual_rows), 2)
+        income_ytd_months = len(_actual_rows)
+        income_ytd_partial = bool(_actual_rows[-1].get('partial'))
+        income_ytd = income_ytd_actual
+    else:
+        income_ytd_months = now.month
+        income_ytd = round(total_income_monthly * income_ytd_months, 2)
 
     soi = wb['Stocks of Interest']
     soif = wbf['Stocks of Interest']
@@ -1233,9 +1247,19 @@ def build(workbook=WORKBOOK):
                              'accumulative': share_accum_monthly,
                              'annual': round(total_income_monthly * 12, 2),
                              'ytd': income_ytd, 'ytd_months': income_ytd_months,
-                             'ytd_caveat': (f'{income_ytd_months} month(s) of {now.year} at the current '
-                                            f'£{total_income_monthly:,.0f}/mo rate — a run-rate, not '
-                                            'measured month-by-month actuals.'),
+                             'ytd_measured': income_ytd_actual is not None,
+                             'ytd_months_detail': [
+                                 {'period': m.get('period'), 'total': m.get('total')}
+                                 for m in _actual_rows],
+                             'ytd_caveat': (
+                                 (f'Measured: {income_ytd_months} actual month(s) of {now.year} from the '
+                                  'spending pivots — income funds + share dividends + reinvested Acc income.'
+                                  + (' The latest month is still part-way through.'
+                                     if income_ytd_partial else ''))
+                                 if income_ytd_actual is not None else
+                                 (f'{income_ytd_months} month(s) of {now.year} at the current '
+                                  f'£{total_income_monthly:,.0f}/mo rate — a run-rate, not '
+                                  'measured month-by-month actuals.')),
                              'caveat': (f'Income funds £{funds_monthly_income:,.0f} + shares '
                                         f'£{share_income_monthly:,.0f} + accumulative £{share_accum_monthly:,.0f} '
                                         '— income paid out plus income reinvested inside the Acc funds.')},

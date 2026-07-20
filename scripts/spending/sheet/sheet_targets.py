@@ -13,7 +13,7 @@ import os
 import pandas as pd
 from openpyxl.styles import Alignment, Font
 
-from ..constants import EQUITY_DIVIDENDS_ANNUAL
+from ..constants import EQUITY_DIVIDENDS_ANNUAL, EQUITY_DIVIDENDS_INLINE
 from ..loaders import load_income_history
 from .style import F, P
 
@@ -286,10 +286,54 @@ def write_targets(ctx):
             for _fd in _funds.values():
                 for _per, _v in (_fd.get('price_appreciation') or {}).items():
                     acc_appr[_per] = acc_appr.get(_per, 0) + _v
+        # MONTH-BY-MONTH income actuals (user request 2026-07-20), so the dashboard's
+        # year-to-date figure can be measured rather than 'monthly rate × months'.
+        # Three components, kept separate because they come from different places and
+        # a caller may legitimately want only some of them:
+        #   fund_income     — income actually RECEIVED per month, summed across the
+        #                     family accounts of fid_pivot (live transactions, with
+        #                     the pinned Jan–Apr history injected for the months the
+        #                     60-day export can't reach).
+        #   share_dividends — the confirmed equity dividends, which are pinned PER
+        #                     PAYMENT MONTH, not spread evenly. They are NOT in
+        #                     fid_pivot (the annual total adds them separately), so
+        #                     counting both is not a double count.
+        #   accumulation    — the Acc funds' reinvested income for that month.
+        # `salary` is exported alongside but deliberately EXCLUDED from `total`: the
+        # dashboard's Total Income is investment income, not earnings.
+        _eq_by_month = {}
+        for _lbl, _divs in EQUITY_DIVIDENDS_INLINE:
+            for _per, _v in _divs.items():
+                _eq_by_month[str(_per)] = _eq_by_month.get(str(_per), 0) + _v
+        _acc_by_month = {str(_k): _v for _k, _v in acc_appr.items()}
+        _months_out = []
+        for _m in all_months:
+            _key = str(_m)
+            _funds = float(fid_pivot[_m].sum()) if (not fid_pivot.empty and _m in fid_pivot.columns) else 0.0
+            _shares = float(_eq_by_month.get(_key, 0.0))
+            _accum = float(_acc_by_month.get(_key, 0.0))
+            _sal = (float(spend_pivot.loc['Salary', _m])
+                    if ('Salary' in spend_pivot.index and _m in spend_pivot.columns) else 0.0)
+            _months_out.append({
+                'period': _key,
+                'fund_income': round(_funds, 2),
+                'share_dividends': round(_shares, 2),
+                'accumulation': round(_accum, 2),
+                'total': round(_funds + _shares + _accum, 2),
+                'salary': round(_sal, 2),
+                # Everything up to and including the snapshot month has real data in
+                # it (the partial month has some, just not all); later months are
+                # projections. A consumer summing 'year to date' must respect this.
+                'actual': bool(_m <= anchors.data_month),
+                'partial': bool(anchors.partial_month is not None and _m == anchors.partial_month),
+            })
         _dividends = {
             'generated_at': pd.Timestamp.now().isoformat(timespec='seconds'),
             'share_income_monthly': round(equity_annual / 12.0, 2),
             'share_accumulation_monthly': round(acc_appr[max(acc_appr)], 2) if acc_appr else 0.0,
+            'year': anchors.year,
+            'data_month': str(anchors.data_month),
+            'months': _months_out,
         }
         # Repo root. This file moved from scripts/spending_summary.py to
         # scripts/spending/sheet/sheet_targets.py on 2026-07-19, so it is now FOUR
@@ -300,8 +344,11 @@ def write_targets(ctx):
         os.makedirs(os.path.dirname(_dp), exist_ok=True)
         with open(_dp, 'w', encoding='utf-8') as _f:
             json.dump(_dividends, _f, indent=2)
+        _act = [m for m in _months_out if m['actual']]
         print(f"  Share dividends -> income £{_dividends['share_income_monthly']:,.0f}/mo, "
               f"accumulation £{_dividends['share_accumulation_monthly']:,.0f}/mo")
+        print(f"  Monthly income  -> {len(_months_out)} months ({len(_act)} actual), "
+              f"actuals total £{sum(m['total'] for m in _act):,.0f}")
     except Exception as _e:
         print(f"  (share-dividend export skipped: {_e})")
 
