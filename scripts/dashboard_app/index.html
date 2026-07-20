@@ -296,7 +296,7 @@ svg{display:block}
 .news-amt{font-family:var(--mono);font-weight:700;flex-shrink:0;min-width:52px;text-align:right}
 .news-yield{font-family:var(--mono);color:var(--muted);font-size:10.5px;flex-shrink:0;min-width:40px;text-align:right}
 
-/* ---- Dividend Diary widget (Overview) ---- */
+/* ---- Dividend Diary widget (Intelligence) ---- */
 .diary{display:flex;flex-direction:column;height:100%;min-height:0}
 .diary-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-shrink:0}
 .diary-title{font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.01em}
@@ -1370,10 +1370,8 @@ function drawDiary(body){
     DIARY.month=nm; drawDiary(body);
   }));
 }
-WIDGET_DEFS.overview.push({
-  id:'diary', title:'Dividend Diary', size:'L', span:12,
-  mount(body){ drawDiary(body); }
-});
+/* Dividend Diary is registered on the Intelligence screen (see below, next to
+   Relevant News) — the two are the same dividend/income theme (moved 2026-07-20). */
 
 /* ------------------------- Commodities screen ------------------------- */
 // One Small card per commodity (user request 2026-07-20), read from
@@ -2251,6 +2249,13 @@ WIDGET_DEFS.intelligence.push({
     }).join('');
     body.innerHTML='<div class="news-list">'+items+'</div>';
   }
+});
+
+// Dividend Diary — month calendar of dividend / ex-dividend dates (moved here from
+// Overview 2026-07-20, user request). Sits with Relevant News, its dividend-theme kin.
+WIDGET_DEFS.intelligence.push({
+  id:'diary', title:'Dividend Diary', size:'L', span:12,
+  mount(body){ drawDiary(body); }
 });
 
 /* ---------------------- Design (Widgets — order control for every screen) ---------------------- */
