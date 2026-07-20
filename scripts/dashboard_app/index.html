@@ -116,7 +116,7 @@ svg{display:block}
 /* Codebase banner — Overview only. How big this application is and when it last
    changed (user request 2026-07-19). Both figures come from /api/codebase, which
    counts the source live, so the label can't go stale the way a typed-in one would. */
-.codebanner{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;margin-bottom:var(--gap);
+.codebanner{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;margin-top:var(--gap);
   padding:8px 14px;border:1px solid var(--line-soft);border-radius:11px;background:var(--panel);
   font-size:11.5px;color:var(--muted)}
 .codebanner .cb-tag{font-size:9.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
@@ -295,6 +295,45 @@ svg{display:block}
 .news-ticker{color:var(--faint);font-weight:500;font-size:10px}
 .news-amt{font-family:var(--mono);font-weight:700;flex-shrink:0;min-width:52px;text-align:right}
 .news-yield{font-family:var(--mono);color:var(--muted);font-size:10.5px;flex-shrink:0;min-width:40px;text-align:right}
+
+/* ---- Dividend Diary widget (Overview) ---- */
+.diary{display:flex;flex-direction:column;height:100%;min-height:0}
+.diary-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-shrink:0}
+.diary-title{font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.01em}
+.diary-title b{color:var(--text);font-weight:700}
+.diary-nav{width:26px;height:26px;border:1px solid var(--line);background:var(--panel-2);color:var(--text);
+  border-radius:7px;cursor:pointer;font-size:15px;line-height:1;display:flex;align-items:center;justify-content:center}
+.diary-nav:hover:not([disabled]){background:var(--panel-3);border-color:var(--accent)}
+.diary-nav[disabled]{opacity:.35;cursor:default}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;flex-shrink:0}
+.cal-dow{font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);
+  text-align:center;padding-bottom:2px}
+.cal-cell{position:relative;min-height:34px;border:1px solid var(--line-soft);border-radius:6px;background:var(--panel-2);
+  padding:3px 4px;display:flex;flex-direction:column;gap:2px}
+.cal-cell.empty{border:none;background:none}
+.cal-cell.has-ev{background:var(--panel-3);border-color:var(--line)}
+.cal-cell.today{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.cal-num{font-size:10.5px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
+.cal-cell.has-ev .cal-num{color:var(--text)}
+.cal-dots{display:flex;flex-wrap:wrap;gap:2px;margin-top:auto}
+.cal-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;display:inline-block;vertical-align:middle}
+.cal-dot.exdiv{background:var(--warn,#e0a02a)}
+.cal-dot.paid{background:var(--success)}
+.cal-dot.expected{background:transparent;box-shadow:inset 0 0 0 1.5px var(--warn,#e0a02a)}
+.cal-dot.paid.expected{box-shadow:inset 0 0 0 1.5px var(--success)}
+.diary-legend{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:10px;color:var(--faint);
+  margin:8px 0 4px;flex-shrink:0}
+.diary-legend .cal-dot{margin-left:8px}
+.diary-legend .cal-dot:first-child{margin-left:0}
+.diary-list{display:flex;flex-direction:column;overflow-y:auto;flex:1;min-height:0;border-top:1px solid var(--line-soft);
+  padding-top:4px}
+.diary-ev{display:flex;align-items:center;gap:8px;padding:5px 2px;border-bottom:1px solid var(--line-soft);font-size:11.5px}
+.diary-ev:last-child{border-bottom:none}
+.de-day{font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--muted);min-width:18px;text-align:right;flex-shrink:0}
+.de-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.de-kind{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);flex-shrink:0}
+.de-exp{color:var(--faint);font-weight:600}
+.de-amt{font-family:var(--mono);font-weight:700;flex-shrink:0;min-width:56px;text-align:right;color:var(--muted)}
 
 /* ============================== SPARKLINE ============================== */
 .sparkline{width:100%;height:20px;overflow:visible;display:block}
@@ -514,8 +553,8 @@ button.activity-chart-chip:disabled{opacity:.5;cursor:default}
       </div>
     </header>
     <div class="content">
-      <div class="codebanner" id="codeBanner" hidden></div>
       <div class="grid" id="grid"></div>
+      <div class="codebanner" id="codeBanner" hidden></div>
     </div>
   </div>
 </div>
@@ -794,6 +833,8 @@ const ICONS={
   flow:'<svg viewBox="0 0 24 24"><circle cx="5" cy="6" r="2.3"/><circle cx="19" cy="6" r="2.3"/><circle cx="12" cy="18" r="2.3"/><path d="M7.2 7.1L11 16M16.8 7.1L13 16M7.3 6h9.4"/></svg>',
   pulse:'<svg viewBox="0 0 24 24"><path d="M3 12.5h4l2.5-6 4 12 2.5-7 1.5 2h3.5"/></svg>',
   refresh:'<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v4h-4"/></svg>',
+  gem:'<svg viewBox="0 0 24 24"><path d="M6 3.5h12l3.2 5-9.2 12L2.8 8.5z"/><path d="M2.8 8.5h18.4M8.6 3.5l-2.6 5 6 12 6-12-2.6-5M8.6 8.5h6.8"/></svg>',
+  calendar:'<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><line x1="3.5" y1="9.5" x2="20.5" y2="9.5"/><line x1="8" y1="3" x2="8" y2="6.5"/><line x1="16" y1="3" x2="16" y2="6.5"/></svg>',
 };
 
 /* ---------------------------- app state ---------------------------- */
@@ -814,6 +855,7 @@ const UI={
 const NAV_ITEMS=[
   {id:'overview', label:'Overview', icon:ICONS.grid, enabled:true},
   {id:'portfolio', label:'Portfolio', icon:ICONS.briefcase, enabled:true},
+  {id:'commodities', label:'Commodities', icon:ICONS.gem, enabled:true},
   {id:'historic', label:'Historic', icon:ICONS.clock, enabled:true},
   {id:'watchlist', label:'Watchlist', icon:ICONS.star, enabled:true},
   {id:'payslips', label:'Payslips', icon:ICONS.doc, enabled:true},
@@ -836,7 +878,7 @@ const EXTERNAL_LINKS=[
 const SIZE_LABELS={S:'Small', M:'Medium', L:'Large', XL:'X-Large', XXL:'XX-Large'};
 
 /* ---------------------------- widget definitions ---------------------------- */
-const WIDGET_DEFS={overview:[], portfolio:[], historic:[], watchlist:[], payslips:[], intelligence:[], design:[]};
+const WIDGET_DEFS={overview:[], portfolio:[], commodities:[], historic:[], watchlist:[], payslips:[], intelligence:[], design:[]};
 
 WIDGET_DEFS.overview.push({
   id:'m-portfolio-value', title:'Total Portfolio Value', size:'S', span:3,
@@ -847,7 +889,7 @@ WIDGET_DEFS.overview.push({
     const spark=monthlySparkline(DATA.overview.value_over_time && DATA.overview.value_over_time.portfolio,
                                  {width:52, height:18});
     body.innerHTML='<div class="metric">'+
-      '<div class="metric-main"><div class="metric-value" title="'+fmtMoney(m.value,2)+'">'+fmtMoneyCompact(m.value)+'</div>'+
+      '<div class="metric-main"><div class="metric-value" title="'+fmtMoney(m.value,2)+'">'+fmtMoney(m.value,0)+'</div>'+
       '<div class="metric-sub">Across all accounts</div></div>'+
       '<div class="metric-graphic">'+spark+'</div></div>';
   }
@@ -899,7 +941,7 @@ WIDGET_DEFS.overview.push({
       if(t) t.textContent=m.year+' Trading Profit';
     }
     body.innerHTML='<div class="metric">'+
-      '<div class="metric-main"><div class="metric-value" style="color:'+(m.value>=0?'var(--success)':'var(--danger)')+'">'+fmtMoneyCompact(m.value)+'</div>'+
+      '<div class="metric-main"><div class="metric-value" style="color:'+(m.value>=0?'var(--success)':'var(--danger)')+'">'+fmtMoney(m.value,0)+'</div>'+
       '<div class="metric-sub">'+fmtNum(m.sells)+' closed sells</div></div></div>';
   }
 });
@@ -912,10 +954,10 @@ WIDGET_DEFS.overview.push({
     // into the total (user request 2026-07-20) — the sub line used to just say
     // 'Income funds', which named only one of the two things in the figure.
     const parts=[];
-    if(m.funds!=null) parts.push('<span class="me-label">Funds</span>'+fmtMoneyCompact(m.funds));
-    if(m.shares!=null) parts.push('<span class="me-label">Shares</span>'+fmtMoneyCompact(m.shares));
+    if(m.funds!=null) parts.push('<span class="me-label">Funds</span>'+fmtMoney(m.funds,0));
+    if(m.shares!=null) parts.push('<span class="me-label">Shares</span>'+fmtMoney(m.shares,0));
     body.innerHTML='<div class="metric">'+
-      '<div class="metric-main"><div class="metric-value">'+fmtMoneyCompact(m.value)+'</div>'+
+      '<div class="metric-main"><div class="metric-value">'+fmtMoney(m.value,0)+'</div>'+
       '<div class="metric-sub">Paid out / mo'+(m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div>'+
       (parts.length?'<div class="metric-extra">'+parts.join('<span class="me-sep">·</span>')+'</div>':'')+
       '</div></div>';
@@ -946,7 +988,7 @@ WIDGET_DEFS.overview.push({
     const ytdMonths=(m.ytd_months_detail||[]).map(p=>p.period+': '+fmtMoney(p.total,0)).join('\n');
     const ytd=(m.ytd==null)?'' :
       '<div class="metric-extra" title="'+escapeHtml(ytdMonths)+'"><span class="me-label">YTD</span>'+
-      fmtMoneyCompact(m.ytd)+
+      fmtMoney(m.ytd,0)+
       (m.ytd_months?'<span class="me-pct">'+m.ytd_months+'mo'+(m.ytd_measured?'':' est')+'</span>':'')+
       (m.ytd_caveat?' <span class="tip" data-tip="'+escapeHtml(m.ytd_caveat)+'" tabindex="0">i</span>':'')+
       '</div>';
@@ -954,8 +996,8 @@ WIDGET_DEFS.overview.push({
       '<div class="metric-main"><div class="metric-value" title="'+escapeHtml(
         'Income funds: '+fmtMoney(m.funds,0)+'/mo\nShares: '+fmtMoney(m.shares,0)+
         '/mo\nReinvested (Acc): '+fmtMoney(m.accumulative,0)+'/mo')+'">'+
-        fmtMoneyCompact(m.value)+'</div>'+
-      '<div class="metric-sub">'+fmtMoneyCompact(m.annual)+' / yr'+
+        fmtMoney(m.value,0)+'</div>'+
+      '<div class="metric-sub">'+fmtMoney(m.annual,0)+' / yr'+
         (m.caveat?' <span class="tip" data-tip="'+escapeHtml(m.caveat)+'" tabindex="0">i</span>':'')+'</div>'+
       ytd+'</div></div>';
   }
@@ -1248,36 +1290,135 @@ WIDGET_DEFS.overview.push({
   }
 });
 
-WIDGET_DEFS.overview.push({
-  id:'news', title:'Relevant News', size:'M', span:6,
-  mount(body){
-    const rows=(DATA.news && DATA.news.rows)||[];
-    if(!rows.length){
-      body.innerHTML='<div class="dim" style="padding:16px;text-align:center">No upcoming dividends or income events</div>';
-      return;
-    }
-    const items=rows.map(r=>{
-      const isDated=!!r.date;
-      const chip=isDated
-        ? '<span class="news-chip-date">'+fmtShortDate(r.date)+'</span>'
-        : '<span class="news-chip-event">'+(r.event==='Monthly income'?'Monthly':escapeHtml(r.event||'—'))+'</span>';
-      let amt='—';
-      if(r.amount_pence!=null) amt=Number(r.amount_pence).toFixed(1)+'p';
-      else if(r.amount_pounds!=null) amt=fmtMoney(r.amount_pounds,0)+'/mo';
-      const yieldTxt=r.div_yield_pct!=null?fmtPct(r.div_yield_pct,2):'—';
-      // Second line SAYS WHAT THE EVENT IS — a date and an amount alone don't
-      // tell you what happens or what to do (user request 2026-07-19).
-      const desc=r.description?'<div class="news-desc">'+escapeHtml(r.description)+'</div>':'';
-      return '<div class="news-item'+(r.past?' is-past':'')+'"><div class="news-row">'+chip+
-        '<span class="news-name" title="'+escapeHtml(r.name)+'">'+escapeHtml(r.name)+
-        (r.ticker?' <span class="news-ticker">'+escapeHtml(r.ticker)+'</span>':'')+'</span>'+
-        '<span class="news-amt">'+amt+'</span>'+
-        '<span class="news-yield">'+yieldTxt+'</span>'+
-        '</div>'+desc+'</div>';
-    }).join('');
-    body.innerHTML='<div class="news-list">'+items+'</div>';
+// Relevant News moved from Overview to Intelligence (user request 2026-07-20) — its
+// push now lives after the Intelligence index widgets below, so it sits beneath them.
+
+// Dividend Diary (user request 2026-07-20): a month-at-a-glance calendar of the
+// dividend and ex-dividend dates for the holding book, that pages through the months
+// of the current year. Data is DATA.news.calendar (built in dashboard_data.py). Base
+// Data usually carries each stock's LAST ex-div date, so a date in a PRIOR year is
+// rolled forward to the viewing year and marked 'expected' (dividends recur ~yearly)
+// — otherwise this year would read almost empty; a date already in the viewing year
+// is shown as confirmed.
+const DIARY={year:new Date().getFullYear(), month:new Date().getMonth()};
+const MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
+function diaryEventsForMonth(year,month){
+  const raw=(DATA.news && DATA.news.calendar)||[];
+  const out=[];
+  raw.forEach(e=>{
+    const d=new Date(String(e.date)+'T00:00:00');
+    if(isNaN(d)) return;
+    const expected=d.getFullYear()<year;      // roll a prior-year date forward
+    if(d.getFullYear()>year) return;          // beyond the viewing year — skip
+    if(d.getMonth()!==month) return;          // month is preserved by the roll-forward
+    out.push({date:e.date, day:d.getDate(), kind:e.kind, name:e.name, ticker:e.ticker,
+              amount_pence:e.amount_pence, amount_pounds:e.amount_pounds,
+              div_yield_pct:e.div_yield_pct, expected});
+  });
+  return out.sort((a,b)=>a.day-b.day || (a.kind<b.kind?-1:1));
+}
+function drawDiary(body){
+  const y=DIARY.year, m=DIARY.month;
+  const events=diaryEventsForMonth(y,m);
+  const byDay={};
+  events.forEach(e=>{ (byDay[e.day]=byDay[e.day]||[]).push(e); });
+  const first=new Date(y,m,1);
+  const startCol=(first.getDay()+6)%7;        // Monday-first (0=Mon..6=Sun)
+  const daysIn=new Date(y,m+1,0).getDate();
+  const today=new Date();
+  const isThisMonth=(today.getFullYear()===y && today.getMonth()===m);
+  const cells=[];
+  for(let i=0;i<startCol;i++) cells.push('<div class="cal-cell empty"></div>');
+  for(let day=1;day<=daysIn;day++){
+    const evs=byDay[day]||[];
+    const dots=evs.slice(0,4).map(e=>'<span class="cal-dot '+(e.kind==='paid'?'paid':'exdiv')+(e.expected?' expected':'')+'"></span>').join('');
+    const isToday=isThisMonth && today.getDate()===day;
+    const tip=evs.map(e=>e.name+(e.ticker?' ('+e.ticker+')':'')+' — '+(e.kind==='paid'?'dividend paid':'ex-dividend')+(e.expected?' (expected)':'')).join('\n');
+    cells.push('<div class="cal-cell'+(evs.length?' has-ev':'')+(isToday?' today':'')+'"'+
+      (tip?' title="'+escapeHtml(tip)+'"':'')+' data-day="'+day+'">'+
+      '<span class="cal-num">'+day+'</span>'+(dots?'<span class="cal-dots">'+dots+'</span>':'')+'</div>');
   }
+  const dow=['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+    .map(d=>'<div class="cal-dow">'+d+'</div>').join('');
+  const list=events.length
+    ? events.map(e=>{
+        let amt='';
+        if(e.amount_pence!=null) amt=Number(e.amount_pence).toFixed(1)+'p';
+        else if(e.amount_pounds!=null) amt=fmtMoney(e.amount_pounds,0);
+        const yld=e.div_yield_pct!=null?' · '+fmtPct(e.div_yield_pct,2):'';
+        return '<div class="diary-ev"><span class="de-day">'+e.day+'</span>'+
+          '<span class="cal-dot '+(e.kind==='paid'?'paid':'exdiv')+(e.expected?' expected':'')+'"></span>'+
+          '<span class="de-name" title="'+escapeHtml(e.name)+'">'+escapeHtml(e.name)+
+          (e.ticker?' <span class="news-ticker">'+escapeHtml(e.ticker)+'</span>':'')+'</span>'+
+          '<span class="de-kind">'+(e.kind==='paid'?'paid':'ex-div')+(e.expected?' <span class="de-exp">exp</span>':'')+'</span>'+
+          '<span class="de-amt">'+amt+yld+'</span></div>';
+      }).join('')
+    : '<div class="dim" style="padding:12px;text-align:center">No dividend dates this month</div>';
+  const atStart=(m<=0), atEnd=(m>=11);
+  body.innerHTML=
+    '<div class="diary">'+
+      '<div class="diary-head">'+
+        '<button class="diary-nav" data-dir="-1"'+(atStart?' disabled':'')+' aria-label="Previous month">‹</button>'+
+        '<div class="diary-title">'+MONTH_NAMES[m]+' <b>'+y+'</b></div>'+
+        '<button class="diary-nav" data-dir="1"'+(atEnd?' disabled':'')+' aria-label="Next month">›</button>'+
+      '</div>'+
+      '<div class="cal-grid">'+dow+cells.join('')+'</div>'+
+      '<div class="diary-legend"><span class="cal-dot exdiv"></span>Ex-div'+
+        '<span class="cal-dot paid"></span>Paid'+
+        '<span class="cal-dot exdiv expected"></span>Expected (~annual)</div>'+
+      '<div class="diary-list">'+list+'</div>'+
+    '</div>';
+  body.querySelectorAll('.diary-nav').forEach(btn=>btn.addEventListener('click',()=>{
+    const nm=DIARY.month+Number(btn.dataset.dir);
+    if(nm<0||nm>11) return;
+    DIARY.month=nm; drawDiary(body);
+  }));
+}
+WIDGET_DEFS.overview.push({
+  id:'diary', title:'Dividend Diary', size:'L', span:12,
+  mount(body){ drawDiary(body); }
 });
+
+/* ------------------------- Commodities screen ------------------------- */
+// One Small card per commodity (user request 2026-07-20), read from
+// DATA.portfolio.commodities. The four precious/base metals the user named
+// (Gold, Silver, Platinum, Palladium) additionally show Holdings and Alert High;
+// Copper, WTI Oil and Brent Oil show price + day change only, as requested.
+const COMMODITY_FULL=new Set(['GOLD','SLVR','PLAT','PALL']);
+function commodityBy(ticker){
+  return ((DATA.portfolio && DATA.portfolio.commodities)||[]).find(c=>c.ticker===ticker);
+}
+function mountCommodity(body,widgetEl,ticker){
+  body.classList.add('metric-body');
+  const c=commodityBy(ticker);
+  if(!c){ body.innerHTML='<div class="dim" style="padding:12px">No data.</div>'; return; }
+  const unit=c.price_unit||'$';
+  const price=(c.price==null)?'—':fmtPrice(c.price,unit);
+  const chg=(c.change_pct==null)?'' :
+    '<div class="metric-sub">'+deltaChip(c.change_pct,{kind:'pct',decimals:2})+' today</div>';
+  const extra=[];
+  if(COMMODITY_FULL.has(ticker)){
+    extra.push('<span class="me-label">Holdings</span>'+(c.holdings!=null?fmtMoney(c.holdings,0):'—'));
+    extra.push('<span class="me-label">Alert High</span>'+(c.alert_high!=null?fmtPrice(c.alert_high,unit):'—'));
+  }
+  // Desktop-TradingView button via the shared helper: prefer a captured layout id,
+  // else parse one out of the workbook chart hyperlink (same as chartLinkCell).
+  const cid=c.chart_id||chartIdFromUrl(c.chart_url);
+  const chart=cid?chartOpenButton({...c,chart_id:cid},'📊'):'';
+  body.innerHTML='<div class="metric">'+
+    '<div class="metric-main"><div class="metric-value">'+price+'</div>'+
+    chg+
+    (extra.length?'<div class="metric-extra">'+extra.join('<span class="me-sep">·</span>')+'</div>':'')+
+    '</div>'+(chart?'<div class="metric-graphic">'+chart+'</div>':'')+'</div>';
+}
+[['Gold','GOLD'],['Silver','SLVR'],['Copper','COPP'],['WTI Oil','OIL'],
+ ['Brent Oil','UKOIL'],['Platinum','PLAT'],['Palladium','PALL']]
+  .forEach(([label,ticker])=>{
+    WIDGET_DEFS.commodities.push({
+      id:'comm-'+ticker, title:label, size:'S', span:3,
+      mount(body,action,widgetEl){ mountCommodity(body,widgetEl,ticker); }
+    });
+  });
 
 WIDGET_DEFS.overview.push({
   id:'activity', title:'Activity', size:'XL', span:12,
@@ -2083,6 +2224,39 @@ WIDGET_DEFS.payslips.push({
     });
   });
 
+// Relevant News — dividend/income events for what we hold (moved here from Overview,
+// user request 2026-07-20). Sits below the market-index widgets on Intelligence.
+WIDGET_DEFS.intelligence.push({
+  id:'news', title:'Relevant News', size:'M', span:6,
+  mount(body){
+    const rows=(DATA.news && DATA.news.rows)||[];
+    if(!rows.length){
+      body.innerHTML='<div class="dim" style="padding:16px;text-align:center">No upcoming dividends or income events</div>';
+      return;
+    }
+    const items=rows.map(r=>{
+      const isDated=!!r.date;
+      const chip=isDated
+        ? '<span class="news-chip-date">'+fmtShortDate(r.date)+'</span>'
+        : '<span class="news-chip-event">'+(r.event==='Monthly income'?'Monthly':escapeHtml(r.event||'—'))+'</span>';
+      let amt='—';
+      if(r.amount_pence!=null) amt=Number(r.amount_pence).toFixed(1)+'p';
+      else if(r.amount_pounds!=null) amt=fmtMoney(r.amount_pounds,0)+'/mo';
+      const yieldTxt=r.div_yield_pct!=null?fmtPct(r.div_yield_pct,2):'—';
+      // Second line SAYS WHAT THE EVENT IS — a date and an amount alone don't
+      // tell you what happens or what to do (user request 2026-07-19).
+      const desc=r.description?'<div class="news-desc">'+escapeHtml(r.description)+'</div>':'';
+      return '<div class="news-item'+(r.past?' is-past':'')+'"><div class="news-row">'+chip+
+        '<span class="news-name" title="'+escapeHtml(r.name)+'">'+escapeHtml(r.name)+
+        (r.ticker?' <span class="news-ticker">'+escapeHtml(r.ticker)+'</span>':'')+'</span>'+
+        '<span class="news-amt">'+amt+'</span>'+
+        '<span class="news-yield">'+yieldTxt+'</span>'+
+        '</div>'+desc+'</div>';
+    }).join('');
+    body.innerHTML='<div class="news-list">'+items+'</div>';
+  }
+});
+
 /* ---------------------- Design (Widgets — order control for every screen) ---------------------- */
 WIDGET_DEFS.design.push({
   id:'overview-order', title:'Widgets', size:'XL', span:24,
@@ -2208,6 +2382,7 @@ WIDGET_DEFS.design.push({
 const DEFAULT_ORDER={
   overview: WIDGET_DEFS.overview.map(w=>w.id),
   portfolio: WIDGET_DEFS.portfolio.map(w=>w.id),
+  commodities: WIDGET_DEFS.commodities.map(w=>w.id),
   historic: WIDGET_DEFS.historic.map(w=>w.id),
   watchlist: WIDGET_DEFS.watchlist.map(w=>w.id),
   payslips: WIDGET_DEFS.payslips.map(w=>w.id),
@@ -2323,7 +2498,7 @@ function syncThemeButton(){
 
 /* ---------------------------- render: topbar ---------------------------- */
 const GRID_COLS=24;   // 24ths, so a Small can be 1.5 twelfths (3/24)
-const SCREEN_TITLES={overview:'Overview', portfolio:'Portfolio', historic:'Historic', watchlist:'Watchlist', payslips:'Payslips', intelligence:'Intelligence', design:'Design'};
+const SCREEN_TITLES={overview:'Overview', portfolio:'Portfolio', commodities:'Commodities', historic:'Historic', watchlist:'Watchlist', payslips:'Payslips', intelligence:'Intelligence', design:'Design'};
 // Screens whose content does NOT come from a pipeline run hide the pipeline
 // top-bar buttons: on Payslips they were misleading (user request 2026-07-19) —
 // payslips are loaded from that screen's own Upload button, and neither 'Run' nor

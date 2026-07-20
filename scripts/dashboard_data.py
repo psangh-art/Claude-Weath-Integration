@@ -350,7 +350,8 @@ def _fidelity_cash(path=ACCOUNT_SUMMARY):
 # Every LSE equity and ETC the pipeline captures is quoted in pence, so pence is
 # the default and only these are the exception — the dashboard labels the unit
 # rather than putting a misleading '£' in front of a pence figure.
-USD_PRICED_TICKERS = {'PLAT', 'PALL', 'GOLD', 'SILVER', 'COPP', 'NATGAS', 'UKOIL', 'BRENT'}
+USD_PRICED_TICKERS = {'PLAT', 'PALL', 'GOLD', 'SILVER', 'SLVR', 'COPP', 'NATGAS',
+                      'UKOIL', 'BRENT', 'OIL'}
 
 
 def _price_unit(ticker):
@@ -1283,8 +1284,47 @@ def build(workbook=WORKBOOK):
         'alert_status': {'below': alert_below, 'near': alert_near,
                          'above': alert_above, 'total': alert_below + alert_near + alert_above},
     }
+    # ---------------- Commodities (Portfolio sub-screen, user request 2026-07-20) ----
+    # One card per commodity the pipeline captures, read straight off the Investments
+    # sheet (which owns the captured price + alert levels) with the day-over-day %
+    # move from history.db. history.db keys commodities by the TradingView SYMBOL
+    # (GOLD/SILVER/COPPER1!/USOIL/BRENT/PLATINUM/PALLADIUM), NOT the sheet ticker, so
+    # each def carries its history key explicitly. Holdings come from the same joined
+    # positions the equity holdings use, falling back to the workbook Holdings column;
+    # a commodity we don't hold reads None. Order is the user's requested order.
+    _hold_by_tk = {}
+    for iv in investments:
+        k = str(iv['ticker']).strip().upper() if iv['ticker'] else None
+        if k:
+            _hold_by_tk[k] = (_hold_by_tk.get(k) or 0.0) + (iv['holdings'] or 0.0)
+    COMMODITY_DEFS = [
+        ('Gold', 'GOLD', 'GOLD'), ('Silver', 'SLVR', 'SILVER'),
+        ('Copper', 'COPP', 'COPPER1!'), ('WTI Oil', 'OIL', 'USOIL'),
+        ('Brent Oil', 'UKOIL', 'BRENT'), ('Platinum', 'PLAT', 'PLATINUM'),
+        ('Palladium', 'PALL', 'PALLADIUM'),
+    ]
+    commodities = []
+    for label, tk, hist_key in COMMODITY_DEFS:
+        r = _inv_row(tk)
+        price = _price_for(tk, inv.cell(r, I_CURPRICE).value if r else None, latest)
+        chg = (changes.get(hist_key) or changes.get(tk.upper()) or {}) if changes else {}
+        hold = _hold_by_tk.get(tk.upper())
+        if hold is None and r:
+            hold = _num(inv.cell(r, I_HOLDINGS).value)
+        commodities.append({
+            'label': label, 'ticker': tk,
+            'price': price, 'price_unit': _price_unit(tk),
+            'change': chg.get('change'), 'change_pct': chg.get('change_pct'),
+            'holdings': round(hold, 2) if hold else None,
+            'alert_low': _num(inv.cell(r, I_ALERT_LOW).value) if r else None,
+            'alert_high': _num(inv.cell(r, I_ALERT_HIGH).value) if r else None,
+            'chart_url': _tv_url(invf.cell(r, I_TV).value) if r else None,
+            **_layout_for(tk),
+        })
+
     portfolio = {'generated_at': now.isoformat(timespec='seconds'),
                  'investments': investments, 'income_funds': income_funds,
+                 'commodities': commodities,
                  'income_positions': income_positions,
                  'income_positions_total': income_positions_total,
                  'income_summary': {'year': now.year,
@@ -1392,7 +1432,35 @@ def build(workbook=WORKBOOK):
     # Soonest first: upcoming events before past ones, undated last.
     news.sort(key=lambda n: (n['date'] is None, 0 if not n.get('past') else 1,
                              n['date'] or ''))
-    news_payload = {'generated_at': now.isoformat(timespec='seconds'), 'rows': news}
+    # ---------------- Dividend calendar (Overview diary widget, user 2026-07-20) ----
+    # A flat list of dated dividend events for THIS holding book, so the diary can
+    # group them by month and page through the year. Two kinds: 'ex-div' (the equity
+    # ex-dividend date from Base Data — hold through it to qualify — and each income
+    # fund's last ex-div date) and 'paid' (each income fund's last cash distribution).
+    # Base Data carries one ex-div date per stock (usually the most recent/next), so
+    # this is a snapshot of the dates known now, not an exhaustive forward schedule.
+    calendar = []
+    for iv in by_ticker.values():
+        b = base.get(str(iv['ticker']).strip().upper()) if iv['ticker'] else None
+        if not (b and b.get('ex_div')):
+            continue
+        try:
+            iso = datetime.date.fromisoformat(str(b['ex_div'])[:10]).isoformat()
+        except ValueError:
+            continue
+        calendar.append({'date': iso, 'kind': 'ex-div', 'name': iv['name'],
+                         'ticker': iv['ticker'], 'amount_pence': b.get('div_pence'),
+                         'div_yield_pct': b.get('div_yield_pct')})
+    for fname, g in by_fund.items():
+        if g['n'] and g['ex']:
+            calendar.append({'date': g['ex'], 'kind': 'ex-div', 'name': fname,
+                             'ticker': None, 'amount_pounds': round(g['paid'], 2)})
+        if g['n'] and g['pay']:
+            calendar.append({'date': g['pay'], 'kind': 'paid', 'name': fname,
+                             'ticker': None, 'amount_pounds': round(g['paid'], 2)})
+    calendar.sort(key=lambda e: e['date'])
+    news_payload = {'generated_at': now.isoformat(timespec='seconds'), 'rows': news,
+                    'calendar': calendar}
 
     # ---------------- Activity (things to do, with links) ----------------
     SHEET_URL = 'https://docs.google.com/spreadsheets/d/1UjAz_QUuh86_e6yq8QJf2veI8IpkRCyVfWaK6maqiyc/'

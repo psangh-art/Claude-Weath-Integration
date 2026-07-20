@@ -78,8 +78,14 @@ svg{display:block}
   background:var(--panel-3);color:var(--faint);border-radius:5px;padding:2px 5px}
 /* External link-out items: plain <a target="_blank">, so the ↗ makes the
    "leaves the app" behaviour explicit — same treatment as the dashboard. */
-.rail-item .ext-ind{margin-left:auto;font-size:12px;color:var(--faint);flex-shrink:0;transition:color .15s}
-.rail-item:hover .ext-ind{color:var(--accent)}
+.rail-item .ext-ind,.rail-item .back-ind{margin-left:auto;font-size:12px;color:var(--faint);flex-shrink:0;transition:color .15s}
+.rail-item:hover .ext-ind,.rail-item:hover .back-ind{color:var(--accent)}
+/* Back-to-Dashboard rail item (2026-07-20): pinned above "Sections", not inside
+   "Links" — it's a way back to where the user came from, not an external
+   product link, so it gets a ← indicator (same-tab nav, no target=_blank) and
+   its own bordered block instead of being sandwiched between Review Deck/
+   Architecture (which are genuinely new-tab external products). */
+.rail-back{padding:8px 10px 10px;border-bottom:1px solid var(--line-soft)}
 .rail-bottom{padding:12px 10px 16px;border-top:1px solid var(--line-soft);display:flex;flex-direction:column;gap:8px}
 .theme-toggle{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:9px;border:none;
   background:var(--panel-2);color:var(--muted);cursor:pointer;width:100%;font-size:12.5px;font-weight:600}
@@ -260,10 +266,14 @@ svg{display:block}
 /* ============================== RESPONSIVE ============================== */
 @media (max-width:960px){
   .rail{width:64px}
-  .rail-brand .rb-name,.rail-brand .rb-sub,.rail-item .rl-label,.rail-item .soon,.rail-item .ext-ind,.theme-toggle span{display:none}
+  .rail-brand .rb-name,.rail-brand .rb-sub,.rail-item .rl-label,.rail-item .soon,.rail-item .ext-ind,.rail-item .back-ind,.theme-toggle span{display:none}
   .rail-item{justify-content:center}
   .theme-toggle{justify-content:center}
   .rail-section{display:none}
+  /* Topbar "Dashboard" back button collapses to icon-only alongside the rail
+     (2026-07-20) — the icon is the affordance that must survive, the label can go. */
+  #backToDashboard span{display:none}
+  #backToDashboard{padding:9px}
 }
 @media (max-width:560px){
   .topbar{padding:14px 16px}
@@ -278,6 +288,12 @@ svg{display:block}
     <div class="rail-brand">
       <div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"/><path d="m5 15 4-5 3 3 4-6 3 4"/></svg></div>
       <div><div class="rb-name">Pipeline</div><div class="rb-sub">Production Centre</div></div>
+    </div>
+    <div class="rail-back">
+      <a class="rail-item" id="rail-dashboard-link" href="http://localhost:4600" title="Back to the Investment Dashboard">
+        <svg viewBox="0 0 24 24"><path d="M11 5l-7 7 7 7"/><path d="M4 12h16"/></svg>
+        <span class="rl-label">Dashboard</span><span class="back-ind">&#8592;</span>
+      </a>
     </div>
     <div class="rail-nav">
       <div class="rail-section">Sections</div>
@@ -298,10 +314,6 @@ svg{display:block}
         <span class="rl-label">Output bay</span>
       </button>
       <div class="rail-section">Links</div>
-      <a class="rail-item" href="http://localhost:4600" target="_blank" rel="noopener noreferrer" title="Opens the Investment Dashboard in a new tab">
-        <svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/></svg>
-        <span class="rl-label">Dashboard</span><span class="ext-ind">&#8599;</span>
-      </a>
       <a class="rail-item disabled" id="link-deck" aria-disabled="true" title="Not available yet — the review deck hasn't been built this run">
         <svg viewBox="0 0 24 24"><path d="M6.5 2.5h8l5 5v14h-13z"/><path d="M14.5 2.5v5h5"/></svg>
         <span class="rl-label">Review Deck</span><span class="ext-ind">&#8599;</span>
@@ -326,6 +338,9 @@ svg{display:block}
         </div>
       </div>
       <div class="topbar-actions">
+        <a id="backToDashboard" class="btn" href="http://localhost:4600" title="Back to the Investment Dashboard">
+          <svg viewBox="0 0 24 24"><path d="M11 5l-7 7 7 7"/><path d="M4 12h16"/></svg><span>Dashboard</span>
+        </a>
         <button id="run" class="btn primary"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg><span id="runtext">Run pipeline</span></button>
       </div>
     </header>

@@ -199,6 +199,30 @@ function main() {
   const ifLine = (incFundsResult.stdout || '').trim().split('\n').filter(Boolean).pop();
   if (ifLine) console.log(`Income Funds: ${ifLine}`);
 
+  // Sub-step of step 3 (quiet, no numbered "=== Step N/M ===" marker): push the
+  // fully-updated workbook into the Finance Google Sheet over the Sheets API —
+  // writes each tab IN PLACE, no browser, no tab deletion, re-runnable unattended
+  // (see sync_finance_sheet.py). Runs LAST in main()'s success path, so it only
+  // fires after every workbook write above succeeded — never a half-updated sheet.
+  // BEST-EFFORT: the Finance sheet must be shared with the service account as
+  // Editor (a one-time manual step; until then every call 403s), so a failure here
+  // must NOT fail the run — the workbook in Downloads is the source of truth and is
+  // already correct. We capture the output and log a one-line reason instead.
+  console.log('\nSyncing the Finance Google Sheet (Sheets API, in place)...');
+  const syncResult = spawnSync('python', [path.join(__dirname, 'sync_finance_sheet.py')],
+    { encoding: 'utf-8' });
+  const syncOut = (syncResult.stdout || '').trim().split('\n').filter(Boolean);
+  if (syncResult.status === 0) {
+    const line = syncOut.find(l => l.startsWith('Synced')) || syncOut.pop();
+    console.log(`Finance Sheet: ${line || 'synced'}`);
+  } else {
+    const err = (syncResult.stderr || syncResult.stdout || '').trim().split('\n').filter(Boolean).pop()
+      || '(no detail returned)';
+    console.warn(`Finance Sheet: API sync skipped — ${err}`);
+    console.warn('  The workbook in Downloads is up to date regardless. If this is a 403, share the');
+    console.warn('  sheet with the service account as Editor (run scripts/check_sheets_auth.py) — see CLAUDE.md.');
+  }
+
   console.log('\nDone. tradingview_layouts.xlsx, Stocks_Buy_Strategy.xlsx, and Feedback_for_Claude_Code.md are all up to date in Downloads.');
 }
 
