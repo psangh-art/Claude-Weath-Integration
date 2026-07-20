@@ -13,11 +13,16 @@
 // Navigation is a plain window.location.assign to the layout's chart URL, the same
 // approach layoutSwitch() uses, because loadChartFromServer(id) silently no-ops on
 // a numeric layout id.
+import { spawn } from 'child_process';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { evaluate, getClient } from '../src/connection.js';
 import { ensureAutosaveDisabled } from '../src/core/ui.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CDP_HOST = 'localhost';
 const CDP_PORT = 9222;
+const LAUNCH_BAT = path.join(__dirname, 'launch_tv_debug.bat');
 
 /** Is TradingView Desktop reachable over CDP right now? */
 export async function tvAvailable() {
@@ -30,9 +35,38 @@ export async function tvAvailable() {
   }
 }
 
+/**
+ * Bring TradingView Desktop up WITH the debugging port, on demand. Reuses the
+ * pipeline's proven launcher (launch_tv_debug.bat): it taskkills any running
+ * TradingView and reopens it with --remote-debugging-port=9222. Only called when
+ * CDP is already DOWN, so an already-debug-ready TradingView is never disturbed;
+ * and because layouts live server-side, a relaunch loads them fresh without
+ * touching the user's charts. Polls until CDP answers or the timeout is hit.
+ */
+async function launchTradingView(timeoutMs = 30000) {
+  try {
+    const child = spawn('cmd.exe', ['/c', LAUNCH_BAT, String(CDP_PORT)],
+      { detached: true, stdio: 'ignore', windowsHide: true });
+    child.unref();
+  } catch {
+    return false;
+  }
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 1200));
+    if (await tvAvailable()) {
+      // CDP answers, but the chart page may still be mounting — let it settle
+      // before ensureAutosaveDisabled reads the chart service.
+      await new Promise(r => setTimeout(r, 3000));
+      return true;
+    }
+  }
+  return false;
+}
+
 const NOT_RUNNING =
-  'TradingView Desktop is not reachable on the debugging port. Start it with '
-  + '--remote-debugging-port=9222 (the pipeline launcher does this) and try again.';
+  'Could not start TradingView Desktop with the debugging port. Check it is '
+  + 'installed, or launch it manually with scripts\\launch_tv_debug.bat, then retry.';
 
 /**
  * Bring `chartId`'s layout up in TradingView Desktop, on `symbol` if given.
@@ -41,7 +75,11 @@ const NOT_RUNNING =
  */
 export async function openChart({ chartId, symbol, layout }) {
   if (!chartId && !symbol) return { ok: false, error: 'Nothing to open: no chartId or symbol.' };
-  if (!(await tvAvailable())) return { ok: false, error: NOT_RUNNING, needsTradingView: true };
+  // If TradingView Desktop isn't on the debug port, start it on demand rather than
+  // just erroring — selecting a layout should bring the app up ready to draw on.
+  if (!(await tvAvailable()) && !(await launchTradingView())) {
+    return { ok: false, error: NOT_RUNNING, needsTradingView: true };
+  }
 
   try {
     await getClient();
