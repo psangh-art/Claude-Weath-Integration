@@ -477,8 +477,6 @@ padding:3px 7px;border-radius:5px}}
 .tvlink{{background:none;border:0;padding:0;margin:0;cursor:pointer;color:var(--accent);
 font-size:12px;text-align:left;font-weight:600;font-family:inherit}}
 .tvlink:hover{{text-decoration:underline}}.tvlink:disabled{{opacity:.55;cursor:default}}
-.backbtn{{display:inline-block;color:var(--muted);text-decoration:none;font-size:13px;
-margin-bottom:10px}}.backbtn:hover{{color:var(--accent)}}
 .toast{{position:fixed;bottom:24px;left:50%;transform:translate(-50%,20px);background:var(--panel);
 border:1px solid var(--line);border-left-width:4px;color:var(--text);padding:12px 18px;
 border-radius:8px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.35);opacity:0;
@@ -488,8 +486,7 @@ transition:opacity .25s,transform .25s;z-index:50;max-width:80vw}}
 @media(prefers-color-scheme:light){{:root{{--bg:#f5f7fb;--panel:#fff;--line:#dde3ee;
 --text:#16203a;--muted:#5b6684}}}}
 </style></head><body>
-<header class="top"><a class="backbtn" href="/">← Back to Dashboard</a>
-<h1>Investment Review Deck</h1>
+<header class="top"><h1>Investment Review Deck</h1>
 <div class="sub">{_e(stats['charts'])} charts across {_e(stats['layouts'])} layouts · built {_e(datetime.now().strftime('%Y-%m-%d %H:%M'))}</div></header>
 <div class="chips">{chip_html}</div>
 <main>{''.join(sections)}</main>

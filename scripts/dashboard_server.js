@@ -393,7 +393,7 @@ const server = http.createServer((req, res) => {
       if (e) { res.writeHead(404); res.end('Review-deck gallery not built yet — run the pipeline (or build_review_deck.py).'); return; }
       const fixed = html.replace(/(["'])asset\?p=/g, '$1/asset?p=');
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(fixed);
+      res.end(injectBackToDashboard(fixed));
     });
     return;
   }
