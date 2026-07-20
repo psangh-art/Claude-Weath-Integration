@@ -457,7 +457,7 @@ main{{padding:12px 32px 60px}}
 .layout{{margin-top:28px}}.layout h2{{font-size:13px;text-transform:uppercase;
 letter-spacing:.08em;color:var(--accent);border-bottom:1px solid var(--line);
 padding-bottom:8px;margin:0 0 16px}}
-.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(600px,1fr));gap:16px}}
 .card{{background:var(--panel);border:1px solid var(--line);border-radius:12px;
 overflow:hidden;display:flex;flex-direction:column}}
 .card img{{width:100%;aspect-ratio:16/10;object-fit:cover;background:#0b0f18;display:block}}
