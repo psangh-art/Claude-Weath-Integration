@@ -43,3 +43,8 @@ data/spending_dividends.json
 # Dedicated Chrome profile the dashboard launcher opens in (scripts/dashboard_open.js) —
 # a whole browser profile: caches, cookies, service workers. Machine-local, never committed.
 data/dashboard-chrome-profile/
+
+# Google service-account key, if it is ever placed in-tree by mistake.
+# It normally lives OUTSIDE the repo (~/.secrets/) because the repo syncs to OneDrive.
+*service-account*.json
+*-sheets-sync.json
