@@ -17,6 +17,18 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import CFG  # noqa: E402
+from ssl_certs import ensure_ca_bundle  # noqa: E402
+
+ensure_ca_bundle()
+
+# Windows' console codepage (cp1252) can't encode the em dash used below —
+# same cosmetic-print crash guarded in verify_pipeline.py and spending_summary.py.
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 # Outside the repo on purpose: the repo lives in OneDrive, and a private key
 # must not sync to the cloud. Overridable via config.json -> sheetsServiceAccountKey.
