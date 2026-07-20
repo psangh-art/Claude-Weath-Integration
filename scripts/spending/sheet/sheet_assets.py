@@ -368,8 +368,37 @@ def write_asset_rows(ctx):
     ps_running = paul_hist_series.get(all_months[0], paul_sipp_val)
     ss_running = sipp_vals_from_summary.get(all_months[0], susan_sipp_val)
 
+    # ── The GAP between the pinned history and the snapshot ───────────────────
+    # Months after the history tables end but BEFORE the snapshot month have no
+    # measurement of their own. Growing them forward on income (the branch below,
+    # written when the snapshot was the very next month and the gap was empty)
+    # overshoots: the snapshot that follows is ground truth and can be LOWER, so
+    # the row climbed above it and then fell back onto it — Paul's SIPP read
+    # £1.490M/£1.498M for May/Jun against a July snapshot of £1.432M, and the
+    # Fidelity-accounts total inherited the same spike. Interpolate across the gap
+    # instead, so the series is monotone between the two things actually measured
+    # and lands exactly on the snapshot. Months AFTER the snapshot still grow.
+    gap_months = [m for m in all_months
+                  if not is_history_month(m) and m < anchors.data_month]
+    gap_vals = {}
+    if gap_months:
+        _hist_months = [m for m in all_months if is_history_month(m)]
+        _ps_from = (paul_hist_series.get(_hist_months[-1], ps_running)
+                    if _hist_months else ps_running)
+        _ss_from = (sipp_vals_from_summary.get(_hist_months[-1], ss_running)
+                    if _hist_months else ss_running)
+        _steps = len(gap_months) + 1
+        for _k, _m in enumerate(gap_months, start=1):
+            _f = _k / _steps
+            gap_vals[_m] = (round(_ps_from + (paul_sipp_val - _ps_from) * _f),
+                            round(_ss_from + (susan_sipp_val - _ss_from) * _f))
+
     for i, m in enumerate(all_months):
-        if m == anchors.data_month:
+        if m in gap_vals:
+            ps_running, ss_running = gap_vals[m]
+            paul_sipp_growth_vals[m] = ps_running
+            susan_sipp_growth_vals[m] = ss_running
+        elif m == anchors.data_month:
             # AccountSummary is ground truth for this month — override any projection
             ps_running = paul_sipp_val
             ss_running = susan_sipp_val
